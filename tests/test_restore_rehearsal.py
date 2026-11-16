@@ -98,6 +98,7 @@ class RehearsalTests(unittest.TestCase):
                 item = tarfile.TarInfo(name)
                 item.size = len(content)
                 tar.addfile(item, io.BytesIO(content))
+        retired.chmod(0o600)
         before = retired.read_bytes()
         with patch.object(rehearsal, "task_count", side_effect=AssertionError("must not open database")), \
                 self.assertRaisesRegex(ValueError, "edition/version incompatible"):
