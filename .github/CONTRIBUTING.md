@@ -6,6 +6,6 @@
 
 代码检查使用 `python -B .github/scripts/check_python.py all`；Shell 变动执行 Bash / ShellCheck；网站执行现有 build / test。测试必须使用合成数据，报告真实失败与未执行项，不将旧项目验收算作新项目结果。
 
-Ruff 与锁文件保持 `ruff==0.17.3`，不单独更改工作流中的工具版本。
+Ruff 版本由 `pyproject.toml` 与 `requirements/dev.lock.txt` 共同约束；CI 从锁文件读取工具版本，文档和工作流不重复固定版本号。
 
 目录、依赖、标准库边界与发布状态见[开发文档](../docs/development.md)。改名不自动提版本，不自动发布或部署。

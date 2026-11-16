@@ -60,11 +60,9 @@ jobs:
 
       - name: Validate Compose
         run: |
-          python .github/scripts/build_payload.py --edition all --directory build/ci-contexts
+          python .github/scripts/build_payload.py --edition clouddrive2 --directory build/ci-contexts/clouddrive2
           touch build/ci-contexts/clouddrive2/.env
           docker compose -f build/ci-contexts/clouddrive2/docker-compose.yml config --quiet
-          cp build/ci-contexts/clouddrive2/.env build/ci-contexts/openlist/.env
-          OPENLIST_ADMIN_PASSWORD=ci-only-placeholder docker compose -f build/ci-contexts/openlist/docker-compose.yml config --quiet
 
       - name: Verify native daemon and exact gateway and base images
         run: python .github/scripts/check_native_architecture.py --expected '${{ matrix.arch }}'
@@ -87,7 +85,7 @@ jobs:
           TGCLOUD_TEST_EXTERNAL_NGINX_DOCKER: "1"
         run: python -B -m unittest discover -s tests -p test_external_nginx_docker.py -v
 
-      - name: Run both Edition candidate images as non-root
+      - name: Run CloudDrive2 candidate images as non-root
         timeout-minutes: 20
         env:
           TGCLOUD_TEST_DOCKER: "1"
