@@ -1,0 +1,54 @@
+> 历史档案：以下为原项目记录，不是 TGCloud 0.0.1 的当前教程或验收结论。[归档说明](../../README.md)。
+
+# 第三方组件说明
+
+当前 Linux 源码与运行环境主要使用以下第三方组件；准确依赖版本取 `pyproject.toml`、`requirements/` 和对应 Release，不因本页文档更新而升级：
+
+- Telethon：Telegram MTProto 客户端，MIT；
+- cryptg：Telegram 加密加速；
+- psutil：系统资源监控，BSD-3-Clause；
+- rclone：文件传输工具，MIT；
+- Docker / Docker Compose：容器运行环境；
+- Nginx：域名 HTTPS 管理入口的反向代理，BSD-2-Clause；
+- Certbot：域名 HTTPS 管理入口的 Let's Encrypt ACME 客户端，Apache-2.0；
+- CloudDrive2：由 CloudDrive 官方提供的专有软件和 Docker 镜像；
+- OpenList：由 OpenList 项目提供的软件和 Docker 镜像。
+
+历史分发物的许可与原版权按其对应源码保留，当前依赖以本仓库锁文件和镜像为准。
+
+CloudDrive2／OpenList 由安装流程按用户选择拉取网关镜像，不是 TG2Cloud 自行实现的云盘。CloudDrive2 的使用条件受其官方许可和会员规则约束；各组件分别受自身许可证与服务条款约束。
+
+v1.3.4 正式版保持 v1.3.3 的依赖与镜像不变，引用如下。事实来源是 `packaging/Dockerfile`、`packaging/compose/` 与 `deployment/proxy/`，后续更新必须以对应版本源码为准：
+
+```text
+CloudDrive2：
+cloudnas/clouddrive2@sha256:5491c21fb14a5774576515f8483ecdbe2780bf525985f426785b99488e7cc09d
+
+OpenList：
+openlistteam/openlist@sha256:c555c6e1c8af2aead38ed12ec761ac077fdf046d19cf033414be8e056aec6b64
+
+Python 3.12 slim trixie：
+python:3.12-slim-trixie@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159
+
+Nginx：
+nginx:1.30.5-alpine
+
+Certbot：
+certbot/certbot:v5.8.0
+```
+
+以下摘要对应当前 main 源码；已发布版本以对应不可变 Tag 为准，本轮维护不改写 v1.5.7 资产。
+
+CloudDrive2、OpenList 与 Python 基础镜像锁定到摘要；Nginx 与 Certbot 当前锁定到明确版本标签。发布前的自动测试会检查生成的 Compose、Nginx 和 Shell 内容，但版本标签仍应在后续版本中按上游安全更新重新评估。
+
+以下 Trivy 0.72.0 高危／严重漏洞扫描结果记录于 2026-07-29，仅对应当时已扫描的 CloudDrive2 与 Python 基础镜像，不代表 OpenList 镜像已经包含在同一次扫描中：
+
+- CloudDrive2 锁定镜像：0 条 HIGH/CRITICAL 软件包记录；
+- Python Trixie 锁定基础镜像：23 条（19 HIGH、4 CRITICAL），扫描时均无 `FixedVersion`；这比同时扫描的 Bookworm 基础镜像少 1 条，CRITICAL 从 6 条降为 4 条；
+- Python 依赖清单和构建依赖经 `pip-audit` 检查，0 个已知漏洞。
+
+这些是历史扫描记录，不是当前新 digest 的最新漏洞结论，也不能据此宣称镜像“零风险”。镜像扫描不等于对 CloudDrive2 专有程序完成源码审计。Bot 采用非 root、只读根文件系统、移除 capabilities 与私聊授权降低风险；v1.3.3 可以授权可信家人，不再局限于管理员一个 ID。CloudDrive2 特权网关的风险仍存在，应使用专用主机或虚拟机。
+
+普通重新部署不会自动切换到仓库中的新镜像；升级镜像需要更新摘要、重新运行测试并生成新的交付版本。
+
+TG2Cloud 的完整 Python 和脚本源代码在本仓库及对应 Release 标签中公开，便于审查、修改和重新构建；第三方镜像内的软件仍以各自上游发布内容为准。

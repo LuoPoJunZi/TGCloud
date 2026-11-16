@@ -10,11 +10,12 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import Mock, patch
 
-from tg2cloud.addons.external_webdav import cli
-from tg2cloud.cli import management
-from tg2cloud.deployment import listening
-from tg2cloud.deployment.profiles import PRODUCTS
+from tgcloud.addons.external_webdav import cli
+from tgcloud.cli import management
+from tgcloud.deployment import listening
+from tgcloud.deployment.profiles import PRODUCTS
 
+ROOT = Path(__file__).resolve().parents[1]
 
 class UpgradeRecoveryTests(unittest.TestCase):
     def test_each_state_upgrades_code_without_authentication_or_route_writes(self):
@@ -25,7 +26,7 @@ class UpgradeRecoveryTests(unittest.TestCase):
                     tempfile.TemporaryDirectory() as temp,
                 ):
                     root = Path(temp)
-                    version = root / "src/tg2cloud/version.py"
+                    version = root / "src/tgcloud/version.py"
                     version.parent.mkdir(parents=True)
                     version.write_text('VERSION="1.4.9"\n')
                     item = {
@@ -38,6 +39,7 @@ class UpgradeRecoveryTests(unittest.TestCase):
                     service.record.return_value = item
                     service.locked.side_effect = lambda: nullcontext()
                     service.ui.confirm.return_value = True
+                    service.ui.ask.return_value = str(ROOT)
                     args = Namespace(
                         action="upgrade",
                         edition=edition,
@@ -45,9 +47,9 @@ class UpgradeRecoveryTests(unittest.TestCase):
                         sample_file="",
                     )
                     with (
-                        patch.object(cli, "source_root", return_value=root),
+                        patch.object(cli, "source_root", return_value=ROOT),
                         patch(
-                            "tg2cloud.addons.external_webdav.releases.download",
+                            "tgcloud.addons.external_webdav.releases.download",
                             return_value=(root, {"version": "1.4.9"}),
                         ),
                         patch.object(
@@ -65,7 +67,7 @@ class UpgradeRecoveryTests(unittest.TestCase):
                     service.assert_record.assert_called_once_with(item)
                     service.maintain.assert_not_called()
                     service.configure.assert_not_called()
-                    service.ui.ask.assert_not_called()
+                    service.ui.ask.assert_called_once()
                     service.manager.apply_shared_state_locked.assert_not_called()
                     self.assertEqual(
                         item,
@@ -79,7 +81,7 @@ class UpgradeRecoveryTests(unittest.TestCase):
     def test_failed_candidate_keeps_old_tool_and_changed_record_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            v = root / "src/tg2cloud/version.py"
+            v = root / "src/tgcloud/version.py"
             v.parent.mkdir(parents=True)
             v.write_text('VERSION="1.4.9"\n')
             for failure in ("candidate", "revision"):
@@ -90,13 +92,14 @@ class UpgradeRecoveryTests(unittest.TestCase):
                 }
                 service.product = PRODUCTS["clouddrive2"]
                 service.ui.confirm.return_value = True
+                service.ui.ask.return_value = str(ROOT)
                 service.locked.side_effect = lambda: nullcontext()
                 if failure == "revision":
                     service.assert_record.side_effect = ValueError("changed")
                 with (
-                    patch.object(cli, "source_root", return_value=root),
+                    patch.object(cli, "source_root", return_value=ROOT),
                     patch(
-                        "tg2cloud.addons.external_webdav.releases.download",
+                        "tgcloud.addons.external_webdav.releases.download",
                         return_value=(root, {}),
                     ),
                     patch.object(
@@ -149,7 +152,7 @@ class UpgradeRecoveryTests(unittest.TestCase):
         self.assertEqual(service.ui.ask.call_args.kwargs["default"], "6")
 
     def test_unauthorized_account_explains_recovery_without_raw_response(self):
-        from tg2cloud.addons.external_webdav import verification
+        from tgcloud.addons.external_webdav import verification
 
         route = {
             "domain": "files.example.test",

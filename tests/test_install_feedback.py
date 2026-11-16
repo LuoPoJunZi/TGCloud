@@ -12,22 +12,24 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tg2cloud.cli import vps
-from tg2cloud.cli.presentation import (
+from tgcloud.cli import vps
+from tgcloud.cli.presentation import (
     InstallerLog,
     OperationReport,
     classify_install_line,
 )
-from tg2cloud.deployment import configuration, install, instances, readiness, releases
-from tg2cloud.deployment.host import SafeLog
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.version import VERSION
+from tgcloud.deployment import configuration, install, instances, readiness, releases
+from tgcloud.deployment.host import SafeLog
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.version import VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASE = releases.Release("v" + VERSION, "a" * 40)
+from local_project_fixture import source
+
+RELEASE = source()
 PIP_WARNING = "#12 1.3 WARNING: Running pip as the 'root' user can result in broken permissions"
-SUCCESS = "\n".join(("TG2CLOUD_DATABASE_BACKUP=OK", "TG2CLOUD_CODE=OK", "TG2CLOUD_VERSION=" + VERSION,
-                     "TG2CLOUD_BOT_HEALTH=healthy", "TG2CLOUD_RESULT=SUCCESS")) + "\n"
+SUCCESS = "\n".join(("TGCLOUD_DATABASE_BACKUP=OK", "TGCLOUD_CODE=OK", "TGCLOUD_VERSION=" + VERSION,
+                     "TGCLOUD_BOT_HEALTH=healthy", "TGCLOUD_RESULT=SUCCESS")) + "\n"
 
 
 def feedback(**values):
@@ -46,16 +48,16 @@ class LogClassificationTests(unittest.TestCase):
                 self.assertEqual(classify_install_line(line, base=False)[0], "待核对")
                 self.assertEqual(classify_install_line(line.split(" ", 2)[2], base=True)[0], "待核对")
         for capacity in (20, 50):
-            line = f"[TG2Cloud] 警告：安装文件系统总容量低于推荐的 {capacity}GB"
+            line = f"[TGCloud] 警告：安装文件系统总容量低于推荐的 {capacity}GB"
             self.assertEqual(classify_install_line(line, base=True)[:2], ("提醒", "capacity"))
         self.assertEqual(classify_install_line("WARNING: unknown certificate problem", base=True)[0], "待核对")
 
     def test_actual_errors_take_precedence_and_do_not_make_ordinary_error_words_fatal(self):
-        for line in ("[TG2Cloud][ERROR] 构建失败", "E: Repository has no Release file", "Err:2 repository unavailable",
+        for line in ("[TGCloud][ERROR] 构建失败", "E: Repository has no Release file", "Err:2 repository unavailable",
                      "ERROR: build failed after WARNING", "Permission denied", "No space left on device"):
             with self.subTest(line=line):
                 self.assertEqual(classify_install_line(line, base=True)[0], "错误")
-        self.assertEqual(classify_install_line("[TG2Cloud] 安装基础软件")[0], "信息")
+        self.assertEqual(classify_install_line("[TGCloud] 安装基础软件")[0], "信息")
         self.assertEqual(classify_install_line('configuration contains "error": false')[0], "")
 
     def test_ansi_and_repeated_warnings_do_not_create_unbounded_or_duplicate_summary(self):
@@ -90,7 +92,7 @@ class LogClassificationTests(unittest.TestCase):
         report.stage = "基础安装与升级"
         log.operation = report
         log("WARNING: password=FAKE_PRIVATE_PASSWORD")
-        log("TG2CLOUD_CLI_RESULT=FAILED：FAKE_PRIVATE_PASSWORD")
+        log("TGCLOUD_CLI_RESULT=FAILED：FAKE_PRIVATE_PASSWORD")
         self.assertNotIn("FAKE_PRIVATE_PASSWORD", "\n".join(messages))
         self.assertNotIn("FAKE_PRIVATE_PASSWORD", repr(report))
         self.assertTrue(messages[-1].startswith("[错误]"))
@@ -108,9 +110,9 @@ class LogClassificationTests(unittest.TestCase):
 
 class EvidenceTests(unittest.TestCase):
     def test_nonzero_missing_conflicting_or_wrong_version_markers_never_confirm_code(self):
-        for code, output in ((1, SUCCESS), (0, "TG2CLOUD_RESULT=SUCCESS\n"),
-                             (0, SUCCESS + "TG2CLOUD_CODE=MISMATCH\n"),
-                             (0, SUCCESS + "TG2CLOUD_VERSION=0.0.0\n")):
+        for code, output in ((1, SUCCESS), (0, "TGCLOUD_RESULT=SUCCESS\n"),
+                             (0, SUCCESS + "TGCLOUD_CODE=MISMATCH\n"),
+                             (0, SUCCESS + "TGCLOUD_VERSION=0.0.0\n")):
             with self.subTest(code=code, output=output[-40:]):
                 report = feedback()
                 report.observe_base(code, output)
@@ -118,7 +120,7 @@ class EvidenceTests(unittest.TestCase):
         report = feedback()
         report.observe_base(0, SUCCESS)
         self.assertEqual(report.checks, {"backup": "ok", "code": "ok", "health": "ok"})
-        report.observe_base(1, "TG2CLOUD_DATABASE_BACKUP=FAILED\n")
+        report.observe_base(1, "TGCLOUD_DATABASE_BACKUP=FAILED\n")
         self.assertEqual(report.checks["backup"], "failed")
 
     def test_bot_and_cli_evidence_are_reported_independently(self):
@@ -210,11 +212,11 @@ class ExecutionSummaryTests(unittest.TestCase):
                 self.assertEqual(plan.feedback.readiness, dict.fromkeys(readiness.LABELS, "ok"))
                 calls = self.session.run.call_args_list
                 self.assertEqual(len(calls), 5)
-                self.assertEqual(calls[0].args, ("docker exec " + product.bot_container + " python -B -m tg2cloud.monitoring.readiness",))
+                self.assertEqual(calls[0].args, ("docker exec " + product.bot_container + " python -B -m tgcloud.monitoring.readiness",))
                 self.assertEqual(calls[0].kwargs, {"timeout": 20})
                 self.assertEqual({shlex.split(call.args[0])[-1] for call in calls[1:]},
                                  {product.bot_container, product.storage_container,
-                                  "tg2cloud-proxy-nginx", "tg2cloud-proxy-certbot"})
+                                  "tgcloud-proxy-nginx", "tgcloud-proxy-certbot"})
                 for call in calls[1:]:
                     self.assertTrue(call.args[0].startswith("docker container inspect --format "))
                     self.assertEqual(call.kwargs, {"timeout": 10})
@@ -275,15 +277,15 @@ class ExecutionSummaryTests(unittest.TestCase):
                 self.assertTrue(plan.feedback.completed)
 
     def test_verified_skipped_and_failed_webdav_keep_existing_confirmation_and_errors(self):
-        for confirmed, result in ((False, (0, "unused")), (True, (0, "TG2CLOUD_DESTINATION=OK\n")),
-                                  (True, (1, "TG2CLOUD_DESTINATION=OK\n")), (True, (0, "incomplete"))):
+        for confirmed, result in ((False, (0, "unused")), (True, (0, "TGCLOUD_DESTINATION=OK\n")),
+                                  (True, (1, "TGCLOUD_DESTINATION=OK\n")), (True, (0, "incomplete"))):
             with self.subTest(confirmed=confirmed, result=result):
                 self.ui.confirm.reset_mock()
                 self.ui.confirm.return_value = confirmed
                 self.session.run.side_effect = lambda command, _result=result, **_: _result if "manage.sh verify" in command else (
                     0, json.dumps({"schema": 1, "version": VERSION, "ready": True, "checks": dict.fromkeys(readiness.LABELS, "ok")}))
                 plan = self.plan()
-                failed = confirmed and (result[0] or "TG2CLOUD_DESTINATION=OK" not in result[1])
+                failed = confirmed and (result[0] or "TGCLOUD_DESTINATION=OK" not in result[1])
                 if failed:
                     with self.assertRaisesRegex(RuntimeError, "WebDAV"):
                         self.run_plan(plan, verify=True)
@@ -321,22 +323,20 @@ class ExecutionSummaryTests(unittest.TestCase):
 
     def test_base_requires_original_success_exit_markers_and_preserved_env(self):
         for result in ((1, PIP_WARNING + "\nE: broken repository\n" + SUCCESS),
-                       (0, "TG2CLOUD_BOT_HEALTH=healthy\n"), (0, "TG2CLOUD_RESULT=SUCCESS\n")):
+                       (0, "TGCLOUD_BOT_HEALTH=healthy\n"), (0, "TGCLOUD_RESULT=SUCCESS\n")):
             with self.subTest(result=result):
                 plan = self.plan()
                 plan.feedback = feedback()
                 self.session.run.return_value = result
-                with patch.object(install.architecture, "check_docker"), patch.object(install.payload, "build_payload"), patch(
-                    "tg2cloud.deployment.proxy.external_entry.apply_payload_network"
+                with patch.object(install.architecture, "check_docker"), nullcontext(), patch(
+                    "tgcloud.deployment.proxy.external_entry.apply_payload_network"
                 ), patch.object(install.upgrade, "record_release") as record, self.assertRaises(RuntimeError):
                     install.apply_base(plan, RELEASE, ROOT, self.session, self.log)
                 record.assert_not_called()
         plan = self.plan()
         plan.feedback = feedback()
         self.session.run.return_value = (0, SUCCESS)
-        with patch.object(install.architecture, "check_docker"), patch.object(install.architecture, "check_container"), patch.object(
-            install.payload, "build_payload"
-        ), patch("tg2cloud.deployment.proxy.external_entry.apply_payload_network"), patch.object(
+        with patch.object(install.architecture, "check_docker"), patch.object(install.architecture, "check_container"), nullcontext(), patch("tgcloud.deployment.proxy.external_entry.apply_payload_network"), patch.object(
             configuration, "regular_private", side_effect=lambda path: path.read_bytes()
         ), patch.object(install.upgrade, "record_release") as record:
             # This test owns a runner-user fixture, not a root-owned installation.
@@ -369,8 +369,8 @@ class ExecutionSummaryTests(unittest.TestCase):
     def test_cli_exit_codes_distinguish_skipped_passed_and_failed_webdav(self):
         for verify, confirmation, verify_result, expected in (
             (False, None, (0, ""), 0), (True, False, (0, ""), 0),
-            (True, True, (0, "TG2CLOUD_DESTINATION=OK\n"), 0),
-            (True, True, (1, "TG2CLOUD_DESTINATION=OK\n"), 1),
+            (True, True, (0, "TGCLOUD_DESTINATION=OK\n"), 0),
+            (True, True, (1, "TGCLOUD_DESTINATION=OK\n"), 1),
         ):
             with self.subTest(verify=verify, confirmation=confirmation), ExitStack() as stack:
                 instance = replace(self.instance, version=VERSION)
@@ -385,11 +385,13 @@ class ExecutionSummaryTests(unittest.TestCase):
                     (instances, "check_foreign_gateway", None), (install.preflight, "resource_check", None),
                     (install.upgrade, "assert_unmodified", None), (install, "apply_base", None),
                     (install, "make_plan", plan), (vps, "LocalSession", session),
-                    (vps.releases, "ReleaseClient", client), (vps.terminal, "Terminal", ui),
+                    (releases, "ReleaseClient", client), (vps.terminal, "Terminal", ui),
                     (vps, "SafeLog", SafeLog(self.messages.append)), (install, "edition_lock", nullcontext()),
+                    (vps.runtime, "check_destination", None), (vps.runtime, "install_release", None),
+                    (vps.runtime, "lifecycle_lock", nullcontext()),
                 ):
                     stack.enter_context(patch.object(target, name, return_value=value))
-                arguments = ["--edition", self.product.key] + (["--verify"] if verify else [])
+                arguments = ["--edition", self.product.key, "--source-dir", str(ROOT)] + (["--verify"] if verify else [])
                 self.assertEqual(vps.main(arguments), expected)
                 self.assertEqual(ui.confirm.call_count, 2 if verify else 1)
                 writes = [call for call in session.run.call_args_list if "manage.sh verify" in call.args[0]]

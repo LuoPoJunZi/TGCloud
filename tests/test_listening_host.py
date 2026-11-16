@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import mock_open, patch
 
-from tg2cloud.deployment.listening import main
+from tgcloud.deployment.listening import main
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,7 +19,7 @@ class HostListeningTests(unittest.TestCase):
         code = (
             "import sys;sys.path.insert(0,"
             + repr(str(ROOT / "src"))
-            + ");from tg2cloud.cli.commands import main;main(['listen','--help'])"
+            + ");from tgcloud.cli.commands import main;main(['listen','--help'])"
         )
         result = subprocess.run(
             [sys.executable, "-I", "-S", "-B", "-c", code],
@@ -33,25 +33,25 @@ class HostListeningTests(unittest.TestCase):
         self.assertNotIn("ModuleNotFoundError", result.stderr)
 
     def test_verified_existing_container_is_only_touched_identity(self):
-        for edition, redirected in ((e, r) for e in ("clouddrive2", "openlist") for r in (False, True)):
+        for edition, redirected in ((e, r) for e in ("clouddrive2",) for r in (False, True)):
             with self.subTest(edition=edition, redirected=redirected), contextlib.ExitStack() as stack:
                 stack.enter_context(
-                    patch("tg2cloud.deployment.preflight.validate_host")
+                    patch("tgcloud.deployment.preflight.validate_host")
                 )
                 checked = stack.enter_context(
-                    patch("tg2cloud.deployment.architecture.check_docker")
+                    patch("tgcloud.deployment.architecture.check_docker")
                 )
                 stack.enter_context(
-                    patch("tg2cloud.deployment.architecture.check_environment")
+                    patch("tgcloud.deployment.architecture.check_environment")
                 )
                 stack.enter_context(
                     patch(
-                        "tg2cloud.deployment.listening.shutil.which",
+                        "tgcloud.deployment.listening.shutil.which",
                         return_value="/usr/bin/docker",
                     )
                 )
                 stack.enter_context(
-                    patch("tg2cloud.deployment.listening.os.isatty", side_effect=lambda fd, redirected=redirected: not redirected or fd == 77)
+                    patch("tgcloud.deployment.listening.os.isatty", side_effect=lambda fd, redirected=redirected: not redirected or fd == 77)
                 )
                 opened = mock_open()
                 opened.return_value.fileno.return_value = 77
@@ -60,25 +60,25 @@ class HostListeningTests(unittest.TestCase):
                 stack.enter_context(patch("builtins.open", opened))
                 stack.enter_context(
                     patch(
-                        "tg2cloud.deployment.host.edition_lock",
+                        "tgcloud.deployment.host.edition_lock",
                         return_value=contextlib.nullcontext(),
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "tg2cloud.deployment.instances.docker_inventory",
+                        "tgcloud.deployment.instances.docker_inventory",
                         return_value=set(),
                     )
                 )
                 discovery = stack.enter_context(
                     patch(
-                        "tg2cloud.deployment.instances.discover",
+                        "tgcloud.deployment.instances.discover",
                         return_value=SimpleNamespace(present=True, running=True),
                     )
                 )
                 runner = stack.enter_context(
                     patch(
-                        "tg2cloud.deployment.listening.subprocess.run",
+                        "tgcloud.deployment.listening.subprocess.run",
                         return_value=SimpleNamespace(returncode=0),
                     )
                 )
@@ -105,11 +105,11 @@ class HostListeningTests(unittest.TestCase):
                         "/usr/bin/docker",
                         "exec",
                         "-it",
-                        f"tg2cloud-{edition}-bot",
+                        f"tgcloud-{edition}-bot",
                         "python",
                         "-B",
                         "-m",
-                        "tg2cloud.listening.account",
+                        "tgcloud.listening.account",
                         "login",
                     ],
                 )
@@ -125,10 +125,10 @@ class HostListeningTests(unittest.TestCase):
     def test_invalid_or_partial_instance_never_executes_login(self):
         with (
             patch(
-                "tg2cloud.deployment.preflight.validate_host",
+                "tgcloud.deployment.preflight.validate_host",
                 side_effect=ValueError("unsupported"),
             ),
-            patch("tg2cloud.deployment.listening.subprocess.run") as run,
+            patch("tgcloud.deployment.listening.subprocess.run") as run,
             contextlib.redirect_stdout(io.StringIO()),
         ):
             self.assertEqual(main(["login", "--edition", "clouddrive2"]), 1)
@@ -139,10 +139,10 @@ class ExplicitStableReleaseTests(unittest.TestCase):
     def test_both_installers_pass_exact_stable_tag_without_writes_in_check_mode(self):
         from unittest.mock import Mock
 
-        from tg2cloud.cli import vps
-        from tg2cloud.deployment import architecture, instances, releases
-        from tg2cloud.deployment.profiles import PRODUCTS
-        from tg2cloud.deployment.proxy import lan
+        from tgcloud.cli import vps
+        from tgcloud.deployment import architecture, instances, releases
+        from tgcloud.deployment.profiles import PRODUCTS
+        from tgcloud.deployment.proxy import lan
         for module in (vps, lan):
             for edition in PRODUCTS:
                 with self.subTest(mode=module.__name__, edition=edition), contextlib.ExitStack() as stack:
@@ -167,13 +167,14 @@ class ExplicitStableReleaseTests(unittest.TestCase):
                         stack.enter_context(patch.object(lan, "make_plan", return_value=Mock()))
                         stack.enter_context(patch.object(lan, "preview"))
                         execute = stack.enter_context(patch.object(lan, "execute"))
-                    self.assertEqual(module.main(["--edition", edition, "--release", "v1.4.9", "--check"]), 0)
-                    client.resolve.assert_called_once_with("v1.4.9")
+                    self.assertEqual(module.main(["--edition", edition, "--source-dir", str(ROOT), "--check"]), 0)
+                    client.resolve.assert_not_called()
+                    client.download.assert_not_called()
                     terminal.assert_not_called()
                     execute.assert_not_called()
 
     def test_explicit_nonstable_release_remains_rejected_before_network(self):
-        from tg2cloud.deployment.releases import ReleaseClient
+        from tgcloud.deployment.releases import ReleaseClient
         client = ReleaseClient()
         with patch.object(client, "json") as network:
             for tag in ("main", "v1.5.0-rc.1", "v1.4.9;echo bad", "v01.4.9"):

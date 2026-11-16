@@ -6,7 +6,6 @@ import ast
 import io
 import json
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -17,22 +16,24 @@ from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
+from payload_fixture import historical_file
 from test_deployment import BASH, bash_path
 
-import tg2cloud.cli.terminal as tgdep_terminal
-import tg2cloud.deployment.install as tgdep_install
-import tg2cloud.deployment.instances as tgdep_instances
-import tg2cloud.deployment.payload as tgdep_payload
-import tg2cloud.deployment.preflight as tgdep_preflight
-import tg2cloud.deployment.releases as tgdep_releases
-import tg2cloud.deployment.upgrade as tgdep_upgrade
-from tg2cloud.deployment.host import SafeLog
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.deployment.proxy import lan
+import tgcloud.cli.terminal as tgdep_terminal
+import tgcloud.deployment.install as tgdep_install
+import tgcloud.deployment.instances as tgdep_instances
+import tgcloud.deployment.payload as tgdep_payload
+import tgcloud.deployment.preflight as tgdep_preflight
+import tgcloud.deployment.releases as tgdep_releases
+import tgcloud.deployment.upgrade as tgdep_upgrade
+from tgcloud.deployment import local_source
+from tgcloud.deployment.host import SafeLog
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.proxy import lan
 
 ROOT = Path(__file__).resolve().parents[1]
 IP = "192.168.26.5"
-RELEASE = tgdep_releases.Release("v" + PRODUCTS["clouddrive2"].app_version, "a" * 40)
+RELEASE = local_source.LocalSource(ROOT, PRODUCTS["clouddrive2"].app_version, "a" * 64)
 
 
 def interface(address=IP, *, name="eth0", flags=None, prefix=24):
@@ -44,8 +45,8 @@ def instance(product, *, present=True, version=None):
     return tgdep_instances.Instance(product, Path(product.install_dir), present,
                         version or (product.app_version if present else ""), present,
                         "gateway@sha256:" + "b" * 64 if present else "",
-                        {"BOT_TOKEN": "FAKE_OFFLINE_SECRET", "TG2CLOUD_STORAGE_BACKEND": product.key} if present else {},
-                        b"BOT_TOKEN=FAKE_OFFLINE_SECRET\n" if present else b"")
+                        {"BOT_TOKEN": "FAKE_OFFLINE_SECRET", "TGCLOUD_STORAGE_BACKEND": product.key} if present else {},
+                        b"BOT_TOKEN=FAKE_OFFLINE_SECRET\n" if present else b"", "a" * 64 if present else "")
 
 
 def inspected(product, *, running=True):
@@ -54,8 +55,8 @@ def inspected(product, *, running=True):
             "privileged": False, "user": "101:101", "entrypoint": ["nginx"], "command": ["-g", "daemon off;"],
             "cap_add": None, "cap_drop": ["ALL"], "security": ["no-new-privileges:true"],
             "tmpfs": {"/tmp": "rw,noexec,nosuid,mode=1777,size=64m"},
-            "labels": {"com.tg2cloud.managed": "true", "com.tg2cloud.role": "lan-management",
-                       "com.tg2cloud.edition": product.key, "com.docker.compose.project": lan.container_name(product),
+            "labels": {"com.tgcloud.managed": "true", "com.tgcloud.role": "lan-management",
+                       "com.tgcloud.edition": product.key, "com.docker.compose.project": lan.container_name(product),
                        "com.docker.compose.service": "lan", "com.docker.compose.project.working_dir": str(directory),
                        "com.docker.compose.project.config_files": str(directory / "compose.json")},
             "mounts": [{"Type": "bind", "Source": str(directory / "nginx.conf"),
@@ -184,8 +185,9 @@ class StateTests(unittest.TestCase):
         self.root.joinpath("domains.json").write_text(json.dumps({"domains": {"openlist": {"domain": "files.example.test"}}}))
         self.root.joinpath("domains.json").chmod(0o600)
         lan.reject_https_route(PRODUCTS["clouddrive2"])
+        self.root.joinpath("domains.json").write_text(json.dumps({"domains": {"clouddrive2": {"domain": "files.example.test"}}}))
         with self.assertRaisesRegex(ValueError, "HTTPS"):
-            lan.reject_https_route(PRODUCTS["openlist"])
+            lan.reject_https_route(PRODUCTS["clouddrive2"])
 
     def test_unparseable_https_state_fails_closed(self):
         for content in ('{}', '[]', '{"domains": []}', 'bad json'):
@@ -197,7 +199,7 @@ class StateTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "posix", "POSIX file permissions")
     def test_private_permissions_and_nonroot_ownership_fail_closed(self):
-        product = PRODUCTS["openlist"]
+        product = PRODUCTS["clouddrive2"]
         lan.save_state(product, IP)
         directory = lan.LAN_ROOT / product.key
         self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
@@ -220,7 +222,7 @@ class StateTests(unittest.TestCase):
             lan.private_directory(fake)
 
     def test_symlink_is_not_followed_or_deleted(self):
-        product = PRODUCTS["openlist"]
+        product = PRODUCTS["clouddrive2"]
         lan.save_state(product, IP)
         target = self.root / "user.txt"
         target.write_text("preserve me")
@@ -269,7 +271,7 @@ class GatewayTests(unittest.TestCase):
                     lan.inspect_lan(product, session, {lan.container_name(product)})
 
     def test_absent_proxy_is_not_inspected_and_inspect_error_fails(self):
-        product, session = PRODUCTS["openlist"], Mock()
+        product, session = PRODUCTS["clouddrive2"], Mock()
         self.assertIsNone(lan.inspect_lan(product, session, set()))
         session.run.assert_not_called()
         session.run.return_value = (1, "")
@@ -280,10 +282,10 @@ class GatewayTests(unittest.TestCase):
         with patch.object(lan.socket, "socket") as socket:
             socket.return_value.__enter__.return_value.bind.side_effect = OSError("in use")
             with self.assertRaisesRegex(ValueError, "更换端口"):
-                lan.check_port(PRODUCTS["openlist"], IP, False)
-            socket.return_value.__enter__.return_value.bind.assert_called_once_with((IP, 5244))
+                lan.check_port(PRODUCTS["clouddrive2"], IP, False)
+            socket.return_value.__enter__.return_value.bind.assert_called_once_with((IP, 19798))
         with patch.object(lan.socket, "socket") as socket:
-            lan.check_port(PRODUCTS["openlist"], IP, True)
+            lan.check_port(PRODUCTS["clouddrive2"], IP, True)
             socket.assert_not_called()
 
     def test_backend_published_address_must_remain_loopback(self):
@@ -327,11 +329,11 @@ class GatewayTests(unittest.TestCase):
 
     def test_startup_probes_are_bounded_and_never_repeat_writes(self):
         with patch.object(lan, "check_entry", side_effect=[OSError("starting"), None]) as probe, patch.object(lan.time, "sleep") as sleep:
-            lan.wait_for_entry(PRODUCTS["openlist"], IP)
+            lan.wait_for_entry(PRODUCTS["clouddrive2"], IP)
             self.assertEqual(probe.call_count, 2)
             sleep.assert_called_once_with(0.5)
         with patch.object(lan, "check_entry", side_effect=ValueError("blocked")), patch.object(lan.time, "monotonic", side_effect=[0, 21]), self.assertRaisesRegex(RuntimeError, "未通过"):
-            lan.wait_for_entry(PRODUCTS["openlist"], IP)
+            lan.wait_for_entry(PRODUCTS["clouddrive2"], IP)
 
     def test_http_probe_does_not_use_environment_proxy_follow_redirects_or_echo_body(self):
         response = MagicMock()
@@ -341,10 +343,10 @@ class GatewayTests(unittest.TestCase):
         opener = Mock()
         opener.open.return_value = response
         with patch.object(lan.urllib.request, "build_opener", return_value=opener) as build:
-            self.assertEqual(lan.request_status(PRODUCTS["openlist"], IP, "/"), (200, "openlist"))
+            self.assertEqual(lan.request_status(PRODUCTS["clouddrive2"], IP, "/"), (200, "openlist"))
         self.assertEqual(build.call_args.args[0].proxies, {})
         self.assertIsInstance(build.call_args.args[1], lan.NoRedirect)
-        self.assertEqual(opener.open.call_args.args[0].full_url, f"http://{IP}:5244/")
+        self.assertEqual(opener.open.call_args.args[0].full_url, f"http://{IP}:19798/")
         response.read.assert_not_called()
         self.assertIsNone(lan.NoRedirect().redirect_request(None, None, 302, "", {}, "https://external.test/"))
 
@@ -353,10 +355,10 @@ class PlanExecutionTests(unittest.TestCase):
     def assert_readonly_feedback(self, session, offset=0):
         calls = session.run.call_args_list[offset:]
         self.assertEqual(len(calls), 5)
-        self.assertEqual(calls[0].args, ("docker exec " + self.product.bot_container + " python -B -m tg2cloud.monitoring.readiness",))
+        self.assertEqual(calls[0].args, ("docker exec " + self.product.bot_container + " python -B -m tgcloud.monitoring.readiness",))
         self.assertEqual(calls[0].kwargs, {"timeout": 20})
         expected = (self.product.bot_container, self.product.storage_container,
-                    "tg2cloud-proxy-nginx", "tg2cloud-proxy-certbot")
+                    "tgcloud-proxy-nginx", "tgcloud-proxy-certbot")
         for call, name in zip(calls[1:], expected):
             args = shlex.split(call.args[0])
             self.assertEqual(args[:4], ["docker", "container", "inspect", "--format"])
@@ -411,7 +413,7 @@ class PlanExecutionTests(unittest.TestCase):
         self.patches["save_state"].assert_not_called()
 
     def test_upgrade_preserves_raw_config_and_saved_address_without_prompt(self):
-        self.instance.version = "1.1.4"
+        self.instance.version = "0.0.0"
         ui = Mock()
         plan = self.plan(ui=ui)
         self.assertEqual(plan.action, "upgrade")
@@ -425,13 +427,13 @@ class PlanExecutionTests(unittest.TestCase):
         self.patches["save_state"].assert_not_called()
 
     def test_gateway_digest_migration_is_not_silently_applied(self):
-        self.instance.version = "1.1.4"
+        self.instance.version = "0.0.0"
         self.patches["gateway_image"].return_value = "different@sha256:" + "c" * 64
         with self.assertRaisesRegex(ValueError, "人工迁移"):
             self.plan()
 
     def test_final_capacity_loss_does_not_save_lan_state_or_deploy(self):
-        self.instance.version = "1.1.4"
+        self.instance.version = "0.0.0"
         plan = self.plan()
         self.patches["resource_check"].side_effect = ValueError("资源不足")
         with patch.object(lan, "edition_lock", return_value=nullcontext()), patch.object(tgdep_instances, "discover", return_value=self.instance), patch.object(tgdep_install, "apply_base") as apply, self.assertRaisesRegex(ValueError, "资源不足"):
@@ -508,7 +510,7 @@ class PlanExecutionTests(unittest.TestCase):
         self.assertIn("run --rm --no-deps lan -t", commands[2])
         self.assertTrue(all("compose.json" in command for command in commands[:4]))
         self.assert_readonly_feedback(session, offset=4)
-        self.assertFalse(any("certbot" in command or "tg2cloud-proxy" in command for command in commands[:4]))
+        self.assertFalse(any("certbot" in command or "tgcloud-proxy" in command for command in commands[:4]))
         self.patches["verify_destination"].assert_not_called()
         self.assertIn("HTTPS=NOT_APPLICABLE", "\n".join(self.messages))
 
@@ -534,7 +536,7 @@ class PlanExecutionTests(unittest.TestCase):
             lan.execute(plan, RELEASE, ROOT, ROOT, session, self.log, Mock())
         apply.assert_called_once()
         self.patches["save_state"].assert_called_once()
-        self.assertNotIn("TG2CLOUD_LAN_BASE=OK", "\n".join(self.messages))
+        self.assertNotIn("TGCLOUD_LAN_BASE=OK", "\n".join(self.messages))
         self.patches["verify_destination"].assert_not_called()
 
     def test_healthy_entry_revalidated_without_restart_and_verify_requires_explicit_flow(self):
@@ -584,8 +586,9 @@ class MainBootstrapTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
-        self.product = PRODUCTS["openlist"]
+        self.product = PRODUCTS["clouddrive2"]
         self.instance = instance(self.product)
+        self.stack.enter_context(patch.object(local_source, "snapshot", side_effect=lambda path: nullcontext(RELEASE)))
         self.plan = lan.Plan(self.instance, "current", IP, lan.state_for(self.product, IP), dict(self.instance.config), True, True)
         self.messages = []
         self.log = SafeLog(self.messages.append)
@@ -602,21 +605,21 @@ class MainBootstrapTests(unittest.TestCase):
         self.execute = self.stack.enter_context(patch.object(lan, "execute"))
 
     def test_check_does_not_open_terminal_write_config_or_apply(self):
-        self.assertEqual(lan.main(["--edition", "openlist", "--check"]), 0)
+        self.assertEqual(lan.main(["--edition", "clouddrive2", "--check"]), 0)
         self.terminal.assert_not_called()
         self.execute.assert_not_called()
-        self.assertIn("TG2CLOUD_LAN_CHECK=OK", "\n".join(self.messages))
+        self.assertIn("TGCLOUD_LAN_CHECK=OK", "\n".join(self.messages))
 
     def test_check_fails_if_existing_entry_is_unhealthy_instead_of_claiming_pass(self):
         self.plan.entry_healthy = False
-        self.assertEqual(lan.main(["--edition", "openlist", "--check"]), 1)
+        self.assertEqual(lan.main(["--edition", "clouddrive2", "--check"]), 1)
         self.execute.assert_not_called()
-        self.assertNotIn("TG2CLOUD_LAN_CHECK=OK", "\n".join(self.messages))
+        self.assertNotIn("TGCLOUD_LAN_CHECK=OK", "\n".join(self.messages))
 
     def test_check_rejects_verify_or_credentials_before_environment(self):
         for extra in ("--verify", "--show-credentials"):
             with self.subTest(extra=extra):
-                self.assertEqual(lan.main(["--edition", "openlist", "--check", extra]), 1)
+                self.assertEqual(lan.main(["--edition", "clouddrive2", "--check", extra]), 1)
         self.execute.assert_not_called()
         self.client.assert_not_called()
         self.terminal.assert_not_called()
@@ -625,13 +628,13 @@ class MainBootstrapTests(unittest.TestCase):
         for action in ("current", "newer"):
             self.plan.action = action
             with self.subTest(action=action):
-                self.assertEqual(lan.main(["--edition", "openlist"]), 0)
+                self.assertEqual(lan.main(["--edition", "clouddrive2"]), 0)
         self.execute.assert_not_called()
         self.ui.confirm.assert_not_called()
 
     def test_default_confirmation_declines_and_closes_terminal(self):
         self.plan.action = "upgrade"
-        self.assertEqual(lan.main(["--edition", "openlist"]), 0)
+        self.assertEqual(lan.main(["--edition", "clouddrive2"]), 0)
         self.execute.assert_not_called()
         self.ui.confirm.assert_called_once()
         self.ui.close.assert_called_once()
@@ -640,13 +643,13 @@ class MainBootstrapTests(unittest.TestCase):
     def test_confirmation_yes_runs_only_the_selected_edition(self):
         self.plan.action = "upgrade"
         self.ui.confirm.return_value = True
-        self.assertEqual(lan.main(["--edition", "openlist"]), 0)
+        self.assertEqual(lan.main(["--edition", "clouddrive2"]), 0)
         self.execute.assert_called_once()
-        self.assertEqual(self.execute.call_args.args[0].instance.product.key, "openlist")
+        self.assertEqual(self.execute.call_args.args[0].instance.product.key, "clouddrive2")
 
     def test_credentials_view_never_resolves_release_or_installs(self):
         with patch.object(lan, "reject_https_route"), patch.object(tgdep_terminal, "show_credentials") as show:
-            self.assertEqual(lan.main(["--edition", "openlist", "--show-credentials"]), 0)
+            self.assertEqual(lan.main(["--edition", "clouddrive2", "--show-credentials"]), 0)
         show.assert_called_once()
         self.client.assert_not_called()
         self.execute.assert_not_called()
@@ -656,46 +659,30 @@ class MainBootstrapTests(unittest.TestCase):
         self.plan.action = "upgrade"
         self.ui.confirm.return_value = True
         self.execute.side_effect = RuntimeError("FAKE_OFFLINE_SECRET")
-        self.assertEqual(lan.main(["--edition", "openlist"]), 1)
+        self.assertEqual(lan.main(["--edition", "clouddrive2"]), 1)
         self.assertNotIn("FAKE_OFFLINE_SECRET", "\n".join(self.messages))
         self.execute.side_effect = KeyboardInterrupt
-        self.assertEqual(lan.main(["--edition", "openlist"]), 130)
+        self.assertEqual(lan.main(["--edition", "clouddrive2"]), 130)
         self.assertIn("不假定已恢复", "\n".join(self.messages))
 
-    def test_standalone_bootstrap_is_stdlib_immutable_and_fail_closed(self):
-        content = (ROOT / "install-lan.sh").read_text(encoding="utf-8")
-        self.assertRegex(content, r'(?m)^installer_commit="[0-9a-f]{40}"$')
-        self.assertIn('if [[ ! "$installer_commit" =~ ^[0-9a-f]{40}$ ]]; then', content)
-        embedded = content.split("<<'PY' &\n", 1)[1].split("\nPY\n", 1)[0]
-        ast.parse(embedded)
-        self.assertNotIn("/main/", embedded)
-        self.assertIn("'src/tg2cloud/deployment/proxy/lan.py'", embedded)
-        self.assertIn("trap cancel INT TERM HUP", content)
+    def test_local_lan_entry_is_stdlib_only_and_has_no_download_fallback(self):
+        text = (ROOT / "install-lan.sh").read_text(encoding="utf-8")
+        self.assertIn('exec python3 -B "$script_root/scripts/run_source.py" lan "$@"', text)
+        self.assertNotIn("installer_commit", text)
+        self.assertNotIn("curl", text)
+        ast.parse((ROOT / "scripts/run_source.py").read_text(encoding="utf-8"))
 
-    def test_bootstrap_downloads_exact_pin_and_bounded_allowlisted_sources(self):
-        from payload_fixture import historical_file
-
-        content = (ROOT / "install-lan.sh").read_text(encoding="utf-8")
-        embedded = content.split("<<'PY' &\n", 1)[1].split("\nPY\n", 1)[0]
-        pin = re.search(r'^installer_commit="([0-9a-f]{40})"$', content, re.MULTILINE)[1]
-        urls = []
-
-        def fetch(request, *, timeout):
-            self.assertEqual(timeout, 30)
-            urls.append(request.full_url)
-            prefix = "https://raw.githubusercontent.com/LuoPoJunZi/TG2Cloud/" + pin + "/"
-            self.assertTrue(request.full_url.startswith(prefix))
-            return io.BytesIO(historical_file(pin, request.full_url.removeprefix(prefix)))
-
-        with tempfile.TemporaryDirectory() as private, patch("sys.argv", ["bootstrap", private, pin]), patch("sys.stdout", io.StringIO()), patch("urllib.request.build_opener", return_value=Mock(open=Mock(side_effect=fetch))):
-            exec(compile(embedded, "LAN bootstrap", "exec"), {})  # noqa: S102 - repo-owned code, mocked networking
-            self.assertTrue((Path(private) / "src/tg2cloud/deployment/proxy/lan.py").is_file())
-        helpers = json.loads(historical_file(pin, "packaging/bootstrap-manifest.json"))["files"]
-        self.assertEqual({url.rsplit(pin + "/", 1)[1] for url in urls}, set(helpers))
-        self.assertEqual(len(urls), len(helpers))
+    def test_lan_uses_complete_public_source_snapshot_without_online_resolution(self):
+        from tgcloud.deployment import local_source
+        with patch.object(tgdep_releases, "ReleaseClient") as online, local_source.snapshot(ROOT) as source:
+            names = set(local_source.content(source.root))
+            self.assertIn("src/tgcloud/deployment/proxy/lan.py", names)
+            self.assertNotIn(".env", names)
+            self.assertFalse(any("openlist" in name for name in names))
+        online.assert_not_called()
 
     def test_bootstrap_rejects_failed_or_oversized_downloads_without_fallback(self):
-        content = (ROOT / "install-lan.sh").read_text(encoding="utf-8")
+        content = historical_file("63ebaa37d042c3cb76d006df8e7b4d447cd8ef73", "install-lan.sh").decode("utf-8")
         embedded = content.split("<<'PY' &\n", 1)[1].split("\nPY\n", 1)[0]
         for error in (OSError("FAKE_DOWNLOAD_SECRET"), None):
             with self.subTest(error=error), tempfile.TemporaryDirectory() as private:
@@ -710,44 +697,16 @@ class MainBootstrapTests(unittest.TestCase):
                 self.assertEqual(stopped.exception.code, 2)
                 self.assertEqual(opener.open.call_count, 1)
                 self.assertNotIn("FAKE_DOWNLOAD_SECRET", errors.getvalue())
-                self.assertFalse((Path(private) / "src/tg2cloud/deployment/proxy/lan.py").exists())
+                self.assertFalse((Path(private) / "src/tgcloud/deployment/proxy/lan.py").exists())
 
-    @unittest.skipUnless(os.name == "posix", "Linux process substitution and bootstrap cleanup")
     def test_process_substitution_forwards_arguments_exit_and_cleans_own_directory(self):
-        content = (ROOT / "install-lan.sh").read_text(encoding="utf-8")
-        # This test uses a fixed offline pin even before the reviewed online pin
-        # is enabled; python3 is a shell fixture, never a real installer.
-        content = re.sub(r'^installer_commit="[0-9a-f]*"$', 'installer_commit="' + "b" * 40 + '"', content, flags=re.MULTILINE)
-        for bootstrap_exit, cli_exit in ((0, 0), (0, 7), (9, 0)):
-            with self.subTest(bootstrap_exit=bootstrap_exit, cli_exit=cli_exit), tempfile.TemporaryDirectory() as private:
-                command = r'''
-python3() {
-  if [[ "$1" == -c ]]; then return 0; fi
-  if [[ "$1" == - ]]; then
-    cat >/dev/null
-    printf '%s\n' "$2" > "$FIXTURE_DIR/bootstrap-path"
-    return "$FIXTURE_BOOTSTRAP_EXIT"
-  fi
-  printf '%s\n' "$@" > "$FIXTURE_DIR/cli-args"
-  return "$FIXTURE_CLI_EXIT"
-}
-export -f python3
-'''
-                command += "bash <(printf %s " + shlex.quote(content) + ") --edition clouddrive2 --lan-ip " + IP + " --check"
-                env = {**os.environ, "FIXTURE_DIR": private, "FIXTURE_BOOTSTRAP_EXIT": str(bootstrap_exit), "FIXTURE_CLI_EXIT": str(cli_exit)}
-                result = subprocess.run(["bash", "-c", command], cwd=private, env=env, capture_output=True, text=True, timeout=15, check=False)
-                self.assertEqual(result.returncode, bootstrap_exit or cli_exit, result.stderr)
-                fixture = Path(private)
-                self.assertFalse(Path((fixture / "bootstrap-path").read_text().strip()).exists())
-                if bootstrap_exit:
-                    self.assertFalse((fixture / "cli-args").exists())
-                else:
-                    self.assertEqual((fixture / "cli-args").read_text().splitlines(), ["-B", "scripts/run_source.py", "lan", "--edition", "clouddrive2", "--lan-ip", IP, "--check"])
+        from local_project_fixture import check_shell_entry
+        check_shell_entry(self, BASH, "install-lan.sh", "lan", ["--lan-ip", IP, "--check"])
 
     @unittest.skipUnless(BASH, "Bash unavailable")
     def test_local_lan_entry_from_another_working_directory_forwards_arguments_and_exit(self):
         for code in (0, 7):
-            with self.subTest(code=code), tempfile.TemporaryDirectory(prefix="tg2cloud lan shell ") as private:
+            with self.subTest(code=code), tempfile.TemporaryDirectory(prefix="tgcloud lan shell ") as private:
                 directory = Path(private).resolve()
                 tools = directory / "bin"
                 tools.mkdir()
@@ -755,7 +714,7 @@ export -f python3
                 python.write_text('#!/usr/bin/env bash\nif [[ "$1" == -c ]]; then exit 0; fi\nprintf "%s\\n" "$@" > "$FIXTURE_ARGS"\nexit "$FIXTURE_EXIT"\n',
                                   encoding="utf-8", newline="\n")
                 python.chmod(0o700)
-                arguments = ["--edition", "openlist", "--lan-ip", IP, "--check"]
+                arguments = ["--edition", "clouddrive2", "--lan-ip", IP, "--check"]
                 command = "PATH=" + shlex.quote(bash_path(tools)) + ':"$PATH" bash ' + shlex.quote(bash_path(ROOT / "install-lan.sh"))
                 command += " " + " ".join(map(shlex.quote, arguments))
                 output = directory / "arguments"
@@ -767,11 +726,11 @@ export -f python3
                                  ["-B", bash_path(ROOT / "scripts/run_source.py"), "lan", *arguments])
 
     def test_lan_entry_imports_only_public_linux_helpers(self):
-        tree = ast.parse((ROOT / "src/tg2cloud/deployment/proxy/lan.py").read_text(encoding="utf-8"))
+        tree = ast.parse((ROOT / "src/tgcloud/deployment/proxy/lan.py").read_text(encoding="utf-8"))
         imports = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
-        self.assertIn("tg2cloud.deployment.profiles", imports)
-        self.assertIn("tg2cloud.deployment.proxy.manager", imports)
-        self.assertNotIn("tg2cloud.cli.vps", imports)
+        self.assertIn("tgcloud.deployment.profiles", imports)
+        self.assertIn("tgcloud.deployment.proxy.manager", imports)
+        self.assertNotIn("tgcloud.cli.vps", imports)
         self.assertFalse(any(name.startswith(("legacy", "PySide6", "paramiko")) for name in imports))
 
     def test_help_and_shell_syntax_do_not_require_qt_root_or_docker(self):

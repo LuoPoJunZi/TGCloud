@@ -12,8 +12,8 @@ test('blocks dangerous URL schemes',()=>{
   assert.equal(safeUrl('/guide/quick-start/'),'/guide/quick-start/');
 });
 test('headings have predictable unique IDs',()=>{
-  const out=renderMarkdown('# Test\n\n## TG2Cloud v1.0.2\n\n## 同名\n\n## 同名');
-  assert.deepEqual(out.headings.map(h=>h.id),['test','tg2cloud-v1-0-2','同名','同名-1']);
+  const out=renderMarkdown('# Test\n\n## TGCloud v1.0.2\n\n## 同名\n\n## 同名');
+  assert.deepEqual(out.headings.map(h=>h.id),['test','tgcloud-v1-0-2','同名','同名-1']);
   assert.equal(slugify('WebDAV 验收'),'webdav-验收');
 });
 test('renders supported lists, tables and links',()=>{

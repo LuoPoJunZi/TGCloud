@@ -36,20 +36,22 @@ def verify():
             or not isinstance(value.get("files"), dict) or not value["files"]):
         raise ValueError("unsupported HTTPS tools manifest")
     files = value["files"]
-    resources = {"packaging/compose/docker-compose.clouddrive2.yml",
-                 "packaging/compose/docker-compose.openlist.yml"}
+    resources = {"packaging/compose/docker-compose.clouddrive2.yml", "packaging/compose-https.sh",
+                 "packaging/bootstrap-manifest.json", "packaging/compose-release.json",
+                 "packaging/external-webdav.json"}
     for name, digest in files.items():
         path = PurePosixPath(name)
         if (not name or path.is_absolute() or path.as_posix() != name
                 or any(part in {".", ".."} for part in path.parts)
                 or "\\" in name or ":" in name
                 or not (name == "scripts/run_source.py" or name in resources
-                        or re.fullmatch(r"src/tg2cloud/(?:[a-z_][a-z0-9_]*/)*[a-z_][a-z0-9_]*\.py", name))
+                        or re.fullmatch(r"src/tgcloud/(?:[a-z_][a-z0-9_]*/)*[a-z_][a-z0-9_]*\.py", name))
                 or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)):
             raise ValueError("unsafe HTTPS tools manifest")
-    required = {"src/tg2cloud/__init__.py", "src/tg2cloud/version.py",
-                "src/tg2cloud/compose/__init__.py", "src/tg2cloud/compose/https.py",
-                "src/tg2cloud/compose/access.py"} | resources
+    required = {"src/tgcloud/__init__.py", "src/tgcloud/version.py",
+                "src/tgcloud/compose/__init__.py", "src/tgcloud/compose/https.py",
+                "src/tgcloud/compose/access.py", "src/tgcloud/compose/management.py",
+                "packaging/compose/docker-compose.clouddrive2.yml"}
     if not required <= files.keys():
         raise ValueError("incomplete HTTPS tools manifest")
     expected = set(files) | {"manifest.json"}
@@ -85,7 +87,7 @@ except (OSError, ValueError, TypeError, UnicodeError):
     print("HTTPS helper validation failed; use an intact verified Compose bundle.", file=sys.stderr)
     raise SystemExit(1)
 sys.path.insert(0, str(tools / "src"))
-sys.argv = ["tg2cloud.compose.https", "--root", str(root), *sys.argv[2:]]
-runpy.run_module("tg2cloud.compose.https", run_name="__main__")
+sys.argv = ["tgcloud.compose.https", "--root", str(root), *sys.argv[2:]]
+runpy.run_module("tgcloud.compose.https", run_name="__main__")
 PY
 exec python3 -I -S -B -c "$launcher" "$bundle_root" "$@"

@@ -12,7 +12,6 @@ import subprocess
 import tarfile
 import tempfile
 import textwrap
-import time
 import unittest
 from contextlib import nullcontext
 from pathlib import Path
@@ -22,12 +21,12 @@ from unittest.mock import AsyncMock, Mock, patch
 import test_review_regressions as review
 from test_deployment import BASH, bash_path
 
-from tg2cloud.deployment.profiles import (
-    OPENLIST_PRODUCT,
+from tgcloud.deployment.profiles import (
+    CLOUDDRIVE2_PRODUCT,
     RELEASE_VERSION,
 )
-from tg2cloud.deployment.proxy import maintenance as backups
-from tg2cloud.deployment.proxy.manager import (
+from tgcloud.deployment.proxy import maintenance as backups
+from tgcloud.deployment.proxy.manager import (
     DomainProxyManager,
     empty_state,
     render_certbot_loop,
@@ -176,9 +175,9 @@ class PrivateBackupTests(unittest.TestCase):
 class RenewalTests(unittest.TestCase):
     def test_dry_run_is_current_edition_only_and_not_force_renewal(self):
         session = SimpleNamespace(hold_lock=lambda *_args, **_kwargs: nullcontext())
-        manager = DomainProxyManager(session, OPENLIST_PRODUCT, {}, Mock())
-        manager.read_state = Mock(return_value=state_with_route(empty_state(), OPENLIST_PRODUCT, "ol.example.com"))
-        manager._run = Mock(return_value=(0, "TG2CLOUD_PROXY_TASK_CLEANUP=OK\n"))
+        manager = DomainProxyManager(session, CLOUDDRIVE2_PRODUCT, {}, Mock())
+        manager.read_state = Mock(return_value=state_with_route(empty_state(), CLOUDDRIVE2_PRODUCT, "ol.example.com"))
+        manager._run = Mock(return_value=(0, "TGCLOUD_PROXY_TASK_CLEANUP=OK\n"))
         self.assertIn("没有替换正式证书", manager.maintenance("renew_dry_run"))
         command = shlex.split(manager._run.call_args.args[0])[-1]
         self.assertIn("--dry-run", command)
@@ -195,16 +194,16 @@ class RenewalTests(unittest.TestCase):
     def test_failure_cleanup_is_exact_and_disconnect_preserves_original_error(self):
         session = SimpleNamespace(hold_lock=lambda *_args, **_kwargs: nullcontext())
         log = Mock()
-        manager = DomainProxyManager(session, OPENLIST_PRODUCT, {}, log)
-        manager.read_state = Mock(return_value=state_with_route(empty_state(), OPENLIST_PRODUCT, "ol.example.com"))
+        manager = DomainProxyManager(session, CLOUDDRIVE2_PRODUCT, {}, log)
+        manager.read_state = Mock(return_value=state_with_route(empty_state(), CLOUDDRIVE2_PRODUCT, "ol.example.com"))
         manager._run = Mock(side_effect=[TimeoutError("lost SSH"), RuntimeError("still disconnected")])
         with self.assertRaisesRegex(TimeoutError, "lost SSH"):
             manager.maintenance("renew_dry_run")
         cleanup = manager._run.call_args_list[1].args[0]
-        self.assertIn("com.tg2cloud.task", cleanup)
+        self.assertIn("com.tgcloud.task", cleanup)
         self.assertIn("maintenance-dry-run", cleanup)
         self.assertNotIn("docker stop", cleanup)
-        self.assertNotIn("tg2cloud-clouddrive2-bot", cleanup)
+        self.assertNotIn("tgcloud-clouddrive2-bot", cleanup)
         self.assertTrue(any("9 分钟" in call.args[0] for call in log.call_args_list))
 
     def test_renewal_alerts_handle_legacy_failed_stale_and_future_records(self):
@@ -220,16 +219,16 @@ class RenewalTests(unittest.TestCase):
     def test_backup_helper_deadline_and_selected_archive_are_scoped(self):
         session = Mock()
         session.run.return_value = (0, "")
-        manager = DomainProxyManager(session, OPENLIST_PRODUCT, {}, Mock())
-        manager._upload_files = Mock(return_value="/tmp/tg2cloud-proxy-" + "a" * 32)
-        manager._run = Mock(return_value=(0, "TG2CLOUD_PROXY_BACKUP=CHECK_OK\n"))
+        manager = DomainProxyManager(session, CLOUDDRIVE2_PRODUCT, {}, Mock())
+        manager._upload_files = Mock(return_value="/tmp/tgcloud-proxy-" + "a" * 32)
+        manager._run = Mock(return_value=(0, "TGCLOUD_PROXY_BACKUP=CHECK_OK\n"))
         archive = "proxy-20261008T000000Z-" + "b" * 32 + ".tar.gz"
         manager._backup_helper("check", archive=archive)
         command = manager._run.call_args.args[0]
         self.assertIn("--kill-after=15s 150s python3", command)
         self.assertIn("--archive " + archive, command)
         self.assertEqual(manager._run.call_args.kwargs["timeout"], 190)
-        self.assertEqual(session.run.call_args.args[0], "rm -rf -- /tmp/tg2cloud-proxy-" + "a" * 32)
+        self.assertEqual(session.run.call_args.args[0], "rm -rf -- /tmp/tgcloud-proxy-" + "a" * 32)
         manager._upload_files.reset_mock()
         with self.assertRaises(ValueError):
             manager._backup_helper("check", archive="../rclone.conf")
@@ -237,7 +236,7 @@ class RenewalTests(unittest.TestCase):
 
     def test_invalid_backup_plan_cannot_reach_ui(self):
         session = SimpleNamespace(hold_lock=lambda *_args, **_kwargs: nullcontext())
-        manager = DomainProxyManager(session, OPENLIST_PRODUCT, {}, Mock())
+        manager = DomainProxyManager(session, CLOUDDRIVE2_PRODUCT, {}, Mock())
         item = {"name": "proxy-20261008T000000Z-" + "a" * 32 + ".tar.gz", "created_utc": "2026-10-08 00:00:00 UTC", "size_bytes": 1, "integrity": "OK"}
         for retain in ([], [item["name"]]):
             with self.subTest(retain=retain):
@@ -257,7 +256,7 @@ class RenewalTests(unittest.TestCase):
                 (root / "docker").chmod(0o755)
                 protected = root / "protected"
                 protected.write_text("shared services", encoding="ascii")
-                script = f"export PATH={shlex.quote(bash_path(root))}:$PATH\nexport TG2CLOUD_TEST_TASK_ROOT={shlex.quote(bash_path(root))}\nexport TG2CLOUD_TEST_TASK_OWNER={shlex.quote(owner)}\n" + renewal_dry_run_command("ol.example.com", task_id, seconds=1)
+                script = f"export PATH={shlex.quote(bash_path(root))}:$PATH\nexport TGCLOUD_TEST_TASK_ROOT={shlex.quote(bash_path(root))}\nexport TGCLOUD_TEST_TASK_OWNER={shlex.quote(owner)}\n" + renewal_dry_run_command("ol.example.com", task_id, seconds=1)
                 result = subprocess.run([BASH, "-c", script], capture_output=True, timeout=15, check=False)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual((root / "container").exists(), owner != task_id)
@@ -283,7 +282,7 @@ class RenewalTests(unittest.TestCase):
                 cert.write_text("before", encoding="ascii")
                 loop = render_certbot_loop().replace("/status/", bash_path(root / "status") + "/").replace("/etc/letsencrypt/live/", bash_path(root / "live") + "/").replace("/var/log/letsencrypt/renew-console.log", bash_path(root / "log"))
                 stub = "certbot() { " + (f"printf after >{shlex.quote(bash_path(cert))}; " if changed else "") + ("return 0; }\n" if success else "return 1; }\n")
-                script = stub + "TG2CLOUD_CERT_NAMES=test.example\nwait() { exit 0; }\nsleep() { return 0; }\n" + loop
+                script = stub + "TGCLOUD_CERT_NAMES=test.example\nwait() { exit 0; }\nsleep() { return 0; }\n" + loop
                 result = subprocess.run([BASH, "-c", script], capture_output=True, timeout=15, check=False)
                 self.assertEqual(result.returncode, 0, result.stderr.decode())
                 history = (root / "status/test.example.check").read_text(encoding="ascii")
@@ -293,27 +292,27 @@ class RenewalTests(unittest.TestCase):
 
 
 class ProbeVisibilityTests(unittest.IsolatedAsyncioTestCase):
-    async def test_doctor_cooldown_time_is_actual_probe_not_message_refresh(self):
-        from tg2cloud.transfer.ports import DestinationProbe
-        service = review.OpenListReviewTests.service(DestinationProbe(False, "root", "limited", "rate_limited"))
-        service.settings.destination_label = "OpenList"
+    async def test_doctor_rendering_keeps_the_actual_cd2_probe_timestamp(self):
+        from tgcloud.transfer.ports import DestinationProbe
+        service = review.TransferService.__new__(review.TransferService)
+        service.settings = SimpleNamespace(storage_backend="clouddrive2", destination_label="CloudDrive2")
+        service.rclone = SimpleNamespace(probe=AsyncMock(return_value=DestinationProbe(False, "root", "合成限流", "rate_limited")))
+        service.log = Mock()
         service.db = SimpleNamespace(is_paused=lambda: False)
         service._sample_fresh = lambda: True
         service._destination_ready = lambda: service.destination_healthy
         service.download_window = service.upload_window = SimpleNamespace(value=1)
         await service._probe_destination_once()
         checked = service.destination_last_checked
-        text = service._format_doctor()
-        self.assertIn("限流等待", text)
-        self.assertIn("刷新不会绕过冷却", text)
-        self.assertIn("最近实际探测", text)
-        await service._probe_destination_once()
+        for _ in range(3):
+            self.assertIn("合成限流", service._format_doctor())
         self.assertEqual(service.destination_last_checked, checked)
         self.assertEqual(service.rclone.probe.await_count, 1)
-        service._destination_next_probe_at = time.monotonic() - 1
-        service.rclone.probe = AsyncMock(return_value=DestinationProbe(True, "root", "ok"))
+        service.rclone.probe.return_value = DestinationProbe(True, "root", "ok")
         await service._probe_destination_once()
-        self.assertNotIn("限流等待", service._format_doctor())
+        self.assertGreaterEqual(service.destination_last_checked, checked)
+        self.assertEqual(service.rclone.probe.await_count, 2)
+        self.assertNotIn("合成限流", service._format_doctor())
 
 
 class ReleaseMetadataTests(unittest.TestCase):
@@ -331,14 +330,14 @@ class ReleaseMetadataTests(unittest.TestCase):
     def test_rc_requires_exact_notes_identity(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            for path in ("src/tg2cloud/version.py", "CHANGELOG.md", "RELEASE_NOTES.md", "install.sh", "install-lan.sh", "packaging/external-webdav.json"):
+            for path in ("src/tgcloud/version.py", "CHANGELOG.md", "RELEASE_NOTES.md", "install.sh", "install-lan.sh", "packaging/external-webdav.json"):
                 target = root / path
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes((ROOT / path).read_bytes())
             tag = "v" + RELEASE_VERSION + "-rc.1"
             with self.assertRaisesRegex(ValueError, "exact release tag"):
                 release.release_metadata(root, tag)
-            (root / "RELEASE_NOTES.md").write_text(f"TG2Cloud {tag}\n", encoding="utf-8")
+            (root / "RELEASE_NOTES.md").write_text(f"TGCloud {tag}\n", encoding="utf-8")
             metadata = release.release_metadata(root, tag)
             self.assertEqual(metadata["is_prerelease"], "true")
             self.assertTrue(metadata["release_title"].endswith("RC1"))
@@ -346,20 +345,20 @@ class ReleaseMetadataTests(unittest.TestCase):
     def test_future_linux_version_does_not_require_any_desktop_files(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            for name in ("src/tg2cloud/version.py", "CHANGELOG.md", "RELEASE_NOTES.md", "install.sh", "install-lan.sh", "packaging/external-webdav.json"):
+            for name in ("src/tgcloud/version.py", "CHANGELOG.md", "RELEASE_NOTES.md", "install.sh", "install-lan.sh", "packaging/external-webdav.json"):
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes((ROOT / name).read_bytes())
-            (root / "src/tg2cloud/version.py").write_text('VERSION = "9.0.0"\n', encoding="utf-8")
-            (root / "CHANGELOG.md").write_text("## TG2Cloud v9.0.0\n", encoding="utf-8")
-            (root / "RELEASE_NOTES.md").write_text("TG2Cloud v9.0.0\n", encoding="utf-8")
+            (root / "src/tgcloud/version.py").write_text('VERSION = "9.0.0"\n', encoding="utf-8")
+            (root / "CHANGELOG.md").write_text("## TGCloud v9.0.0\n", encoding="utf-8")
+            (root / "RELEASE_NOTES.md").write_text("TGCloud v9.0.0\n", encoding="utf-8")
             entry = root / "install.sh"
             entry.write_text(entry.read_text(encoding="utf-8").replace('installer_version = "' + RELEASE_VERSION + '"', 'installer_version = "9.0.0"'), encoding="utf-8")
             metadata = release.release_metadata(root, "v9.0.0")
-            self.assertEqual(metadata["release_artifact"], "TG2Cloud-v9.0.0-source")
+            self.assertEqual(metadata["release_artifact"], "TGCloud-v9.0.0-source")
             self.assertFalse((root / "legacy").exists())
 
-    def test_release_rejects_stale_wizard_version_or_disabled_source_pin(self):
+    def test_release_rejects_online_fallback_and_disabled_old_pin(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             for name in ("install.sh", "install-lan.sh", "packaging/external-webdav.json"):
@@ -367,8 +366,11 @@ class ReleaseMetadataTests(unittest.TestCase):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes((ROOT / name).read_bytes())
             release.linux_entries(root, RELEASE_VERSION)
-            with self.assertRaisesRegex(ValueError, "helper version"):
-                release.linux_entries(root, "0.0.0")
+            entry = root / "install.sh"
+            entry.write_text(entry.read_text() + "\ncurl https://example.invalid/installer\n")
+            with self.assertRaisesRegex(ValueError, "local-source"):
+                release.linux_entries(root, RELEASE_VERSION)
+            entry.write_bytes((ROOT / "install.sh").read_bytes())
             (root / "install-lan.sh").write_text('installer_commit=""\n', encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "immutable Linux entry pin"):
                 release.linux_entries(root, RELEASE_VERSION)

@@ -4,10 +4,10 @@ umask 077
 
 SOURCE_DIR="${1:-}"
 CONFIG_FILE="${2:-}"
-INSTALL_DIR="${INSTALL_DIR:-/opt/tg2cloud-clouddrive2}"
-BACKUP_DIR="/opt/tg2cloud-clouddrive2-backups"
-BOT_SERVICE="tg2cloud-clouddrive2-bot"
-BOT_CONTAINER="tg2cloud-clouddrive2-bot"
+INSTALL_DIR="${INSTALL_DIR:-/opt/tgcloud-clouddrive2}"
+BACKUP_DIR="/opt/tgcloud-clouddrive2-backups"
+BOT_SERVICE="tgcloud-clouddrive2-bot"
+BOT_CONTAINER="tgcloud-clouddrive2-bot"
 BACKUP=""
 DATABASE_BACKUP=""
 DATABASE_NAME=""
@@ -22,11 +22,11 @@ ROLLBACK_ARMED=false
 
 PROGRAM_PATHS=(
   app .dockerignore backup_retention.sh Dockerfile docker-compose.yml manage.sh remote_install.sh
-  preserve_runtime_config.sh repair_clouddrive_network.sh requirements.txt
+  preserve_runtime_config.sh repair_clouddrive_network.sh requirements.txt tgcloud-source.json
 )
 
 log() {
-  printf '[TG2Cloud] %s\n' "$*"
+  printf '[TGCloud] %s\n' "$*"
 }
 
 remove_program_files() {
@@ -50,7 +50,7 @@ try:
         if database.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
             raise ValueError("invalid snapshot")
 except Exception:
-    print("TG2CLOUD_DATABASE_CHECK=FAILED", file=sys.stderr)
+    print("TGCLOUD_DATABASE_CHECK=FAILED", file=sys.stderr)
     sys.exit(1)
 PY
 }
@@ -102,7 +102,7 @@ cleanup_release_stage() {
   if [[ "$DATABASE_BACKUP_CANDIDATE" == "$BACKUP_DIR"/database-*.db && "$DATABASE_BACKUP_CANDIDATE" != "$DATABASE_BACKUP" ]]; then
     rm -f -- "$DATABASE_BACKUP_CANDIDATE"
   fi
-  if [[ -n "$RELEASE_STAGE" && "$RELEASE_STAGE" == /opt/tg2cloud-clouddrive2-release-* && -d "$RELEASE_STAGE" ]]; then
+  if [[ -n "$RELEASE_STAGE" && "$RELEASE_STAGE" == /opt/tgcloud-clouddrive2-release-* && -d "$RELEASE_STAGE" ]]; then
     rm -rf -- "$RELEASE_STAGE"
   fi
   if [[ -n "$CANDIDATE_TAG" ]]; then
@@ -123,8 +123,8 @@ fail() {
       message+=" 自动恢复未完成，请保留备份并人工处理。"
     fi
   fi
-  printf '[TG2Cloud][ERROR] %s\n' "$message" >&2
-  printf 'TG2CLOUD_RESULT=FAILED\n' >&2
+  printf '[TGCloud][ERROR] %s\n' "$message" >&2
+  printf 'TGCLOUD_RESULT=FAILED\n' >&2
   exit 1
 }
 
@@ -142,14 +142,21 @@ trap cleanup_release_stage EXIT
 [[ "$(realpath -m -- "$INSTALL_DIR")" == "$INSTALL_DIR" ]] \
   || fail "安装目录不能经过符号链接"
 [[ "$INSTALL_DIR" != /opt/tg115 ]] \
-  || fail "检测到旧 TG115 安装目录 /opt/tg115；TG2Cloud 不会静默覆盖，请先按迁移文档处理"
+  || fail "检测到旧 TG115 安装目录 /opt/tg115；TGCloud 不会静默覆盖，请先按迁移文档处理"
 SOURCE_DIR="$(realpath -e -- "$SOURCE_DIR")"
 CONFIG_FILE="$(realpath -e -- "$CONFIG_FILE")"
 native_check() (
   # Resolve Python modules from the verified payload, never the caller's cwd.
   cd -- "$SOURCE_DIR"
-  PYTHONPATH="$SOURCE_DIR/app" python3 -B -m tg2cloud.deployment.architecture "$@"
+  PYTHONPATH="$SOURCE_DIR/app" python3 -B -m tgcloud.deployment.architecture "$@"
 )
+# Refuse unknown or retired installs before reading private configuration or changing the host.
+PYTHONPATH="$SOURCE_DIR/app" python3 -B -m tgcloud.deployment.local_source "$SOURCE_DIR" --allow-pending \
+  || fail "部署候选来源无效"
+if [[ -f "$INSTALL_DIR/docker-compose.yml" || -f "$INSTALL_DIR/.env" ]]; then
+  PYTHONPATH="$SOURCE_DIR/app" python3 -B -m tgcloud.deployment.local_source "$INSTALL_DIR" \
+    || fail "现有目录不属于本地 CloudDrive2 项目；保留不动"
+fi
 NATIVE_PLATFORM="$(native_check host)" || fail "需要原生 64 位 Debian/Ubuntu AMD64 或 ARM64"
 native_check docker --allow-missing || fail "本机 Docker 平台检查失败"
 [[ -f "$SOURCE_DIR/preserve_runtime_config.sh" ]] \
@@ -176,18 +183,18 @@ fi
 
 if [[ -d "$INSTALL_DIR" && ! -f "$INSTALL_DIR/docker-compose.yml" ]] \
   && [[ -n "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
-  fail "目标安装目录已有非 TG2Cloud 文件：$INSTALL_DIR；不会覆盖，请检查后重新检测"
+  fail "目标安装目录已有非 TGCloud 文件：$INSTALL_DIR；不会覆盖，请检查后重新检测"
 fi
 if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
   if ! grep -Fq "container_name: $BOT_CONTAINER" "$INSTALL_DIR/docker-compose.yml" \
-    || ! grep -Fq 'container_name: tg2cloud-clouddrive2' "$INSTALL_DIR/docker-compose.yml"; then
-    fail "目标安装目录不是可识别的 TG2Cloud CloudDrive2 部署；不会覆盖，请检查后重新检测"
+    || ! grep -Fq 'container_name: tgcloud-clouddrive2' "$INSTALL_DIR/docker-compose.yml"; then
+    fail "目标安装目录不是可识别的 TGCloud CloudDrive2 部署；不会覆盖，请检查后重新检测"
   fi
 fi
 sed -i 's/\r$//' "$CONFIG_FILE"
 if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
-  tg2cloud_prepare_redeploy_config "$CONFIG_FILE" "$INSTALL_DIR/.env" \
-    || fail "无法安全保留现有 TG2Cloud 配置"
+  tgcloud_prepare_redeploy_config "$CONFIG_FILE" "$INSTALL_DIR/.env" \
+    || fail "无法安全保留现有 TGCloud 配置"
 fi
 
 if [[ -r /etc/os-release ]]; then
@@ -252,7 +259,7 @@ fi
 docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 不可用"
 native_check docker || fail "Docker daemon 必须与宿主原生平台一致"
 
-for target_container in "$BOT_CONTAINER" tg2cloud-clouddrive2; do
+for target_container in "$BOT_CONTAINER" tgcloud-clouddrive2; do
   if docker container inspect "$target_container" >/dev/null 2>&1; then
     owner="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$target_container" 2>/dev/null || true)"
     [[ "$owner" == "$INSTALL_DIR" && -f "$INSTALL_DIR/docker-compose.yml" ]] \
@@ -265,7 +272,7 @@ PORT_19798_OWNER="$(docker ps --format '{{.Names}}|{{.Ports}}' \
 if [[ "$PORT_19798_OWNER" == tg115-clouddrive2 ]]; then
   fail "旧 TG115 容器正在占用固定端口 19798；请自行处理占用后重新检测，不会自动停用或改端口"
 fi
-if [[ -n "$PORT_19798_OWNER" && "$PORT_19798_OWNER" != tg2cloud-clouddrive2 ]]; then
+if [[ -n "$PORT_19798_OWNER" && "$PORT_19798_OWNER" != tgcloud-clouddrive2 ]]; then
   if ! docker inspect --format '{{.Config.Image}}' "$PORT_19798_OWNER" 2>/dev/null \
     | grep -Eiq '(^|/)clouddrive2([:@]|$)'; then
     fail "固定端口 19798 被容器 $PORT_19798_OWNER 占用；请自行处理后重新检测"
@@ -325,8 +332,8 @@ mkdir -p \
   "$INSTALL_DIR/clouddrive/mounts"
 install -d -m 700 "$BACKUP_DIR"
 
-RELEASE_STAGE="$(mktemp -d /opt/tg2cloud-clouddrive2-release-XXXXXXXX)"
-CANDIDATE_TAG="tg2cloud-clouddrive2-candidate:$(date +%s)-$$"
+RELEASE_STAGE="$(mktemp -d /opt/tgcloud-clouddrive2-release-XXXXXXXX)"
+CANDIDATE_TAG="tgcloud-clouddrive2-candidate:$(date +%s)-$$"
 log "在隔离目录预检新程序和配置"
 cp -a "$SOURCE_DIR/." "$RELEASE_STAGE/"
 install -m 600 "$CONFIG_FILE" "$RELEASE_STAGE/.env"
@@ -357,7 +364,7 @@ if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
     ROLLBACK_ARMED=true
     docker stop --time 30 "$BOT_CONTAINER" >/dev/null
   fi
-  DATABASE_NAME="$(python3 -I -S -B "$RELEASE_STAGE/app/tg2cloud/persistence/paths.py" "$INSTALL_DIR/data")"
+  DATABASE_NAME="$(python3 -I -S -B "$RELEASE_STAGE/app/tgcloud/persistence/paths.py" "$INSTALL_DIR/data")"
   if [[ -f "$INSTALL_DIR/data/$DATABASE_NAME" ]]; then
     DATABASE_BACKUP_CANDIDATE="$(mktemp "$BACKUP_DIR/database-XXXXXXXX.db")"
     rm -f -- "$DATABASE_BACKUP_CANDIDATE"
@@ -430,20 +437,20 @@ if [[ "${DEPLOY_CLOUDDRIVE2:-true}" == "true" ]]; then
   if [[ -n "$EXISTING_CD2" ]]; then
     log "发现现有 CloudDrive2 容器 $EXISTING_CD2；保留登录和挂载数据"
   else
-    printf 'TG2CLOUD_STAGE=GATEWAY\n'
+    printf 'TGCLOUD_STAGE=GATEWAY\n'
     log "拉取并启动 CloudDrive2"
     docker compose pull clouddrive2
     docker compose up -d clouddrive2
   fi
 fi
 
-printf 'TG2CLOUD_STAGE=BOT\n'
-log "构建 TG2Cloud Bot 容器"
+printf 'TGCLOUD_STAGE=BOT\n'
+log "构建 TGCloud Bot 容器"
 BUILDX_BUILDER=default docker compose build "$BOT_SERVICE"
 bash "$INSTALL_DIR/manage.sh" validate
 docker compose up -d --no-deps "$BOT_SERVICE"
 
-printf 'TG2CLOUD_STAGE=HEALTH\n'
+printf 'TGCLOUD_STAGE=HEALTH\n'
 log "等待 Bot 基础健康检查"
 BOT_HEALTH=""
 for _ in $(seq 1 40); do
@@ -474,12 +481,14 @@ log "核对运行中的环境配置、代码指纹和基础健康状态"
 bash "$INSTALL_DIR/manage.sh" ready
 native_check container "$BOT_CONTAINER"
 if [[ "${DEPLOY_CLOUDDRIVE2:-true}" == "true" ]]; then
-  native_check container "${EXISTING_CD2:-tg2cloud-clouddrive2}"
+  native_check container "${EXISTING_CD2:-tgcloud-clouddrive2}"
 fi
+PYTHONPATH="$INSTALL_DIR/app" python3 -B -m tgcloud.deployment.local_source "$INSTALL_DIR" --activate \
+  || fail "已安装程序来源核验失败；保留现场并回退"
 ROLLBACK_ARMED=false
 # shellcheck disable=SC1091
 source "$INSTALL_DIR/backup_retention.sh"
-if BACKUP_INVENTORY="$(tg2cloud_backup_inventory "$BACKUP_DIR")"; then
+if BACKUP_INVENTORY="$(tgcloud_backup_inventory "$BACKUP_DIR")"; then
   BACKUP_COUNT="$(awk -F= '$1=="TOTAL_COUNT" {print $2}' <<< "$BACKUP_INVENTORY")"
   BACKUP_BYTES="$(awk -F= '$1=="TOTAL_BYTES" {print $2}' <<< "$BACKUP_INVENTORY")"
   log "当前保留 ${BACKUP_COUNT:-0} 份升级／配置备份，占用约 $(( ${BACKUP_BYTES:-0} / 1024 / 1024 ))MB"
@@ -491,6 +500,6 @@ else
 fi
 log "部署完成"
 docker compose ps
-printf 'TG2CLOUD_INSTALL_DIR=%s\n' "$INSTALL_DIR"
-printf 'TG2CLOUD_BOT_HEALTH=%s\n' "$BOT_HEALTH"
-printf 'TG2CLOUD_RESULT=SUCCESS\n'
+printf 'TGCLOUD_INSTALL_DIR=%s\n' "$INSTALL_DIR"
+printf 'TGCLOUD_BOT_HEALTH=%s\n' "$BOT_HEALTH"
+printf 'TGCLOUD_RESULT=SUCCESS\n'

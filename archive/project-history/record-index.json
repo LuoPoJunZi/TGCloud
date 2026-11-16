@@ -1,0 +1,416 @@
+{
+  "project": "TGCloud",
+  "source_project": "TG2Cloud",
+  "records": [
+    {
+      "path": "archive/project-history/overview.zh.md",
+      "source_path": "README.md",
+      "sha256": "74c8e5c923af9b63d30ef0a349826795c02ee32fa84d9e1e150efc59883fb6c0"
+    },
+    {
+      "path": "archive/project-history/overview.en.md",
+      "source_path": "README_EN.md",
+      "sha256": "82de39c1508b2aa3a15be1aa44f78bdd55468a0946b91cdd26826fc5f972a0a6"
+    },
+    {
+      "path": "archive/project-history/changelog.md",
+      "source_path": "CHANGELOG.md",
+      "sha256": "1d82fd44f2845cd5158c96ca4cc10ce550b996f056f0a9037a282805e49ef027"
+    },
+    {
+      "path": "archive/project-history/release-notes.md",
+      "source_path": "RELEASE_NOTES.md",
+      "sha256": "f7ded52ba11c95ab76e35b74c4d2ff2eb2345dabc8f2caa960b12d6589fa9ee6"
+    },
+    {
+      "path": "archive/project-history/policies/contributing.md",
+      "source_path": ".github/CONTRIBUTING.md",
+      "sha256": "adad1951fb339eeb5d942a77b92adae75b65155a9637f183913ed5ac4f9e55dc"
+    },
+    {
+      "path": "archive/project-history/policies/security.md",
+      "source_path": ".github/SECURITY.md",
+      "sha256": "d2bcf4d21526eab39c49c37bc8652cae5a4cab3643f90f8f670c3783f95cfd43"
+    },
+    {
+      "path": "archive/project-history/brand/resource-notes.md",
+      "source_path": "assets/brand/README.md",
+      "sha256": "1ebf2b2a85adb4b16a924c5b703cf38d2e9b8313efdc43daf9c111d92d5fc024"
+    },
+    {
+      "path": "archive/project-history/brand/prior-wordmark.svg",
+      "source_path": "assets/brand/tg2cloud-logo.svg",
+      "sha256": "1c214e658f9b9b6f57ec0b3acfa7f78d0787a9345be6e523d153fd633c08dad7"
+    },
+    {
+      "path": "archive/project-history/brand/prior-wordmark.png",
+      "source_path": "assets/brand/tg2cloud-logo-preview.png",
+      "sha256": "a8699cf9132727627f344df244cabc1b87fe22c11ff760e761d7085270167abf"
+    },
+    {
+      "path": "archive/project-history/manuals/architectures.md",
+      "source_path": "docs/ARCHITECTURES.md",
+      "sha256": "42832410e210b8ead67cb4a01459f826f62c89d167691841d0b002cf14734443"
+    },
+    {
+      "path": "archive/project-history/manuals/backup-restore.md",
+      "source_path": "docs/BACKUP-RESTORE.md",
+      "sha256": "383264e7633887f89a0e05ff941a35293ae642bea32a501db4a8042939c3e0c5"
+    },
+    {
+      "path": "archive/project-history/manuals/bot-usage.md",
+      "source_path": "docs/BOT-USAGE.md",
+      "sha256": "7f5bfa88ac5e61c2030db0b6f8e2cb48c5cce56bd94cf99a7b0224c59442fb86"
+    },
+    {
+      "path": "archive/project-history/manuals/compose-management.md",
+      "source_path": "docs/COMPOSE-MANAGEMENT.md",
+      "sha256": "3a0cf1ceb6377b5153484a213833a604eef9574563e2e5a546fa17c539eaede4"
+    },
+    {
+      "path": "archive/project-history/manuals/compose.md",
+      "source_path": "docs/COMPOSE.md",
+      "sha256": "670ad98a03e639342c5f3c0c423cc53e2b51e0e9aa1ce3d9cdd5f90d8e803b16"
+    },
+    {
+      "path": "archive/project-history/manuals/configuration.md",
+      "source_path": "docs/CONFIGURATION.md",
+      "sha256": "e6f660fe162ffbcb1e4b463206dc3a4a9aa7694d9ca799c3819bc9546e1b41e3"
+    },
+    {
+      "path": "archive/project-history/manuals/development/brand-guide.md",
+      "source_path": "docs/development/BRAND-GUIDE.md",
+      "sha256": "5a63cdebc423f556df7692252c6b35317865dd9c757254a4c764d01fa7ac1bde"
+    },
+    {
+      "path": "archive/project-history/manuals/development/development.md",
+      "source_path": "docs/development/DEVELOPMENT.md",
+      "sha256": "060cb66c941707e7c1207a25f19b4edd664c21243598be2a7e8cf211cc7842fe"
+    },
+    {
+      "path": "archive/project-history/manuals/development/release-checklist.md",
+      "source_path": "docs/development/RELEASE-CHECKLIST.md",
+      "sha256": "5868fe17307ad366783a8375b5d34e679914d7d262f4dcfc84d43b580d40262b"
+    },
+    {
+      "path": "archive/project-history/manuals/development/repository.md",
+      "source_path": "docs/development/REPOSITORY.md",
+      "sha256": "b97b4d4f9def31e00855c372f76e977a2e1195aee8d061bb7b1ed23783a0440e"
+    },
+    {
+      "path": "archive/project-history/releases/release-1.5.3.md",
+      "source_path": "docs/development/V153-ACCEPTANCE.md",
+      "sha256": "ea618d4a8cecd53376cae4be737f0d2769e9a78d6cdf8b9b61cf91829f761ebe"
+    },
+    {
+      "path": "archive/project-history/releases/release-1.5.4.md",
+      "source_path": "docs/development/V154-ACCEPTANCE.md",
+      "sha256": "e5afb4dc7ad68196c100c65e226547b83c1e5cc1d91a482b2ca567199162c95d"
+    },
+    {
+      "path": "archive/project-history/releases/release-1.5.5.md",
+      "source_path": "docs/development/V155-ACCEPTANCE.md",
+      "sha256": "85a9b5675cfa63c401e2353d1442ef0255de1fa7bbffce4c134e78274a658bcb"
+    },
+    {
+      "path": "archive/project-history/releases/release-1.5.6.md",
+      "source_path": "docs/development/V156-ACCEPTANCE.md",
+      "sha256": "3f5b6f12201e91f622a4825d24508b81393acddf1bd90eab87ddfe7671b26e9f"
+    },
+    {
+      "path": "archive/project-history/releases/release-1.5.7.md",
+      "source_path": "docs/development/V157-ACCEPTANCE.md",
+      "sha256": "04a4ffb4c0bfa9f163e4d038b7b95a80f6609b757662def94d42b5bdf05522f9"
+    },
+    {
+      "path": "archive/project-history/releases/release-1.5.8.md",
+      "source_path": "docs/development/V158-ACCEPTANCE.md",
+      "sha256": "5de0e96dc4beab7c9b43eb6e812aa48727b72f3d3ee3878a7f2cb8c109f634d1"
+    },
+    {
+      "path": "archive/project-history/releases/release-1.5.9.md",
+      "source_path": "docs/development/V159-ACCEPTANCE.md",
+      "sha256": "9aadc6ef84cfd8266610e5cdbc47c3225475c2e81288341d67e57706538183fa"
+    },
+    {
+      "path": "archive/project-history/manuals/docker-nginx.md",
+      "source_path": "docs/DOCKER-NGINX.md",
+      "sha256": "765d346ce8f733e7c3f8af3dd301aefd16fd8fc98be972682c01b3a464d485d2"
+    },
+    {
+      "path": "archive/project-history/manuals/external-webdav.md",
+      "source_path": "docs/external-webdav.md",
+      "sha256": "6dc19c3450abdf2554659e4ad7aca86a2a1b4b83937e80a61ba17c13ac2e81e7"
+    },
+    {
+      "path": "archive/project-history/manuals/family-sharing.md",
+      "source_path": "docs/FAMILY-SHARING.md",
+      "sha256": "8117a3f3d1f8574f33bc4a9df1c03e39ad11d7a3c3aa595913ad948597e1ff67"
+    },
+    {
+      "path": "archive/project-history/manuals/faq.md",
+      "source_path": "docs/FAQ.md",
+      "sha256": "84d56eac6df973fcc0a06c2dd78c7ba10dba488a2935cced3c51940d694521d5"
+    },
+    {
+      "path": "archive/project-history/manuals/feature-enhancements.md",
+      "source_path": "docs/FEATURE-ENHANCEMENTS.md",
+      "sha256": "1059cded1d6694f10f600226f877b2ba3623d5c9aa21df9d14035c7288e39bfb"
+    },
+    {
+      "path": "archive/project-history/manuals/lan-install.md",
+      "source_path": "docs/LAN-INSTALL.md",
+      "sha256": "701581a1410dad22b4c517399f00bfe2407d7eb071cda2b73bb7e1e33af6a41c"
+    },
+    {
+      "path": "archive/project-history/manuals/listening.md",
+      "source_path": "docs/LISTENING.md",
+      "sha256": "732345405a981218e7bd99484b47970bcbfb55597754076aa843908f594ece17"
+    },
+    {
+      "path": "archive/project-history/manuals/local-clouddrive2.md",
+      "source_path": "docs/LOCAL-CLOUDDRIVE2.md",
+      "sha256": "e0f54cd34713679eedd743434df2a98325ecd80db3c84377bfc5fad9e5389c8d"
+    },
+    {
+      "path": "archive/project-history/manuals/naming.md",
+      "source_path": "docs/NAMING.md",
+      "sha256": "eb090b20b4dea0fecf713e931f59f49d7d164f48707231a7a3f827a54fc4b47d"
+    },
+    {
+      "path": "archive/project-history/manuals/operations.md",
+      "source_path": "docs/OPERATIONS.md",
+      "sha256": "404c9325b028ec26b711a256164ebcb5b9ddd7ac089348da6781584a4ca38a65"
+    },
+    {
+      "path": "archive/project-history/manuals/readme.md",
+      "source_path": "docs/README.md",
+      "sha256": "69a4269f7dfa743b04a51557a0ec54098e69fde516e3d81136cf1894d05823f5"
+    },
+    {
+      "path": "archive/project-history/manuals/recovery.md",
+      "source_path": "docs/RECOVERY.md",
+      "sha256": "3e8231fab02d6ff7d4b32b7ee280aa72d5f596233c6c690c318c629674f251df"
+    },
+    {
+      "path": "archive/project-history/manuals/storage.md",
+      "source_path": "docs/STORAGE.md",
+      "sha256": "9caa3a9e134431a80157ecc48a04343e69d94bfc4701caa5ad8e6ddabf1b0f08"
+    },
+    {
+      "path": "archive/project-history/manuals/uninstall.md",
+      "source_path": "docs/UNINSTALL.md",
+      "sha256": "e7f6c8d0dd76beab1e13a51094ba35879f06520c8b94143c5196d70ed7672cc1"
+    },
+    {
+      "path": "archive/project-history/manuals/vps-install.md",
+      "source_path": "docs/VPS-INSTALL.md",
+      "sha256": "d2c3eb75596cb9d2bcbf4b49b6f7f7f6be26376b2dab9e550a2a66ecf4275f4d"
+    },
+    {
+      "path": "archive/project-history/manuals/setup-checklist.md",
+      "source_path": "docs/填写信息清单.md",
+      "sha256": "ff02a1f90229b546419a273f38f1a7fa59227f557b2b803535534fd801e94009"
+    },
+    {
+      "path": "archive/project-history/manuals/third-party-components.md",
+      "source_path": "docs/第三方组件说明.md",
+      "sha256": "9434a8198cf836846e1885e5327792100c2956f05e8c47cd9cf3f3b421ec98f5"
+    },
+    {
+      "path": "archive/project-history/site-manuals/changelog.md",
+      "source_path": "website/docs/changelog.md",
+      "sha256": "1af2b5fee64f9fd42075db427aa84cd54b0e7fb55bceb580cfd611470d38170c"
+    },
+    {
+      "path": "archive/project-history/site-manuals/deploy/clouddrive2.md",
+      "source_path": "website/docs/deploy/clouddrive2.md",
+      "sha256": "c50d217eb7a8d384a4fc2bcda344b82236570bca874ae6ccd64cdac305db6974"
+    },
+    {
+      "path": "archive/project-history/site-manuals/deploy/compose-management.md",
+      "source_path": "website/docs/deploy/compose-management.md",
+      "sha256": "12f7ff888ca5c524312b5ca3a1cb2bb51e5debe6348a14f4dbfdfb5511725315"
+    },
+    {
+      "path": "archive/project-history/site-manuals/deploy/compose.md",
+      "source_path": "website/docs/deploy/compose.md",
+      "sha256": "9cfc341b0a7ac785c6377b90292f57a85c8729a9e0c39e56602ab6fad73b800d"
+    },
+    {
+      "path": "archive/project-history/site-manuals/deploy/domain-https.md",
+      "source_path": "website/docs/deploy/domain-https.md",
+      "sha256": "2d57d25d5e7bf60bb914510f92298fdd02e85d0ccec41807aef1373a814f484d"
+    },
+    {
+      "path": "archive/project-history/site-manuals/deploy/external-webdav.md",
+      "source_path": "website/docs/deploy/external-webdav.md",
+      "sha256": "2627695227cb234b3b133fa71cd15f3fe60707a0c42f83b72efb6c39aca9b0bd"
+    },
+    {
+      "path": "archive/project-history/site-manuals/deploy/openlist.md",
+      "source_path": "website/docs/deploy/openlist.md",
+      "sha256": "dcc897999070a3002c81938dd7fb74d275a4033e53fae6c0856ca08a9f6d942c"
+    },
+    {
+      "path": "archive/project-history/site-manuals/deploy/resources.md",
+      "source_path": "website/docs/deploy/resources.md",
+      "sha256": "1d7cbacd861208819aa3e6f25036f809ecefd717b7689b11515e821e4f624da4"
+    },
+    {
+      "path": "archive/project-history/site-manuals/deploy/ssh.md",
+      "source_path": "website/docs/deploy/ssh.md",
+      "sha256": "c3afbd5bd55a0e9013d4b6b4c5e98022853e6b22f2480d7d0d7209aaa506b037"
+    },
+    {
+      "path": "archive/project-history/site-manuals/deploy/telegram.md",
+      "source_path": "website/docs/deploy/telegram.md",
+      "sha256": "8eeac5a08dec647b0f3dbf4586f5ffe43c7b3fb68c8140eb1aff19c9cf4acba6"
+    },
+    {
+      "path": "archive/project-history/site-manuals/deploy/verification.md",
+      "source_path": "website/docs/deploy/verification.md",
+      "sha256": "c2c5a3af147fd4b3cfed9aab9dd010321b5fcf37e17a627819df449814efcbac"
+    },
+    {
+      "path": "archive/project-history/site-manuals/download.md",
+      "source_path": "website/docs/download.md",
+      "sha256": "d34ac5ef1a342bc8e88df1cd8f065ac86853982d9edaa57ad78fb95dbcb8fd32"
+    },
+    {
+      "path": "archive/project-history/site-manuals/faq.md",
+      "source_path": "website/docs/faq.md",
+      "sha256": "3a6d9555eacf9cc736071bf7b2ac200bbf7e0e1bb535526f3672dea62a185b74"
+    },
+    {
+      "path": "archive/project-history/site-manuals/guide/editions.md",
+      "source_path": "website/docs/guide/editions.md",
+      "sha256": "a5e20a7ce51023dea20a58403a3c02d5cf6bc87d88da4ecdc4932adc7402fcaa"
+    },
+    {
+      "path": "archive/project-history/site-manuals/guide/introduction.md",
+      "source_path": "website/docs/guide/introduction.md",
+      "sha256": "14dacbd79b7fcffeb43436d5e7243247284c99d55643f947f8c3eb0c6ae1bf19"
+    },
+    {
+      "path": "archive/project-history/site-manuals/guide/prerequisites.md",
+      "source_path": "website/docs/guide/prerequisites.md",
+      "sha256": "3a1b1655879cbdf4f0752e6a1a77431b5eb7ed61b7bbefbc88fce505edb437b2"
+    },
+    {
+      "path": "archive/project-history/site-manuals/guide/quick-start.md",
+      "source_path": "website/docs/guide/quick-start.md",
+      "sha256": "3f9ca7d5b4765b7705f61af217948623f7ff3f13f6b2b56d4a4123aa3308a9c9"
+    },
+    {
+      "path": "archive/project-history/site-manuals/operations/backup.md",
+      "source_path": "website/docs/operations/backup.md",
+      "sha256": "863389d4c1353f0e8b949eea0bba338acadc9635d3b7d2cbfda3059f3b9dde94"
+    },
+    {
+      "path": "archive/project-history/site-manuals/operations/maintenance.md",
+      "source_path": "website/docs/operations/maintenance.md",
+      "sha256": "15472aec8b9ff35bc7cf687aa024334fdba06b05edf6499f82f29dc2af305f5b"
+    },
+    {
+      "path": "archive/project-history/site-manuals/operations/update.md",
+      "source_path": "website/docs/operations/update.md",
+      "sha256": "e45a6326fe757f55adfd1dcfd6e4106378c3c870f36adf949f14a447030b0b6a"
+    },
+    {
+      "path": "archive/project-history/site-manuals/reference/config.md",
+      "source_path": "website/docs/reference/config.md",
+      "sha256": "797b891f613b8134b8f5eb3ccc1e1db601e61b3324f29c1f587f432be9de0226"
+    },
+    {
+      "path": "archive/project-history/site-manuals/reference/credits.md",
+      "source_path": "website/docs/reference/credits.md",
+      "sha256": "cbf5f9f050aedec229e5378a90b3de5b597ab8f050c1019cc7c59cebcb44bcf4"
+    },
+    {
+      "path": "archive/project-history/site-manuals/reference/development.md",
+      "source_path": "website/docs/reference/development.md",
+      "sha256": "8a28ae3a8cc6ad3bf8619919ec151e8e4a4765323f80aa9f3a5e1edf8d212663"
+    },
+    {
+      "path": "archive/project-history/site-manuals/reference/security.md",
+      "source_path": "website/docs/reference/security.md",
+      "sha256": "3262a0735138e34c5f59f74a7a8e82c4652849d35f37a96f1a01a9a1ece2898c"
+    },
+    {
+      "path": "archive/project-history/site-manuals/reference/sources.md",
+      "source_path": "website/docs/reference/sources.md",
+      "sha256": "f5a091fcdd8d99d2341785c2dc03d3c4f49190f282ab4681cf642864c7c88446"
+    },
+    {
+      "path": "archive/project-history/site-manuals/troubleshooting/ssh.md",
+      "source_path": "website/docs/troubleshooting/ssh.md",
+      "sha256": "ba9b59e3134f0ce19c8685fa80d54a6cfe37e006512b8010a6a19475305f93a9"
+    },
+    {
+      "path": "archive/project-history/site-manuals/troubleshooting/transfer.md",
+      "source_path": "website/docs/troubleshooting/transfer.md",
+      "sha256": "4c9e3d244ed6c6b33ef46c2bf886cb9c74b6b2d7651fcffb4b559f908313452c"
+    },
+    {
+      "path": "archive/project-history/site-manuals/troubleshooting/webdav.md",
+      "source_path": "website/docs/troubleshooting/webdav.md",
+      "sha256": "ec07dc32af1e63e00879fea405471836023cffc267c9f033b2e52f9ab5c7a3d9"
+    },
+    {
+      "path": "archive/project-history/site-manuals/usage/commands.md",
+      "source_path": "website/docs/usage/commands.md",
+      "sha256": "c863a45821022802fa3d6318b41b429e2026fee20be338fb19451226dd24c415"
+    },
+    {
+      "path": "archive/project-history/site-manuals/usage/first-transfer.md",
+      "source_path": "website/docs/usage/first-transfer.md",
+      "sha256": "dd1057bc2e3f5332d3e18d139bb83603ce3d568c42eda945d36bb3e9bafc7cda"
+    },
+    {
+      "path": "archive/project-history/site-manuals/usage/listening.md",
+      "source_path": "website/docs/usage/listening.md",
+      "sha256": "0d70526b35d7d2fc1ad83594bba630cffc7144311f89af23bbeb87fef1c3f928"
+    },
+    {
+      "path": "archive/project-history/site-manuals/usage/status.md",
+      "source_path": "website/docs/usage/status.md",
+      "sha256": "b857ae9420e0913eafd49c4f96c8ff781be9d1945e6d74c1c75f2a7f358bf03a"
+    },
+    {
+      "path": "archive/project-history/site-manuals/usage/streaming.md",
+      "source_path": "website/docs/usage/streaming.md",
+      "sha256": "cb617e8f6dee64266af44d6b93700ee70e1859786a4b74b58b77b3e2863bb7b2"
+    },
+    {
+      "path": "archive/project-history/site-checks/content-contract.mjs",
+      "source_path": "website/tests/content.test.mjs",
+      "sha256": "3b76be99196718b46a116fb45499e2429c3e732330623c7132ac74386713691b"
+    },
+    {
+      "path": "archive/project-history/site-checks/site-contract.mjs",
+      "source_path": "website/tests/site.test.mjs",
+      "sha256": "c3ee1acfa8c3fca7b8a2e54cffd1c5be6f0ab5d93e26de7cf5f426ccdf79ef57"
+    },
+    {
+      "path": "archive/project-history/site-records/section-aliases.json",
+      "source_path": "website/src/legacy-anchors.json",
+      "sha256": "e0b9c9cb7ddba6dbff94c1fcf002c978468a4d7524b36db90b5fd8b4283a9810"
+    },
+    {
+      "path": "archive/project-history/site-records/project-notes.md",
+      "source_path": "website/README.md",
+      "sha256": "4159ea8cd6b4877116fe25f83932f3f9691cedc88196986fdca78214d87a4372"
+    },
+    {
+      "path": "archive/project-history/site-records/hosting-notes.md",
+      "source_path": "website/DEPLOY.md",
+      "sha256": "5ea97600acd93f306e995c3ae1006fa439da10a28a06612f74ab7af2910e5566"
+    },
+    {
+      "path": "archive/project-history/site-records/material-notes.md",
+      "source_path": "website/THIRD_PARTY_NOTICES.md",
+      "sha256": "61e5b7944d08578a97e6b560a3154ed89eaa89a74346fd3d916c0df21f727e6b"
+    }
+  ]
+}

@@ -13,8 +13,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from tg2cloud.deployment import baselines, releases
-from tg2cloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment import baselines, releases
+from tgcloud.deployment.profiles import PRODUCTS
 
 
 def entry(tag: str, commit: str) -> dict:
@@ -23,7 +23,7 @@ def entry(tag: str, commit: str) -> dict:
     git = shutil.which("git")
     if not git:
         raise ValueError("Git required")
-    with tempfile.TemporaryDirectory(prefix="tg2cloud-baseline-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="tgcloud-baseline-") as temporary:
         directory = Path(temporary).resolve()
         archive = directory / "source.tar.gz"
         subprocess.run([git, "-C", str(ROOT), "archive", "--format=tar.gz", "--prefix=source/",

@@ -12,8 +12,10 @@ from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from tg2cloud.deployment import runtime
-from tg2cloud.version import VERSION
+from local_project_fixture import source
+
+from tgcloud.deployment import runtime
+from tgcloud.version import VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -22,16 +24,16 @@ class HostBundleTests(unittest.TestCase):
     def test_expanded_offline_bundle_keeps_all_script_help_entries_without_bot_dependencies(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary).resolve()
-            root, command = directory / "manager", directory / "bin/tg2cloud"
+            root, command = directory / "manager", directory / "bin/tgcloud"
             with patch.object(runtime, "publication_lock", return_value=nullcontext()):
                 marker = runtime.install(source=ROOT, root=root, command=command)
             bundle = next((root / "runtime").iterdir())
             self.assertEqual(runtime.verify(bundle), marker)
-            self.assertIn("src/tg2cloud/compose/management.py", marker["files"])
+            self.assertIn("src/tgcloud/compose/management.py", marker["files"])
             for entry in ("install", "lan", "manage", "listen", "webdav", "uninstall", "compose"):
                 with self.subTest(command=entry):
                     result = subprocess.run([sys.executable, "-I", "-S", "-B",
-                        str(bundle / "src/tg2cloud/deployment/runtime.py"), entry, "--help"],
+                        str(bundle / "src/tgcloud/deployment/runtime.py"), entry, "--help"],
                         cwd=directory, capture_output=True, text=True, encoding="utf-8", timeout=20, check=False)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertIn("usage:", result.stdout)
@@ -42,8 +44,8 @@ class HostBundleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary).resolve()
             content = runtime.files(ROOT)
-            self.assertIn("src/tg2cloud/persistence/bundle.py", content)
-            self.assertIn("src/tg2cloud/domain/naming.py", content)
+            self.assertIn("src/tgcloud/persistence/bundle.py", content)
+            self.assertIn("src/tgcloud/domain/naming.py", content)
             target = directory / "clean-runtime"
             for name, body in content.items():
                 path = target / name
@@ -55,7 +57,7 @@ class HostBundleTests(unittest.TestCase):
                                     cwd=directory, capture_output=True, text=True, timeout=15, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)["source"], "caption")
-            code = "import sys;sys.path.insert(0," + repr(str(target / "src")) + ");import tg2cloud.deployment.backup,tg2cloud.deployment.readiness;assert 'telethon' not in sys.modules;assert 'psutil' not in sys.modules"
+            code = "import sys;sys.path.insert(0," + repr(str(target / "src")) + ");import tgcloud.deployment.backup,tgcloud.deployment.readiness;assert 'telethon' not in sys.modules;assert 'psutil' not in sys.modules"
             result = subprocess.run([sys.executable, "-S", "-B", "-c", code], cwd=directory,
                                     capture_output=True, text=True, timeout=15, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -65,11 +67,10 @@ class HostBundleTests(unittest.TestCase):
             result = subprocess.run([sys.executable, "-I", "-S", "-B", str(ROOT / "scripts/run_source.py"), "--version"],
                                     cwd=temporary, capture_output=True, text=True, timeout=15, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "TG2Cloud CLI v" + VERSION)
+        self.assertEqual(result.stdout.strip(), "TGCloud CLI v" + VERSION)
 
     def test_installer_does_not_report_cli_success_without_version_and_commands(self):
-        from tg2cloud.deployment.releases import Release
-        release = Release("v" + VERSION, "a" * 40)
+        release = source()
         for result in (
             {"version": "0.0.0", "matches": False, "state": "failed", "commands": {}},
             {"version": VERSION, "matches": True, "state": "failed", "commands": {"listen": "failed"}},
@@ -81,10 +82,10 @@ class HostBundleTests(unittest.TestCase):
                 self.assertRaisesRegex(RuntimeError, "未开始升级 Bot"),
             ):
                 runtime.install_release(ROOT, release, output)
-            install.assert_called_once_with(source=ROOT, release=release)
+            install.assert_called_once_with(source=ROOT)
             self.assertNotIn("本地管理命令已安装", str(output.call_args_list))
 
-    def test_original_v142_manager_bundle_remains_verifiable_without_new_library_files(self):
+    def test_original_project_manager_is_rejected_without_executing_old_code(self):
         git = shutil.which("git")
         self.assertIsNotNone(git)
         commit = "42e2c372823a085c36a7a7597ce775441598aaf9"
@@ -103,8 +104,10 @@ class HostBundleTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(body)
                 hashes[name] = hashlib.sha256(body).hexdigest()
-            marker = {"schema": 1, "owner": "tg2cloud.cli", "version": "1.4.2",
+            marker = {"schema": 1, "owner": "tgcloud.cli", "version": "1.4.2",
                       "origin": {"kind": "local-source"}, "files": hashes}
             (root / "installation.json").write_text(json.dumps(marker))
-            self.assertEqual(runtime.verify(root)["version"], "1.4.2")
-            self.assertFalse((root / "src/tg2cloud/persistence").exists())
+            with patch.object(runtime.runpy, "run_path") as execute, self.assertRaisesRegex(ValueError, "不接管旧工具"):
+                runtime.verify(root)
+            execute.assert_not_called()
+            self.assertFalse((root / "src/tgcloud/persistence").exists())

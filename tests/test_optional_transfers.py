@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock, patch
 
 from test_scenarios import FakeRclone, make_service, make_settings
 
-from tg2cloud.domain.actors import user_scope
-from tg2cloud.persistence import features
-from tg2cloud.persistence.sqlite import TaskDB
+from tgcloud.domain.actors import user_scope
+from tgcloud.persistence import features
+from tgcloud.persistence.sqlite import TaskDB
 
 
 class ClassifiedRclone(FakeRclone):
@@ -40,9 +40,9 @@ class OptionalTransferTests(unittest.IsolatedAsyncioTestCase):
     def mode(self, value):
         features.change(self.db._conn, self.db.feature_settings()["revision"], {"classification": value})
 
-    async def test_both_backends_preserve_name_verify_cleanup_and_quota_once(self):
+    async def test_clouddrive2_preserve_name_verify_cleanup_and_quota_once(self):
         self.mode("type_month")
-        for number, backend in enumerate(("clouddrive2", "openlist"), 1):
+        for number, backend in enumerate(("clouddrive2",), 1):
             self.service.settings = replace(self.settings, storage_backend=backend)
             task, _ = self.db.create_task(chat_id=1, sender_id=self.settings.allowed_user_id, message_id=number,
                 file_name="春日旅行.mp4", file_size=5, media_kind="视频", created_at=1791028800)
@@ -56,7 +56,7 @@ class OptionalTransferTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(result["remote_final_path"].startswith("视频/2026/10/"))
             self.assertFalse(local.exists())
             self.assertEqual(result["verification_method"], "size")
-        self.assertEqual(len(self.service.rclone.files), 2)
+        self.assertEqual(len(self.service.rclone.files), 1)
         self.assertTrue(all(not name.startswith(".uploading-") for name in self.service.rclone.files))
         self.assertEqual(self.db.quota_usage(self.settings.allowed_user_id)["reserved_bytes"], 0)
 
@@ -88,7 +88,7 @@ class OptionalTransferTests(unittest.IsolatedAsyncioTestCase):
             self.mode("off")
         messages[0].reply.side_effect = first_reply
         event = SimpleNamespace(sender_id=owner, chat_id=owner, grouped_id=77, messages=messages, is_private=True)
-        with patch("tg2cloud.telegram.handlers.time.time", return_value=1791028800):
+        with patch("tgcloud.telegram.handlers.time.time", return_value=1791028800):
             await self.service._on_album(event)
         self.assertEqual(self.db.get(1)["target_directory"], "视频/2026/10")
         self.assertEqual(self.db.get(2)["target_directory"], "图片/2026/10")

@@ -11,11 +11,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from tg2cloud.deployment import readiness as host
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.monitoring import readiness
-from tg2cloud.transfer.scheduler import _resource_loop
-from tg2cloud.version import VERSION
+from tgcloud.deployment import readiness as host
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.monitoring import readiness
+from tgcloud.transfer.scheduler import _resource_loop
+from tgcloud.version import VERSION
 
 
 class ReadinessTests(unittest.TestCase):
@@ -23,7 +23,7 @@ class ReadinessTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.settings = SimpleNamespace(data_dir=self.root, storage_backend="openlist", control_interval=3,
+        self.settings = SimpleNamespace(data_dir=self.root, storage_backend="clouddrive2", control_interval=3,
                                         min_free_disk_bytes=100, local_budget_bytes=1000, memory_hard_min_bytes=100,
                                         bot_token="SYNTHETIC_NEVER_EXPORT")
         self.service = SimpleNamespace(settings=self.settings, client=SimpleNamespace(is_connected=lambda: True),
@@ -80,7 +80,8 @@ class ReadinessTests(unittest.TestCase):
         source = self.root / "readiness.json"
         original = source.read_text()
         for change in ({"sampled_at": 0}, {"schema": 99}, {"sampled_at": time.time() + 10},
-                       {"ttl": float("nan")}, {"queued": "SECRET"}, {"checks": {"telegram": "ok"}}):
+                       {"ttl": float("nan")}, {"queued": "SECRET"}, {"checks": {"telegram": "ok"}},
+                       {"edition": "openlist"}, {"edition": "unknown"}):
             with self.subTest(change=tuple(change)):
                 source.write_text(json.dumps({**json.loads(original), **change}))
                 self.assertFalse(readiness.read(self.root, now=time.time())["ready"])
@@ -90,7 +91,7 @@ class ReadinessTests(unittest.TestCase):
         self.assertFalse(readiness.read(self.root, now=time.time())["ready"])
 
     def test_missing_protocol_and_hostile_subprocess_output_are_not_echoed(self):
-        instance = SimpleNamespace(product=PRODUCTS["openlist"], version=VERSION)
+        instance = SimpleNamespace(product=PRODUCTS["clouddrive2"], version=VERSION)
         messages = []
         session = SimpleNamespace(run=lambda *a, **k: (1, "PRIVATE_TRACEBACK_TOKEN"))
         self.assertFalse(host.check(instance, session, messages.append))
@@ -100,7 +101,7 @@ class ReadinessTests(unittest.TestCase):
         self.assertTrue(host.check(instance, session, messages.append))
 
     def test_different_bot_version_remains_unverified(self):
-        instance = SimpleNamespace(product=PRODUCTS["openlist"], version="0.0.0")
+        instance = SimpleNamespace(product=PRODUCTS["clouddrive2"], version="0.0.0")
         session = SimpleNamespace(run=lambda *a, **k: (0, json.dumps(self.report())))
         messages = []
         self.assertFalse(host.check(instance, session, messages.append))
@@ -124,7 +125,7 @@ class ReadinessTests(unittest.TestCase):
             async def stop(_):
                 service._stop.set()
 
-            with patch.object(readiness, "publish", side_effect=OSError("private failure")), patch("tg2cloud.transfer.scheduler.asyncio.sleep", side_effect=stop):
+            with patch.object(readiness, "publish", side_effect=OSError("private failure")), patch("tgcloud.transfer.scheduler.asyncio.sleep", side_effect=stop):
                 await _resource_loop(service)
             self.assertIs(service.snapshot, original)
             service.log.exception.assert_not_called()
@@ -133,7 +134,7 @@ class ReadinessTests(unittest.TestCase):
 
 
     def test_resource_cycle_reuses_only_its_own_counts_budget_and_stream_sample(self):
-        from tg2cloud.domain.states import SCHEDULING_STATES
+        from tgcloud.domain.states import SCHEDULING_STATES
 
         async def run():
             service = self.service
@@ -155,7 +156,7 @@ class ReadinessTests(unittest.TestCase):
                 snapshots.append(json.loads((self.root / "readiness.json").read_text()))
                 if len(snapshots) == 2:
                     service._stop.set()
-            with patch("tg2cloud.transfer.scheduler.asyncio.sleep", side_effect=next_cycle):
+            with patch("tgcloud.transfer.scheduler.asyncio.sleep", side_effect=next_cycle):
                 await _resource_loop(service)
             self.assertEqual(service.db.counts.call_count, 2)
             service.db.counts.assert_called_with(states=SCHEDULING_STATES)

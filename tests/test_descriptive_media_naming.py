@@ -13,8 +13,8 @@ from telethon import events
 from telethon.tl import types
 from test_scenarios import FakeRclone, make_service, make_settings
 
-from tg2cloud.domain.naming import album_file_name, video_file_name
-from tg2cloud.persistence.sqlite import TaskDB
+from tgcloud.domain.naming import album_file_name, video_file_name
+from tgcloud.persistence.sqlite import TaskDB
 
 
 class PollutedOriginalTests(unittest.TestCase):
@@ -99,8 +99,8 @@ class DescriptiveMediaIngestionTests(unittest.IsolatedAsyncioTestCase):
                 await self.service._on_message(self.event(item))
                 self.assertEqual(self.db.counts(), prior)
 
-    async def test_single_photo_uses_its_own_caption_in_both_editions(self):
-        for ident, backend in enumerate(("clouddrive2", "openlist"), 1):
+    async def test_single_photo_uses_its_own_caption_with_clouddrive2(self):
+        for ident, backend in enumerate(("clouddrive2",), 1):
             self.service.settings = replace(self.settings, storage_backend=backend)
             message = self.message(ident, "photo", "城市夜景旅行记录\n#城市 #旅行")
             await self.service._on_message(self.event(message))
@@ -212,7 +212,7 @@ class DescriptiveMediaIngestionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_photo_extraction_failure_keeps_original_and_does_not_log_caption(self):
         message = self.message(1, "photo", "只供离线测试的说明")
-        with patch("tg2cloud.telegram.handlers.media_file_name", side_effect=ValueError("synthetic-private")):
+        with patch("tgcloud.telegram.handlers.media_file_name", side_effect=ValueError("synthetic-private")):
             await self.service._on_message(self.event(message))
         self.assertEqual(self.db.get(1)["file_name"], "telegram-1.jpg")
         self.assertEqual(self.db.get(1)["state"], "queued")

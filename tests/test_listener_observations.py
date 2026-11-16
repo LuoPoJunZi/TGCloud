@@ -9,9 +9,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tg2cloud.monitoring import observations as obs
-from tg2cloud.monitoring import readiness
-from tg2cloud.persistence.sqlite import TaskDB
+from tgcloud.monitoring import observations as obs
+from tgcloud.monitoring import readiness
+from tgcloud.persistence.sqlite import TaskDB
 
 
 class ObservationTests(unittest.TestCase):
@@ -19,7 +19,7 @@ class ObservationTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.db = TaskDB(self.root / "tg2cloud.db")
+        self.db = TaskDB(self.root / "tgcloud.db")
         self.addCleanup(self.db.close)
         self.now = time.time()
         self.tick = time.monotonic()
@@ -163,7 +163,7 @@ class ObservationTests(unittest.TestCase):
     def test_listener_issue_does_not_falsify_bot_base_readiness(self):
         self.service.settings = SimpleNamespace(
             data_dir=self.root,
-            storage_backend="openlist",
+            storage_backend="clouddrive2",
             control_interval=3,
             min_free_disk_bytes=100,
             local_budget_bytes=1000,

@@ -14,7 +14,7 @@ TAG = re.compile(rf"v({CORE})(?:-(alpha|beta|rc)\.([1-9][0-9]*))?")
 
 
 def source_version(root: Path) -> str:
-    current = root / "src/tg2cloud/version.py"
+    current = root / "src/tgcloud/version.py"
     path = current if current.is_file() else root / "payload_clouddrive2/app/version.py"
     module = ast.parse(path.read_text(encoding="utf-8"))
     values = [node.value.value for node in module.body
@@ -32,8 +32,8 @@ def linux_entry_names(root: Path) -> tuple[str, ...]:
     if marker.is_file():
         value = json.loads(marker.read_text(encoding="utf-8"))
         if (not isinstance(value, dict) or type(value.get("api")) is not int
-                or value not in ({"api": 1, "proxy_schema": 2, "owner": "tg2cloud.external_webdav"},
-                                 {"api": 2, "proxy_schema": 2, "owner": "tg2cloud.external_webdav"})):
+                or value not in ({"api": 1, "proxy_schema": 2, "owner": "tgcloud.external_webdav"},
+                                 {"api": 2, "proxy_schema": 2, "owner": "tgcloud.external_webdav"})):
             raise ValueError("unsupported Linux entry layout")
         unified = value["api"] == 2
     if unified and any((root / name).exists() or (root / name).is_symlink() for name in ("uninstall.sh", "install-webdav.sh")):
@@ -45,6 +45,12 @@ def linux_entries(root: Path, version: str) -> None:
     """Release entry pins must be enabled; VPS helper identity must agree."""
     for name in linux_entry_names(root):
         text = (root / name).read_text(encoding="utf-8")
+        command = "lan" if name == "install-lan.sh" else "install"
+        if 'script_root=' in text and "installer_commit" not in text:
+            expected = 'exec python3 -B "$script_root/scripts/run_source.py" ' + command + ' "$@"'
+            if expected not in text or any(item in text for item in ("https://", "http://", "curl", "wget")):
+                raise ValueError("invalid local-source Linux entry: " + name)
+            continue
         if len(re.findall(r'^installer_commit\s*=\s*"[0-9a-f]{40}"$', text, re.MULTILINE)) != 1:
             raise ValueError(f"invalid immutable Linux entry pin: {name}")
         if name == "install.sh" and re.findall(r'^installer_version\s*=\s*"([0-9.]+)"$', text, re.MULTILINE) != [version]:
@@ -57,18 +63,18 @@ def release_metadata(root: Path, tag: str) -> dict[str, str]:
     if not match or match[1] != version:
         raise ValueError("release tag must match the source version")
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
-    if not re.search(rf"^## TG2Cloud v{re.escape(version)}\s*$", changelog, re.MULTILINE):
+    if not re.search(rf"^## TGCloud v{re.escape(version)}\s*$", changelog, re.MULTILINE):
         raise ValueError("current version missing from CHANGELOG")
     notes = (root / "RELEASE_NOTES.md").read_text(encoding="utf-8")
-    versions = re.findall(rf"TG2Cloud (v{CORE}(?:-(?:alpha|beta|rc)\.[1-9][0-9]*)?)", notes)
+    versions = re.findall(rf"TGCloud (v{CORE}(?:-(?:alpha|beta|rc)\.[1-9][0-9]*)?)", notes)
     if not versions or versions[0] != tag:
         raise ValueError("Release Notes identity must match the exact release tag")
     linux_entries(root, version)
-    title = f"TG2Cloud v{version}"
+    title = f"TGCloud v{version}"
     if match[2]:
         title += f" {match[2].upper()}{match[3]}"
     return {"release_tag": tag, "release_title": title,
-            "release_artifact": f"TG2Cloud-{tag}-source",
+            "release_artifact": f"TGCloud-{tag}-source",
             "is_prerelease": "true" if match[2] else "false"}
 
 

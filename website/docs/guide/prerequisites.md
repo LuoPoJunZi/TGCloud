@@ -1,61 +1,40 @@
 # 部署前准备
 
-准备好一台自己控制的 Linux 主机、可用的 SSH 终端和浏览器、Telegram Bot 配置，以及一个可写的云存储目标。使用一键脚本或独立 Compose 部署。
+当前为 0.0.1 本地源码版，只支持 CloudDrive2。完整源码目录必须包含 `scripts/run_source.py`、`src/tgcloud/`、`packaging/` 和依赖锁文件；只复制一个 Shell 文件不能安装。
 
-## 推荐环境与硬门槛
+## 环境
 
-| 项目 | 基础建议 | 说明 |
-| --- | --- | --- |
-| VPS | 2 核 / 4GB 内存 / 50GB SSD | 批量使用可考虑 4 核 / 8GB / 80～100GB |
-| 系统 | Debian／Ubuntu、原生 64 位 AMD64／ARM64 用户态 | v1.4.0 统一支持两架构；不等于兼容所有 NAS |
-| 登录权限 | 以 root 运行脚本 | 使用自己的 SSH 终端登录主机 |
-| 本地设备 | 可用的终端和浏览器 | Windows、macOS、Linux 均可 |
-| 网络 | VPS 可达 Telegram、镜像仓库及目的端 | 按实际文件量准备流量 |
-| CloudDrive2 | 受管容器需要 `/dev/fuse` | OpenList Edition 产品配置不要求 FUSE |
+使用符合现有预检的原生 Linux AMD64 / ARM64、Python 3.10+ 标准库、交互终端及 root 权限。CloudDrive2 需要 `/dev/fuse`。具体内存、磁盘和 inode 条件由预检核对，任务预算不是磁盘分区。Docker、基础镜像、依赖和网关镜像仍可能需要网络下载。
 
-公网 VPS 的受管 CloudDrive2/OpenList 还需要一个指向当前 VPS 的独立域名，并允许公网 TCP 80/443 入站。没有可用 IPv6 时不要配置 AAAA；Cloudflare 首次签发证书时使用“仅 DNS”。可信内网使用独立 LAN 入口、私有 IPv4 和 HTTP，不对公网开放。
+## 公网 HTTPS
 
-## 原生 AMD64 / ARM64
+准备指向主机的域名及 80/443 入站条件，在完整源码目录执行：
 
-:::warning 公网 NAT 的 HTTPS 前置检查
-Oracle 等主机的网卡可能只有私有 IPv4，公网 A 正确时仍会触发 v1.4.0 的旧版预检错误。正式 v1.4.1 和匹配线上 helper 已增加手动输入云控制台公网 IPv4、确认映射及执行前复核，仍要求端口归属安全、AAAA 正确和 ACME／TLS 自检通过。重新运行公开入口；旧离线工具需显式更新。不要把公网 A 改成私有 IP，详见[仓库 VPS 指南](https://github.com/LuoPoJunZi/TG2Cloud/blob/main/docs/VPS-INSTALL.md#公网-nat-与域名检查)。
-:::
+```bash
+sudo bash install.sh
+```
 
-新源码将 x86_64／amd64 统一为 `linux/amd64`，aarch64／arm64 统一为 `linux/arm64`，核对 64 位 Python、dpkg 用户态、本机 rootful Docker 及实际镜像；不安装 QEMU、不接受远端 daemon 或强制平台覆盖。两 Edition 和公网／内网／外部 WebDAV 共用规则，不增加 ARM 专用入口。
+直接进入 CloudDrive2 管理菜单，选择安装与升级，按提示填写完整本地源码的绝对目录、资源预算与 Telegram / WebDAV 配置，预览后确认。
 
-v1.4.1 稳定包与匹配线上 helper 已发布核验，两个原生 runner 的 Bot、网关 HTTP／FUSE、扩展依赖、LAN 和外部 DAV 隔离检查均通过。2026-10-21，用户另行提供 Ubuntu26.04.1／原生ARM64／公网NAT 的 CloudDrive2 首装、Bot健康、本机HTTPS与WebDAV验收日志；不将它或CI扩大为OpenList、其他系统、手机外网、升级回退及长期续期已通过。见[本次实机记录](https://github.com/LuoPoJunZi/TG2Cloud/blob/c7e0b4b7497fbfa258c752dcff4666d1e2011eae/docs/development/V141-ACCEPTANCE.md)与[双架构说明](https://github.com/LuoPoJunZi/TG2Cloud/blob/main/docs/ARCHITECTURES.md)。
+## 可信内网
 
-Oracle Ampere A1 的 Ubuntu 24.04／26.04、Debian ARM64 需确认 `uname -m` 为 aarch64／arm64、`getconf LONG_BIT` 为 64、`dpkg --print-architecture` 为 arm64。检查 Docker／Compose 与 `/dev/fuse`；CloudDrive2 仍需 FUSE 和原权限，OpenList 不要求 FUSE。脚本不会调整 Oracle 安全组或防火墙，真实挂载、HTTPS、转存和回退仍需独立验收。
+```bash
+sudo bash install-lan.sh
+```
 
-脚本资源评估要求 CloudDrive2 至少约 1800MB 内存，OpenList 至少约 900MB；此外还要满足任务预算、保留线、Docker 数据盘和 inode 检查。50GB 是推荐磁盘容量，不是唯一硬门槛。首次安装可选推荐预算，最终以实时探测和执行前复检为准。
+填写本机实际配置的私有 IPv4。内网 HTTP 不加密，不应通过公网端口转发暴露。
 
-## VPS 信息清单
+## 只读预检
 
-准备服务器 IP 或域名、SSH 端口、用户名，以及密码或 SSH 私钥。私钥设有口令时同时准备口令。非 root 用户还需确认 sudo 可用。
+```bash
+sudo python3 -B scripts/run_source.py install --check --source-dir /absolute/TGCloud
+sudo python3 -B scripts/run_source.py lan --check --lan-ip 192.168.1.10 --source-dir /absolute/TGCloud
+```
 
-首次 SSH 连接应能通过服务商控制台核对主机指纹。不要只因“这是自己的 IP”就忽略指纹变化。
+不需要 Edition 参数。预检不执行安装或 WebDAV 写入。完整安装后使用 `tgcloud` 管理；源码仍可用 `python3 -B scripts/run_source.py manage` 打开菜单。
 
-## Telegram 信息清单
+## 首次转存
 
-| 字段 | 获取或确认方式 |
-| --- | --- |
-| Bot Token | 从 Telegram 的 `@BotFather` 创建或管理自己的 Bot |
-| API ID | 在 [my.telegram.org](https://my.telegram.org) 创建应用后获取 |
-| API Hash | 与 API ID 配套的应用凭据 |
-| Allowed User | 你本人的 Telegram 数字 ID，不是 `@用户名` |
+在自己的 CloudDrive2 管理页挂载云存储，创建专用 WebDAV 用户并核对根目录和写入权限，再单独确认 WebDAV 写入验收，最后转存一个有权保存的小文件。详见[配置](/deploy/clouddrive2/)和 [Bot 使用](/usage/commands/)。
 
-详见 [Telegram 配置](/deploy/telegram/)。
-
-## 云存储与 WebDAV
-
-云存储的登录、授权和挂载在你自己的 CloudDrive2 或 OpenList 后台完成。准备独立 WebDAV 用户，不要把云盘登录密码当成 WebDAV 密码。
-
-建议先选一个专门的测试文件夹，确认能列目录、上传并删除小文件，再作为正式目标。CloudDrive2 还需要验证改名能力。
-
-:::danger 不要把真实配置发出来
-本网站不收集任何配置。不要将 Bot Token、API Hash、密码、私钥、Cookie、OAuth 凭据或含真实信息的截图发到公开 Issue。
-:::
-
-## 完成准备后
-
-先从[下载页选择安装入口](/download/)，再按 [完整部署流程](/guide/quick-start/) 操作。安装目录或网关管理方式变化后，需要重新探测资源。
+当前不接管其他项目或身份未知的旧实例，不执行自动迁移。新项目仓库名称已确定，但在线安装与正式发布仍待配置，不能使用旧项目 Release 代替本地源码。

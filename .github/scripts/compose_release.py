@@ -17,8 +17,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from tg2cloud.compose.packaging import build_bundles
-from tg2cloud.version import VERSION
+from tgcloud.compose.packaging import build_bundles
+from tgcloud.version import VERSION
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -132,7 +132,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("bundle", "publish-index", "inspect-index"))
     parser.add_argument("--directory", type=Path)
-    parser.add_argument("--image", default="ghcr.io/luopojunzi/tg2cloud:" + VERSION)
+    parser.add_argument("--image", default="ghcr.io/luopojunzi/tgcloud:" + VERSION)
     parser.add_argument("--commit", default="")
     parser.add_argument("--amd64")
     parser.add_argument("--arm64")

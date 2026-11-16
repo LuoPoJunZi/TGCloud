@@ -10,7 +10,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from tg2cloud.deployment import architecture as arch
+from tgcloud.deployment import architecture as arch
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = "sha256:" + "a" * 64
@@ -169,8 +169,8 @@ class DockerTests(unittest.TestCase):
 
 class CandidateTests(unittest.TestCase):
     def test_bad_daemon_stops_before_payload_or_release_record(self):
-        from tg2cloud.deployment import install
-        from tg2cloud.deployment.host import SafeLog
+        from tgcloud.deployment import install
+        from tgcloud.deployment.host import SafeLog
         plan = Mock(action="upgrade")
         with patch.object(arch, "check_docker", side_effect=ValueError("wrong native daemon")), patch.object(install.payload, "build_payload") as build, patch.object(install.upgrade, "record_release") as record:
             with self.assertRaises(ValueError):
@@ -190,7 +190,7 @@ class CandidateTests(unittest.TestCase):
         self.assertEqual(release.count("if: matrix.arch == 'amd64'"), 2)
         self.assertIn("needs.linux-validation.result == 'success'", release)
         self.assertIn("fromJSON(needs.prepare.outputs.native_matrix)", release)
-        self.assertIn('TG2CLOUD_TEST_NATIVE_DOCKER: "1"', tests)
+        self.assertIn('TGCLOUD_TEST_NATIVE_DOCKER: "1"', tests)
         self.assertIn("check_native_architecture.py --expected", release)
 
     def test_arm_requires_stable_release_with_native_hooks_without_main_fallback(self):
@@ -227,11 +227,11 @@ class CandidateTests(unittest.TestCase):
                 ensure.assert_not_called()
 
     def test_hooks_share_detector_and_check_candidates_before_stopping_old_bot(self):
-        for edition in ("clouddrive2", "openlist"):
+        for edition in ("clouddrive2",):
             text = (ROOT / f"packaging/hooks/{edition}/remote_install.sh").read_text(encoding="utf-8")
-            self.assertIn("-m tg2cloud.deployment.architecture", text)
+            self.assertIn("-m tgcloud.deployment.architecture", text)
             self.assertNotIn("uname -m", text)
             self.assertLess(text.index("native_check prepare"), text.index('docker stop --time 30 "$BOT_CONTAINER"'))
-            self.assertLess(text.index('native_check container "$BOT_CONTAINER"'), text.index("TG2CLOUD_RESULT=SUCCESS"))
+            self.assertLess(text.index('native_check container "$BOT_CONTAINER"'), text.index("TGCLOUD_RESULT=SUCCESS"))
             self.assertIn('docker build --platform "$NATIVE_PLATFORM"', text)
             self.assertIn('BUILDX_BUILDER=default docker compose build', text)

@@ -13,10 +13,10 @@ from contextlib import closing, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from tg2cloud.persistence import bundle, rehearsal
-from tg2cloud.persistence.migrations import SCHEMA_VERSION
-from tg2cloud.persistence.sqlite import TaskDB
-from tg2cloud.version import VERSION
+from tgcloud.persistence import bundle, rehearsal
+from tgcloud.persistence.migrations import SCHEMA_VERSION
+from tgcloud.persistence.sqlite import TaskDB
+from tgcloud.version import VERSION
 
 
 class RehearsalTests(unittest.TestCase):
@@ -26,14 +26,14 @@ class RehearsalTests(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.root.chmod(0o700)
 
-    def fixture(self, edition="openlist"):
+    def fixture(self, edition="clouddrive2"):
         root = self.root / edition
-        for name in ("data", "config", "openlist/data" if edition == "openlist" else "clouddrive/config"):
+        for name in ("data", "config", "clouddrive/config"):
             (root / name).mkdir(parents=True, mode=0o700)
         (root / ".env").write_text("SYNTHETIC_PRIVATE_TOKEN=do-not-execute\n")
         (root / "docker-compose.yml").write_text("services: {}\n")
         (root / "config/rclone.conf").write_text("PRIVATE_FIXTURE_PASSWORD\n")
-        gateway = root / ("openlist/data" if edition == "openlist" else "clouddrive/config")
+        gateway = root / "clouddrive/config"
         (gateway / "settings.json").write_text("{}")
         with closing(sqlite3.connect(root / "data/bot.session")) as conn:
             conn.execute("CREATE TABLE synthetic_session (value TEXT)")
@@ -51,73 +51,92 @@ class RehearsalTests(unittest.TestCase):
         bundle.pack(root, archive, edition, VERSION)
         return root, archive
 
-    def test_both_editions_rehearse_real_recovery_without_accessing_original_paths(self):
-        for edition in ("clouddrive2", "openlist"):
-            with self.subTest(edition=edition):
-                source, archive = self.fixture(edition)
-                before = {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
-                          for path in source.rglob("*") if path.is_file()}
-                original = Path.is_file
-                def guard(path, original=original):
-                    if path.name == "PRIVATE_OUTSIDE.mp4":
-                        raise AssertionError("production local_path must not be inspected")
-                    return original(path)
-                with patch.object(Path, "is_file", guard), \
-                        patch("socket.create_connection", side_effect=AssertionError("no network")), \
-                        patch("subprocess.run", side_effect=AssertionError("no services")):
-                    report = rehearsal.rehearse(archive, self.root, edition)
-                self.assertEqual(report["tasks"], 5)
-                self.assertEqual(report["schema"], SCHEMA_VERSION)
-                self.assertEqual(report["recovery"], {"queued": 2, "waiting_upload": 0, "failed": 1})
-                self.assertEqual(report["session"], "not-loaded")
-                serialized = json.dumps(report)
-                self.assertNotIn("PRIVATE_", serialized)
-                self.assertNotIn(str(source), serialized)
-                self.assertEqual(before, {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
-                                          for path in source.rglob("*") if path.is_file()})
-                self.assertFalse(list(self.root.glob("tg2cloud-restore-check-*")))
+    def test_rehearse_real_recovery_without_accessing_original_paths(self):
+        source, archive = self.fixture()
+        before = {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+                  for path in source.rglob("*") if path.is_file()}
+        original = Path.is_file
+        def guard(path, original=original):
+            if path.name == "PRIVATE_OUTSIDE.mp4":
+                raise AssertionError("production local_path must not be inspected")
+            return original(path)
+        with patch.object(Path, "is_file", guard), \
+                patch("socket.create_connection", side_effect=AssertionError("no network")), \
+                patch("subprocess.run", side_effect=AssertionError("no services")):
+            report = rehearsal.rehearse(archive, self.root, "clouddrive2")
+        self.assertEqual(report["tasks"], 5)
+        self.assertEqual(report["schema"], SCHEMA_VERSION)
+        self.assertEqual(report["recovery"], {"queued": 2, "waiting_upload": 0, "failed": 1})
+        self.assertEqual(report["session"], "not-loaded")
+        serialized = json.dumps(report)
+        self.assertNotIn("PRIVATE_", serialized)
+        self.assertNotIn(str(source), serialized)
+        self.assertEqual(before, {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+                                  for path in source.rglob("*") if path.is_file()})
+        self.assertFalse(list(self.root.glob("tgcloud-restore-check-*")))
 
     def test_temporary_copy_is_removed_on_interrupt_without_touching_archive(self):
         _, archive = self.fixture()
         before = archive.read_bytes()
         with self.assertRaises(KeyboardInterrupt), \
-                bundle.verified_snapshot(archive, self.root, "openlist", VERSION) as (copy, _):
+                bundle.verified_snapshot(archive, self.root, "clouddrive2", VERSION) as (copy, _):
             self.assertTrue(copy.is_dir())
             raise KeyboardInterrupt
         self.assertFalse(copy.exists())
         self.assertEqual(before, archive.read_bytes())
 
+    def test_openlist_archive_is_refused_before_database_startup(self):
+        _, archive = self.fixture()
+        with tarfile.open(archive, "r:gz") as tar:
+            contents = {item.name: tar.extractfile(item).read() for item in tar}
+        manifest = json.loads(contents["manifest.json"])
+        manifest["edition"] = "openlist"
+        contents["manifest.json"] = json.dumps(manifest).encode()
+        retired = self.root / "retired-openlist.tar.gz"
+        with tarfile.open(retired, "w:gz") as tar:
+            for name, content in contents.items():
+                item = tarfile.TarInfo(name)
+                item.size = len(content)
+                tar.addfile(item, io.BytesIO(content))
+        before = retired.read_bytes()
+        with patch.object(rehearsal, "task_count", side_effect=AssertionError("must not open database")), \
+                self.assertRaisesRegex(ValueError, "edition/version incompatible"):
+            rehearsal.rehearse(retired, self.root, "clouddrive2")
+        self.assertEqual(retired.read_bytes(), before)
+        self.assertFalse(list(self.root.glob("tgcloud-restore-check-*")))
+
     def test_failed_integrity_never_exposes_an_unverified_copy(self):
         _, archive = self.fixture()
         with patch.object(bundle, "checksum", return_value="0" * 64), self.assertRaises(ValueError), \
-                bundle.verified_snapshot(archive, self.root, "openlist", VERSION):
+                bundle.verified_snapshot(archive, self.root, "clouddrive2", VERSION):
             self.fail("unverified copy exposed")
-        self.assertFalse(list(self.root.glob("tg2cloud-restore-check-*")))
+        self.assertFalse(list(self.root.glob("tgcloud-restore-check-*")))
 
     def test_edition_future_version_task_limit_and_private_permissions_fail_closed(self):
         _, archive = self.fixture()
+        for edition in ("openlist", "cd2", "", "unknown"):
+            with self.subTest(edition=edition), self.assertRaises(ValueError):
+                rehearsal.rehearse(archive, self.root, edition)
         with self.assertRaises(ValueError):
-            rehearsal.rehearse(archive, self.root, "clouddrive2")
-        with self.assertRaises(ValueError):
-            rehearsal.rehearse(archive, self.root, "openlist", "99.0.0")
+            rehearsal.rehearse(archive, self.root, "clouddrive2", "99.0.0")
         with patch.object(rehearsal, "MAX_TASKS", 1), self.assertRaisesRegex(ValueError, "resource limit"):
-            rehearsal.rehearse(archive, self.root, "openlist")
+            rehearsal.rehearse(archive, self.root, "clouddrive2")
         if os.name == "posix":
             archive.chmod(0o644)
             with self.assertRaises(ValueError):
-                rehearsal.rehearse(archive, self.root, "openlist")
-        self.assertFalse(list(self.root.glob("tg2cloud-restore-check-*")))
+                rehearsal.rehearse(archive, self.root, "clouddrive2")
+        self.assertFalse(list(self.root.glob("tgcloud-restore-check-*")))
 
     def test_cli_uses_safe_summary_and_errors_never_echo_backup_contents(self):
         _, archive = self.fixture()
         out = io.StringIO()
         with redirect_stdout(out):
-            code = rehearsal.main([str(archive), "--scratch", str(self.root), "--edition", "openlist", "--json"])
+            code = rehearsal.main([str(archive), "--scratch", str(self.root), "--edition", "clouddrive2", "--json"])
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out.getvalue())["tasks"], 5)
         out = io.StringIO()
         with redirect_stdout(out), patch.object(rehearsal, "rehearse", side_effect=ValueError("PRIVATE_CREDENTIAL")):
-            self.assertEqual(rehearsal.main([str(archive), "--scratch", str(self.root), "--edition", "openlist"]), 1)
+            self.assertEqual(rehearsal.main([str(archive), "--scratch", str(self.root), "--edition", "clouddrive2"]), 1)
         self.assertNotIn("PRIVATE_CREDENTIAL", out.getvalue())
 
     def test_future_schema_refused_and_original_archive_preserved(self):
@@ -125,10 +144,10 @@ class RehearsalTests(unittest.TestCase):
         with closing(sqlite3.connect(source / "data/tg115.db")) as conn:
             conn.execute(f"PRAGMA user_version={SCHEMA_VERSION + 1}")
         future = self.root / "future.tar.gz"
-        bundle.pack(source, future, "openlist", VERSION)
+        bundle.pack(source, future, "clouddrive2", VERSION)
         original = future.read_bytes()
         with self.assertRaises(RuntimeError):
-            rehearsal.rehearse(future, self.root, "openlist")
+            rehearsal.rehearse(future, self.root, "clouddrive2")
         self.assertEqual(future.read_bytes(), original)
         self.assertTrue(archive.exists())
 
@@ -155,8 +174,8 @@ class RehearsalTests(unittest.TestCase):
             conn.commit()
         before = original.read_bytes()
         archive = self.root / "legacy-schema.tar.gz"
-        bundle.pack(source, archive, "openlist", "1.3.4")
-        report = rehearsal.rehearse(archive, self.root, "openlist")
+        bundle.pack(source, archive, "clouddrive2", VERSION)
+        report = rehearsal.rehearse(archive, self.root, "clouddrive2")
         self.assertEqual(report["schema"], SCHEMA_VERSION)
         self.assertEqual(report["tasks"], 1)
         self.assertEqual(original.read_bytes(), before)
@@ -166,7 +185,7 @@ class RehearsalTests(unittest.TestCase):
         import sys
         script = Path(__file__).resolve().parents[1] / "src"
         code = ("import sys;sys.path.insert(0," + repr(str(script)) + ");"
-                "from tg2cloud.persistence.rehearsal import main;"
+                "from tgcloud.persistence.rehearsal import main;"
                 "assert 'telethon' not in sys.modules and 'psutil' not in sys.modules;main(['--help'])")
         result = subprocess.run([sys.executable, "-S", "-B", "-c", code], cwd=self.root,
                                 capture_output=True, timeout=10, check=False)
@@ -179,16 +198,16 @@ class RehearsalTests(unittest.TestCase):
             opened.append(db._conn)
             raise ValueError("synthetic failed startup")
         with patch.object(TaskDB, "_initialize", fail), self.assertRaises(ValueError):
-            rehearsal.rehearse(archive, self.root, "openlist")
+            rehearsal.rehearse(archive, self.root, "clouddrive2")
         self.assertEqual(len(opened), 1)
         with self.assertRaises(sqlite3.ProgrammingError):
             opened[0].execute("SELECT 1")
-        self.assertFalse(list(self.root.glob("tg2cloud-restore-check-*")))
+        self.assertFalse(list(self.root.glob("tgcloud-restore-check-*")))
 
     def test_cli_interruption_is_explicit_and_does_not_claim_success(self):
         output = io.StringIO()
         with redirect_stdout(output), patch.object(rehearsal, "rehearse", side_effect=KeyboardInterrupt):
-            code = rehearsal.main(["synthetic.tar.gz", "--scratch", str(self.root), "--edition", "openlist"])
+            code = rehearsal.main(["synthetic.tar.gz", "--scratch", str(self.root), "--edition", "clouddrive2"])
         self.assertEqual(code, 130)
         self.assertIn("已中断", output.getvalue())
         self.assertNotIn("通过", output.getvalue())
@@ -211,5 +230,5 @@ class RehearsalTests(unittest.TestCase):
                         info.size = len(body)
                         tar.addfile(info, io.BytesIO(body))
                 with self.assertRaises(ValueError):
-                    bundle.preflight(candidate, self.root, "openlist", VERSION)
-                self.assertFalse(list(self.root.glob("tg2cloud-restore-check-*")))
+                    bundle.preflight(candidate, self.root, "clouddrive2", VERSION)
+                self.assertFalse(list(self.root.glob("tgcloud-restore-check-*")))

@@ -50,11 +50,11 @@ jobs:
           test "$(gh release view "$TAG" --json isPrerelease --jq .isPrerelease)" = false
           python3 .github/scripts/release_metadata.py --tag "$TAG"
           mkdir -p build/source-assets
-          gh release download "$TAG" --pattern "TG2Cloud-${TAG}-source.tar.gz" --pattern SHA256SUMS.txt --dir build/source-assets
+          gh release download "$TAG" --pattern "TGCloud-${TAG}-source.tar.gz" --pattern SHA256SUMS.txt --dir build/source-assets
           python3 .github/scripts/source_release.py verify --tag "$TAG" --directory build/source-assets
           commit="$(git rev-parse HEAD)"
           test "$(git rev-parse "refs/tags/${TAG}^{commit}")" = "$commit"
-          printf 'tag=%s\ncommit=%s\nversion=%s\nrepository=ghcr.io/%s/tg2cloud\n' "$TAG" "$commit" "${TAG#v}" "${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+          printf 'tag=%s\ncommit=%s\nversion=%s\nrepository=ghcr.io/%s/tgcloud\n' "$TAG" "$commit" "${TAG#v}" "${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout the immutable workflow publisher (not business sources)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -101,10 +101,10 @@ jobs:
           set -euo pipefail
           python3 .github/scripts/check_native_architecture.py --expected '${{ matrix.arch }}'
           python3 .github/scripts/build_payload.py --edition clouddrive2 --directory build/image-context
-          docker build --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" --label "org.opencontainers.image.revision=${COMMIT}" --label "org.opencontainers.image.version=${VERSION}" -t tg2cloud-bot:test build/image-context
+          docker build --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" --label "org.opencontainers.image.revision=${COMMIT}" --label "org.opencontainers.image.version=${VERSION}" -t tgcloud-bot:test build/image-context
       - name: Test direct Compose setup and non-root configuration for both Editions
         env:
-          TG2CLOUD_TEST_COMPOSE_DOCKER: '1'
+          TGCLOUD_TEST_COMPOSE_DOCKER: '1'
         run: python3 -B -m unittest discover -s tests -p test_compose_docker.py -v
       - name: Validate the offline HTTPS host launcher without Bot dependencies
         env:
@@ -117,7 +117,7 @@ jobs:
           set -euo pipefail
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           image="${REPOSITORY}:sha-${COMMIT}-${{ matrix.arch }}"
-          docker tag tg2cloud-bot:test "$image"
+          docker tag tgcloud-bot:test "$image"
           docker push "$image"
           digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$image")"
           digest="${digest##*@}"
@@ -176,8 +176,8 @@ jobs:
       - name: Recheck the remote tag before publication
         run: |
           set -euo pipefail
-          git fetch --no-tags origin "refs/tags/${TAG}:refs/tags/tg2cloud-compose-release-check"
-          test "$(git rev-parse 'refs/tags/tg2cloud-compose-release-check^{commit}')" = "$COMMIT"
+          git fetch --no-tags origin "refs/tags/${TAG}:refs/tags/tgcloud-compose-release-check"
+          test "$(git rev-parse 'refs/tags/tgcloud-compose-release-check^{commit}')" = "$COMMIT"
           test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = false
           test "$(gh release view "$TAG" --json isPrerelease --jq .isPrerelease)" = false
       - name: Publish or verify the immutable version index

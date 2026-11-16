@@ -7,10 +7,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tg2cloud.deployment import diagnostics as host
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.monitoring.diagnostics import collect
-from tg2cloud.persistence.sqlite import TaskDB
+from tgcloud.deployment import diagnostics as host
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.monitoring.diagnostics import collect
+from tgcloud.persistence.sqlite import TaskDB
 
 
 class ReportTests(unittest.TestCase):
@@ -25,7 +25,7 @@ class ReportTests(unittest.TestCase):
         task, _ = self.db.create_task(chat_id=1, sender_id=1, message_id=1, file_name="SYNTHETIC_PRIVATE_NAME.mp4", file_size=5)
         self.db.update(task["id"], state="download_failed", failure_kind="SYNTHETIC_PRIVATE_TYPE", error="PRIVATE_PASSWORD")
         before = self.db.get(task["id"])
-        environment = {"TG2CLOUD_STORAGE_BACKEND": "openlist", "BOT_TOKEN_B64": "PRIVATE_TOKEN", "DATA_DIR": str(self.root)}
+        environment = {"TGCLOUD_STORAGE_BACKEND": "clouddrive2", "BOT_TOKEN_B64": "PRIVATE_TOKEN", "DATA_DIR": str(self.root)}
         value = collect(self.root, environment=environment)
         serialized = json.dumps(value)
         for forbidden in ("SYNTHETIC_PRIVATE", "PRIVATE_PASSWORD", "PRIVATE_TOKEN", str(self.root)):
@@ -34,12 +34,18 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(self.db.get(task["id"]), before)
         self.assertEqual(value["configuration"], "incomplete")
 
+    def test_retired_or_invalid_backend_is_never_reported_as_supported(self):
+        for backend in ("openlist", "unknown", "", "cd2"):
+            with self.subTest(backend=backend):
+                report = collect(self.root, environment={"TGCLOUD_STORAGE_BACKEND": backend})
+                self.assertEqual(report["edition"], "unknown")
+
     def test_source_access_is_named_not_other_and_report_remains_readonly(self):
         task, _ = self.db.create_task(chat_id=1, sender_id=1, message_id=1,
                                      file_name="SYNTHETIC_PRIVATE.mp4", file_size=5)
         self.db.update(task["id"], state="download_failed", failure_kind="source_access", error="PRIVATE_DETAIL")
         before = self.db.get(task["id"])
-        result = collect(self.root, environment={"TG2CLOUD_STORAGE_BACKEND": "clouddrive2"})
+        result = collect(self.root, environment={"TGCLOUD_STORAGE_BACKEND": "clouddrive2"})
         self.assertEqual(result["failures"], {"source_access": 1})
         self.assertNotIn("PRIVATE", json.dumps(result))
         self.assertEqual(self.db.get(task["id"]), before)
@@ -67,7 +73,7 @@ class ReportTests(unittest.TestCase):
 
     def test_hostile_subprocess_output_not_echoed_and_unknown_does_not_pass(self):
         session = SimpleNamespace(run=lambda *a, **k: (0, "PRIVATE_TOKEN_AND_PATH"))
-        instance = SimpleNamespace(product=PRODUCTS["openlist"])
+        instance = SimpleNamespace(product=PRODUCTS["clouddrive2"])
         result = host.collect(instance, session)
         self.assertNotIn("PRIVATE_TOKEN_AND_PATH", result)
         self.assertIn("未检查", result)
@@ -84,7 +90,7 @@ class ReportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             host.save("x", Path("relative"))
 
-    def report_fixture(self, key="openlist"):
+    def report_fixture(self, key="clouddrive2"):
         value = {"schema": 1, "edition": key, "version": "1.4.4", "python": "3.12.0",
                  "checks": dict.fromkeys(host.readiness.LABELS, "ok"), "failures": {},
                  "configuration": "present", "disk_free_bytes": 100, "budget_bytes": 200}
@@ -109,8 +115,7 @@ class ReportTests(unittest.TestCase):
                 commands = "\n".join(call.args[0] for call in session.run.call_args_list)
                 for forbidden in (" restart ", " stop ", " rm ", "curl", "verify_destination"):
                     self.assertNotIn(forbidden, commands)
-                other = "clouddrive2" if key == "openlist" else "openlist"
-                self.assertNotIn(PRODUCTS[other].bot_container, commands)
+                self.assertNotIn("tgcloud-openlist-bot", commands)
 
     def test_malformed_snapshot_types_never_leak_or_raise(self):
         for bad in ([], None, {"schema": True}, {"schema": 1, "edition": "openlist", "version": []}):
@@ -125,8 +130,8 @@ class ReportTests(unittest.TestCase):
 
     def test_entry_check_filters_private_messages_and_renewal_warning(self):
         _, instance, session = self.report_fixture()
-        with patch("tg2cloud.deployment.proxy.lan.load_state", return_value=None), \
-                patch("tg2cloud.deployment.proxy.manager.DomainProxyManager") as factory:
+        with patch("tgcloud.deployment.proxy.lan.load_state", return_value=None), \
+                patch("tgcloud.deployment.proxy.manager.DomainProxyManager") as factory:
             manager = factory.return_value
             manager.status.return_value = SimpleNamespace(state="healthy", warnings=("PRIVATE_SECRET_URL",))
             self.assertEqual(host.inspect_entry(instance, session), ("HTTPS 管理入口", "本机检查通过；有维护提醒"))
@@ -139,11 +144,11 @@ class ReportTests(unittest.TestCase):
 
     def test_lan_identity_and_checks_are_required_without_proxy_mutations(self):
         _, instance, session = self.report_fixture()
-        from tg2cloud.deployment.proxy import lan
+        from tgcloud.deployment.proxy import lan
         with patch.object(lan, "load_state", return_value={"install_dir": str(self.root), "bind_ip": "192.168.1.8"}), \
                 patch.object(lan, "reject_https_route") as reject, \
                 patch.object(lan, "inspect_lan", return_value={"running": True}), \
-                patch("tg2cloud.deployment.instances.docker_inventory", return_value=set()), \
+                patch("tgcloud.deployment.instances.docker_inventory", return_value=set()), \
                 patch.object(lan, "check_entry") as check:
             self.assertEqual(host.inspect_entry(instance, session), ("内网管理入口", "本机检查通过"))
             reject.assert_called_once_with(instance.product)

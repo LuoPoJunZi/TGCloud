@@ -7,12 +7,12 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from tg2cloud.cli import management
-from tg2cloud.cli.presentation import page_heading, terminal_report
-from tg2cloud.deployment.host import SafeLog
-from tg2cloud.deployment.instances import Instance
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.deployment.proxy.state import ProxyReport
+from tgcloud.cli import management
+from tgcloud.cli.presentation import page_heading, terminal_report
+from tgcloud.deployment.host import SafeLog
+from tgcloud.deployment.instances import Instance
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.proxy.state import ProxyReport
 
 
 class ManagementPagesTests(unittest.TestCase):
@@ -81,7 +81,7 @@ class ManagementPagesTests(unittest.TestCase):
         self.assertIn("版本 1.4.4", self.text())
         self.assertIn("版本 1.4.5", self.text())
         self.assertEqual(self.text().count("── 查看运行状态 ──"), 2)
-        self.assertNotIn("── TG2Cloud 本地管理 ──", self.text())
+        self.assertNotIn("── TGCloud 本地管理 ──", self.text())
         self.manager.discover.assert_called_once()
         self.assertTrue(all(call.kwargs["default"] == "0" for call in self.ui.ask.call_args_list))
 
@@ -102,7 +102,7 @@ class ManagementPagesTests(unittest.TestCase):
         self.assertIn("不会自动安装或重建", self.text())
 
     def test_lan_status_has_no_certificate_fields_or_public_proxy_calls(self):
-        from tg2cloud.deployment.proxy import lan
+        from tgcloud.deployment.proxy import lan
         self.manager.mode.return_value = {"bind_ip": "192.168.1.9"}
         with patch.object(management.instances, "docker_inventory", return_value=set()), \
                 patch.object(lan, "inspect_lan", return_value={"running": True}), patch.object(lan, "check_entry"):
@@ -150,21 +150,21 @@ class ManagementPagesTests(unittest.TestCase):
             self.assertEqual(self.manager.run(), 0)
         upgrade.assert_called_once_with(self.instance)
         self.assertEqual(self.ui.ask.call_count, 3)
-        first = self.text().index("── TG2Cloud 本地管理 ──")
-        second = self.text().index("── TG2Cloud 本地管理 ──", first + 1)
+        first = self.text().index("── TGCloud 本地管理 ──")
+        second = self.text().index("── TGCloud 本地管理 ──", first + 1)
         self.assertLess(self.text().index("0. 返回主菜单"), second)
 
     def test_external_webdav_returns_directly_and_uses_rechecked_custom_instance(self):
         custom = replace(self.instance, directory=Path("/srv/family-clouddrive2"))
         self.manager.recheck.side_effect = lambda _: custom
         self.ui.ask.side_effect = ["15", "0"]
-        with patch("tg2cloud.addons.external_webdav.entry.open_menu",
+        with patch("tgcloud.addons.external_webdav.entry.open_menu",
                    side_effect=lambda *_: self.log("\n── 外部 WebDAV 管理 ──\n")) as webdav:
             self.assertEqual(self.manager.run(), 0)
         webdav.assert_called_once_with(custom, self.ui, self.log)
         self.manager.recheck.assert_called_once_with(self.instance)
         self.assertEqual(self.ui.ask.call_count, 2)
-        self.assertEqual(self.text().count("── TG2Cloud 本地管理 ──"), 2)
+        self.assertEqual(self.text().count("── TGCloud 本地管理 ──"), 2)
         self.assertNotIn("── 外部 WebDAV ──", self.text())
         self.assertEqual(self.text().count("── 外部 WebDAV 管理 ──"), 1)
         self.assertNotIn("0. 返回主菜单", self.text())
@@ -172,25 +172,25 @@ class ManagementPagesTests(unittest.TestCase):
     def test_external_webdav_changed_instance_does_not_start_child(self):
         self.manager.recheck.side_effect = ValueError("确认之后实例发生变化")
         self.ui.ask.side_effect = ["15", "0", "0"]
-        with patch("tg2cloud.addons.external_webdav.entry.open_menu") as webdav:
+        with patch("tgcloud.addons.external_webdav.entry.open_menu") as webdav:
             self.assertEqual(self.manager.run(), 0)
         webdav.assert_not_called()
         self.assertIn("操作未完成", self.text())
 
     def test_diagnostic_terminal_is_plain_but_export_keeps_original_markdown(self):
-        from tg2cloud.deployment import diagnostics
-        original = "# TG2Cloud 故障诊断报告\n\n## 建议处理顺序\n1. synthetic advice\n"
+        from tgcloud.deployment import diagnostics
+        original = "# TGCloud 故障诊断报告\n\n## 建议处理顺序\n1. synthetic advice\n"
         self.ui.ask.side_effect = ["12", "/private/reports", "0", "0"]
         self.ui.confirm.return_value = True
         with patch.object(diagnostics, "collect", return_value=original), patch.object(diagnostics, "save", return_value=Path("report.md")) as save:
             self.assertEqual(self.manager.run(), 0)
         save.assert_called_once_with(original, Path("/private/reports"))
-        self.assertNotIn("# TG2Cloud", self.text())
+        self.assertNotIn("# TGCloud", self.text())
         self.assertIn("── 建议处理顺序 ──", self.text())
         self.assertEqual(self.text().count("── 故障诊断报告 ──"), 1)
 
     def test_backup_group_labels_match_execution_and_keep_confirmation(self):
-        from tg2cloud.deployment import backup
+        from tgcloud.deployment import backup
         self.ui.ask.side_effect = ["2", "/private/snapshots"]
         with patch.object(backup, "output_directory"), patch.object(backup, "create") as create:
             self.assertFalse(self.manager.backups(self.instance))
@@ -200,7 +200,7 @@ class ManagementPagesTests(unittest.TestCase):
         self.assertIn("短暂停止所选 Bot 与网关", self.ui.confirm.call_args.args[0])
 
     def test_heading_and_report_helpers_do_not_need_runtime_dependencies(self):
-        self.assertEqual(page_heading("查看运行日志", PRODUCTS["openlist"]), "\n── 查看运行日志 ──\n\nOpenList\n")
+        self.assertEqual(page_heading("查看运行日志", PRODUCTS["clouddrive2"]), "\n── 查看运行日志 ──\n\nCloudDrive2\n")
         original = "# Title\n\n## Heading\ntext\n"
         self.assertEqual(terminal_report(original), "── Heading ──\ntext")
         self.assertEqual(original, "# Title\n\n## Heading\ntext\n")

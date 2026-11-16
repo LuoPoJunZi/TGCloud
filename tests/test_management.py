@@ -15,9 +15,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tg2cloud.cli import commands, management, terminal, vps
-from tg2cloud.cli.presentation import InstallerLog, numbered_menu
-from tg2cloud.deployment import (
+from tgcloud.cli import commands, management, terminal, vps
+from tgcloud.cli.presentation import InstallerLog, numbered_menu
+from tgcloud.deployment import (
     configuration,
     host,
     install,
@@ -25,10 +25,10 @@ from tg2cloud.deployment import (
     releases,
     runtime,
 )
-from tg2cloud.deployment.host import SafeLog
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.deployment.proxy import lan
-from tg2cloud.version import VERSION
+from tgcloud.deployment.host import SafeLog
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.proxy import lan
+from tgcloud.version import VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -91,7 +91,7 @@ class InstallationUITests(unittest.TestCase):
             self.assertRegex(password, r"^[A-Za-z0-9]{8}$")
             for predicate in (str.islower, str.isupper, str.isdigit):
                 self.assertTrue(any(predicate(char) for char in password))
-            self.assertEqual(base64.b64decode(config["WEBDAV_USERNAME_B64"]), b"tg2cloud")
+            self.assertEqual(base64.b64decode(config["WEBDAV_USERNAME_B64"]), b"tgcloud")
             self.assertEqual(base64.b64decode(config["WEBDAV_TARGET_PATH_B64"]), b"")
             self.assertEqual(config["TZ"], "Asia/Shanghai")
             self.assertFalse(any("时区" in prompt for prompt, *_ in ui.prompts))
@@ -104,17 +104,18 @@ class InstallationUITests(unittest.TestCase):
         self.assertEqual(base64.b64decode(config["WEBDAV_TARGET_PATH_B64"]).decode(), "视频/本周")
         for path in ("../bad", "bad/../next", "a\\b"):
             with self.subTest(path=path), self.assertRaises(ValueError):
-                terminal.collect_config(InputUI(**{"Bot 保存子目录": path}), PRODUCTS["openlist"], storage=("20", "8"))
+                terminal.collect_config(InputUI(**{"Bot 保存子目录": path}), PRODUCTS["clouddrive2"], storage=("20", "8"))
 
     def test_private_setup_only_after_friendly_flow_and_never_log_or_show_tokens(self):
         ui = InputUI()
         ui.private = Mock()
-        config = terminal.collect_config(ui, PRODUCTS["openlist"], storage=("20", "8"))
+        config = terminal.collect_config(ui, PRODUCTS["clouddrive2"], storage=("20", "8"))
         messages = []
         log = SafeLog(messages.append)
         log.register(config)
-        terminal.show_setup_credentials(ui, PRODUCTS["openlist"], config, log)
-        self.assertEqual(ui.private.call_count, 3)
+        terminal.show_setup_credentials(ui, PRODUCTS["clouddrive2"], config, log)
+        self.assertEqual(ui.private.call_count, 2)
+        self.assertNotIn("OPENLIST_ADMIN_PASSWORD", config)
         public = "\n".join(messages)
         private = str(ui.private.call_args_list)
         for key in ("WEBDAV_PASSWORD_B64", "BOT_TOKEN_B64", "TELEGRAM_API_HASH_B64"):
@@ -139,8 +140,8 @@ class InstallationUITests(unittest.TestCase):
         log = InstallerLog(SafeLog(messages.append))
         log.register({"PASSWORD": "FAKE_PRIVATE"})
         log("正式 Release：v1.3.1；固定源码 commit：" + "a" * 40)
-        log("TG2CLOUD_CLI_WEBDAV=NOT_RUN；not completed")
-        log("TG2CLOUD_CLI_RESULT=FAILED：FAKE_PRIVATE")
+        log("TGCLOUD_CLI_WEBDAV=NOT_RUN；not completed")
+        log("TGCLOUD_CLI_RESULT=FAILED：FAKE_PRIVATE")
         text = "\n".join(messages)
         self.assertNotIn("a" * 40, text)
         self.assertNotIn("FAKE_PRIVATE", text)
@@ -152,7 +153,7 @@ class InstallationUITests(unittest.TestCase):
             for args in (("manage", "--help"), ("--help",)):
                 result = subprocess.run([sys.executable, "-I", "-S", "-B", "-X", "utf8", str(ROOT / "scripts/run_source.py"), *args], cwd=private, capture_output=True, text=True, encoding="utf-8", timeout=15, check=False)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn("TG2Cloud", result.stdout)
+                self.assertIn("TGCloud", result.stdout)
 
     def test_no_args_dispatches_local_menu_not_installer(self):
         with patch.object(management, "main", return_value=0) as operation, patch.object(vps, "main") as installer:
@@ -170,17 +171,17 @@ class InstallationUITests(unittest.TestCase):
         menu.assert_not_called()
         installer.assert_called_once_with(["--edition", "openlist", "--check"])
 
-    def test_edition_number_two_selects_openlist_not_clouddrive2(self):
+    def test_management_selects_only_cd2_without_a_gateway_prompt(self):
         ui = Mock()
-        ui.ask.return_value = "2"
         with patch.object(management.preflight, "validate_host"), patch.object(terminal, "Terminal", return_value=ui), patch.object(management, "LocalSession"), patch.object(management, "SafeLog", return_value=SafeLog(lambda _: None)), patch.object(management, "Management") as selected:
             selected.return_value.run.return_value = 0
             self.assertEqual(management.main([]), 0)
-        self.assertEqual(selected.call_args.args[0].key, "openlist")
+        self.assertEqual(selected.call_args.args[0].key, "clouddrive2")
+        ui.ask.assert_not_called()
 
     def test_runtime_directory_is_not_an_instance_directory(self):
         with self.assertRaises(ValueError):
-            configuration.check_product_directory(PRODUCTS["openlist"], Path("/opt/tg2cloud-cli/runtime"))
+            configuration.check_product_directory(PRODUCTS["clouddrive2"], Path("/opt/tgcloud-cli/runtime"))
 
 
 class RuntimeTests(unittest.TestCase):
@@ -189,7 +190,7 @@ class RuntimeTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.private = Path(temporary.name).resolve()
         self.root = self.private / "manager"
-        self.command = self.private / "bin/tg2cloud"
+        self.command = self.private / "bin/tgcloud"
         # Windows has no fcntl. Linux CI exercises the actual file lock and
         # private permission checks, all under the unique fixture directory.
         if os.name != "posix":
@@ -205,57 +206,46 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(self.install(), bundle)
         self.assertEqual(self.command.read_bytes(), first)
         data = runtime.verify(bundle)
-        self.assertEqual(data["owner"], "tg2cloud.cli")
-        self.assertIn("src/tg2cloud/cli/management.py", data["files"])
-        self.assertFalse(any(".env" in name or name.startswith(("data/", "src/tg2cloud/telegram/")) for name in data["files"]))
+        self.assertEqual(data["owner"], "tgcloud.cli")
+        self.assertIn("src/tgcloud/cli/management.py", data["files"])
+        self.assertFalse(any(".env" in name or name.startswith(("data/", "src/tgcloud/telegram/")) for name in data["files"]))
         self.assertFalse((bundle / ".bootstrap-release.json").exists())
         self.assertNotIn("curl", first.decode())
         self.assertNotIn("main/", first.decode())
         runtime.check_destination(root=self.root, command=self.command)
-        entry = bundle / "src/tg2cloud/deployment/runtime.py"
+        entry = bundle / "src/tgcloud/deployment/runtime.py"
         result = subprocess.run([sys.executable, "-I", "-S", "-B", "-X", "utf8", str(entry), "manage", "--help"], cwd=self.private, capture_output=True, text=True, encoding="utf-8", timeout=15, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("TG2Cloud 本地管理；已有工具离线运行", result.stdout)
-        self.assertIn("首次获取及升级组件仅使用正式稳定 Release", result.stdout)
+        self.assertIn("TGCloud 本地管理；仅 CloudDrive2", result.stdout)
+        self.assertIn("安装及升级使用完整本地源码", result.stdout)
         if os.name == "posix":
             self.assertEqual(self.command.stat().st_mode & 0o777, 0o700)
             self.assertTrue(all(p.stat().st_mode & 0o777 == 0o600 for p in bundle.rglob("*") if p.is_file()))
 
-    def test_target_release_version_is_read_from_source_not_running_helper(self):
-        source = self.private / "release-source"
-        for name, body in runtime.files(ROOT).items():
-            path = source / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(body)
-        (source / "src/tg2cloud/version.py").write_text('VERSION = "9.9.9"\n', encoding="utf-8")
-        release = releases.Release("v9.9.9", "a" * 40)
-        data = runtime.install(source=source, release=release, root=self.root, command=self.command)
+    def test_target_version_is_read_from_full_local_source_not_running_helper(self):
+        from tgcloud.deployment import local_source
+        with local_source.snapshot(ROOT) as snapshot:
+            source = snapshot.root
+            (source / "src/tgcloud/version.py").write_bytes(b'VERSION = "9.9.9"\n')
+            digest = local_source.digest(local_source.content(source))
+            data = runtime.install(source=source, root=self.root, command=self.command)
         self.assertEqual(data["version"], "9.9.9")
-        self.assertEqual(data["origin"], {"kind": "stable-release", "tag": "v9.9.9", "commit": "a" * 40})
+        self.assertEqual(data["origin"], {"kind": "local-source", "project": "tgcloud", "source_sha256": digest})
         result = runtime.installed_status("9.9.9", root=self.root, command=self.command)
         self.assertEqual(result["state"], "ok")
         self.assertEqual(result["commands"], {"version": "ok", "listen": "ok"})
-        self.assertEqual(result["version"], "9.9.9")
         self.assertEqual(runtime.installed_status("8.8.8", root=self.root, command=self.command)["state"], "failed")
 
-    def test_previous_stable_without_version_flag_is_explicit_legacy_not_false_success(self):
-        source = self.private / "legacy-source"
-        for name, body in runtime.files(ROOT).items():
-            path = source / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(body)
-        version = source / "src/tg2cloud/version.py"
-        version.write_text('VERSION = "1.4.11"\n', encoding="utf-8")
-        commands = source / "src/tg2cloud/cli/commands.py"
-        commands.write_text(commands.read_text(encoding="utf-8").replace(
-            '    parser.add_argument("--version", action="version", version="TG2Cloud CLI v" + VERSION)\n', ''), encoding="utf-8")
-        runtime.install(source=source, root=self.root, command=self.command)
-        result = runtime.installed_status("1.4.11", root=self.root, command=self.command)
-        self.assertEqual(result["state"], "legacy")
-        self.assertEqual(result["commands"], {"version": "unsupported", "listen": "ok"})
-        version.write_text('VERSION = "1.5.0"\n', encoding="utf-8")
-        runtime.install(source=source, root=self.root, command=self.command)
-        result = runtime.installed_status("1.5.0", root=self.root, command=self.command)
+    def test_current_project_without_version_flag_cannot_report_success(self):
+        from tgcloud.deployment import local_source
+        with local_source.snapshot(ROOT) as snapshot:
+            source = snapshot.root
+            command = source / "src/tgcloud/cli/commands.py"
+            text = command.read_text(encoding="utf-8")
+            text = text.replace('    parser.add_argument("--version", action="version", version="TGCloud CLI v" + VERSION)\n', '')
+            command.write_text(text, encoding="utf-8")
+            runtime.install(source=source, root=self.root, command=self.command)
+        result = runtime.installed_status(VERSION, root=self.root, command=self.command)
         self.assertEqual(result["state"], "failed")
         self.assertEqual(result["commands"]["version"], "failed")
 
@@ -279,12 +269,12 @@ class RuntimeTests(unittest.TestCase):
 
     def test_source_mutation_and_unknown_files_rejected(self):
         bundle = self.install()
-        path = bundle / "src/tg2cloud/cli/management.py"
+        path = bundle / "src/tgcloud/cli/management.py"
         original = path.read_bytes()
         path.write_bytes(original + b"\n# modified\n")
         with self.assertRaises(ValueError):
             runtime.check_destination(root=self.root, command=self.command)
-        result = subprocess.run([sys.executable, "-I", "-S", "-B", "-X", "utf8", str(bundle / "src/tg2cloud/deployment/runtime.py"), "--help"], cwd=self.private, capture_output=True, text=True, encoding="utf-8", timeout=15, check=False)
+        result = subprocess.run([sys.executable, "-I", "-S", "-B", "-X", "utf8", str(bundle / "src/tgcloud/deployment/runtime.py"), "--help"], cwd=self.private, capture_output=True, text=True, encoding="utf-8", timeout=15, check=False)
         self.assertEqual(result.returncode, 1)
         self.assertIn("未启动菜单", result.stderr)
         path.write_bytes(original)
@@ -313,7 +303,7 @@ class RuntimeTests(unittest.TestCase):
             self.install()
         self.assertEqual(self.command.read_bytes(), before)
         runtime.verify(bundle)
-        self.assertFalse(list(self.command.parent.glob(".tg2cloud-*")))
+        self.assertFalse(list(self.command.parent.glob(".tgcloud-*")))
 
     def test_unknown_schema_and_missing_files_refused(self):
         bundle = self.install()
@@ -356,6 +346,7 @@ class ManagementTests(unittest.TestCase):
         self.messages = []
         self.log = SafeLog(self.messages.append)
         self.ui, self.session = Mock(), Mock()
+        self.ui.ask.return_value = str(ROOT)
         self.manager = management.Management(self.product, self.session, self.log, self.ui)
         self.session.run.return_value = (0, "done")
         enter_context(self, patch.object(management, "edition_lock", side_effect=lambda _: nullcontext()))
@@ -378,7 +369,7 @@ class ManagementTests(unittest.TestCase):
 
         self.ui.ask.side_effect = ask
         with patch.object(self.manager, "discover", return_value=self.instance), patch(
-            "tg2cloud.cli.naming.interactive"
+            "tgcloud.cli.naming.interactive"
         ) as preview, self.assertRaisesRegex(ValueError, "请选择菜单中的序号"):
             self.manager.run()
         preview.assert_not_called()
@@ -387,12 +378,12 @@ class ManagementTests(unittest.TestCase):
     def test_every_number_dispatches_only_its_labelled_operation_both_editions(self):
         methods = {"1": "upgrade", "2": "status", "3": "logs", "4": "control",
                    "7": "entry", "11": "verify", "13": "backups", "14": "remove"}
-        external = {"5": "tg2cloud.deployment.users.manage", "6": "tg2cloud.cli.terminal.show_credentials",
-                    "8": "tg2cloud.deployment.feature_settings.manage_classification",
-                    "9": "tg2cloud.deployment.feature_settings.manage_notifications",
-                    "10": "tg2cloud.deployment.readiness.check", "12": "tg2cloud.deployment.diagnostics.collect",
-                    "15": "tg2cloud.addons.external_webdav.entry.open_menu",
-                    "16": "tg2cloud.deployment.listening.manage"}
+        external = {"5": "tgcloud.deployment.users.manage", "6": "tgcloud.cli.terminal.show_credentials",
+                    "8": "tgcloud.deployment.feature_settings.manage_classification",
+                    "9": "tgcloud.deployment.feature_settings.manage_notifications",
+                    "10": "tgcloud.deployment.readiness.check", "12": "tgcloud.deployment.diagnostics.collect",
+                    "15": "tgcloud.addons.external_webdav.entry.open_menu",
+                    "16": "tgcloud.deployment.listening.manage"}
         for product in PRODUCTS.values():
             instance = replace(self.instance, product=product, directory=Path(product.install_dir))
             manager = management.Management(product, self.session, self.log, self.ui)
@@ -403,7 +394,7 @@ class ManagementTests(unittest.TestCase):
                                   for key, name in methods.items()}
                     operations.update({key: stack.enter_context(patch(target, return_value="synthetic report"))
                                        for key, target in external.items()})
-                    preview = stack.enter_context(patch("tg2cloud.cli.naming.interactive"))
+                    preview = stack.enter_context(patch("tgcloud.cli.naming.interactive"))
                     self.ui.ask.side_effect = [number, "0", "0"] if number in {"1", "2", "3", "4", "6", "7", "10", "11", "12", "13"} else [number, "0"]
                     self.ui.confirm.return_value = False
                     self.assertEqual(manager.run(), 0)
@@ -431,10 +422,10 @@ class ManagementTests(unittest.TestCase):
         with patch.object(self.manager, "discover", return_value=self.instance):
             self.assertEqual(self.manager.run(), 0)
         text = "\n".join(self.messages)
-        self.assertEqual(text.count("── TG2Cloud 本地管理 ──"), 1)
-        self.assertLess(text.index("── TG2Cloud 本地管理 ──"), text.index("CloudDrive2 · 版本 1.3.1"))
+        self.assertEqual(text.count("── TGCloud 本地管理 ──"), 1)
+        self.assertLess(text.index("── TGCloud 本地管理 ──"), text.index("CloudDrive2 · 版本 1.3.1"))
         self.assertLess(text.index("安装目录："), text.index("1.  安装与升级"))
-        expected = ("\n── TG2Cloud 本地管理 ──\n\nCloudDrive2 · 版本 1.3.1 · Bot 运行中\n"
+        expected = ("\n── TGCloud 本地管理 ──\n\nCloudDrive2 · 版本 1.3.1 · Bot 运行中\n"
                     + f"安装目录：{self.instance.directory}\n管理工具（当前进程）：v{VERSION}\n\n" + management.MENU)
         self.assertEqual(text, expected)
 
@@ -515,11 +506,11 @@ class ManagementTests(unittest.TestCase):
         self.session.run.assert_not_called()
         self.ui.confirm.return_value = True
         with patch.object(self.manager, "recheck", return_value=self.instance):
-            for result in ((1, "TG2CLOUD_DESTINATION=OK"), (0, "partial")):
+            for result in ((1, "TGCLOUD_DESTINATION=OK"), (0, "partial")):
                 self.session.run.return_value = result
                 with self.assertRaises(RuntimeError):
                     self.manager.verify(self.instance)
-            self.session.run.return_value = (0, "TG2CLOUD_DESTINATION=OK\n")
+            self.session.run.return_value = (0, "TGCLOUD_DESTINATION=OK\n")
             self.manager.verify(self.instance)
         self.assertNotIn("写入与远端大小复验通过", "\n".join(self.messages[:-1]))
         self.assertIn("写入与远端大小复验通过", self.messages[-1])
@@ -528,7 +519,7 @@ class ManagementTests(unittest.TestCase):
         before = self.instance.raw_config
         with patch.object(self.manager, "mode", return_value={"bind_ip": "192.168.1.9"}), patch.object(lan, "main", return_value=0) as local, patch.object(vps, "main") as public:
             self.manager.upgrade(self.instance)
-        local.assert_called_once_with(["--edition", self.product.key], friendly=True)
+        local.assert_called_once_with(["--edition", self.product.key, "--source-dir", str(ROOT)], friendly=True)
         public.assert_not_called()
         self.assertEqual(self.instance.raw_config, before)
         self.assertEqual(self.instance.config["TZ"], "Europe/London")
@@ -564,8 +555,8 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(proxy.manage_backups.call_args_list[-1].args, ("prune",))
 
     def test_instance_snapshot_cancel_never_stops_services_or_creates_backup(self):
-        from tg2cloud.deployment import backup
-        self.ui.ask.side_effect = ["2", "/opt/tg2cloud-snapshots/clouddrive2"]
+        from tgcloud.deployment import backup
+        self.ui.ask.side_effect = ["2", "/opt/tgcloud-snapshots/clouddrive2"]
         self.ui.confirm.return_value = False
         with patch.object(backup, "output_directory"), patch.object(backup, "create") as create:
             self.manager.backups(self.instance)
@@ -591,7 +582,7 @@ class ManagementTests(unittest.TestCase):
         remove.assert_called_once_with(["--edition", self.product.key])
 
     def test_missing_selected_edition_enters_its_installer_only_after_confirmation(self):
-        product = PRODUCTS["openlist"]
+        product = PRODUCTS["clouddrive2"]
         instance = instances.Instance(product, Path(product.install_dir), False)
         manager = management.Management(product, self.session, self.log, self.ui, mode_hint="public")
         for confirmed in (False, True):
@@ -636,7 +627,7 @@ class ManagerCleanupTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.private = Path(temporary.name).resolve()
-        self.root, self.command = self.private / "manager", self.private / "bin/tg2cloud"
+        self.root, self.command = self.private / "manager", self.private / "bin/tgcloud"
         if os.name != "posix":
             enter_context(self, patch.object(host, "edition_lock", side_effect=lambda _: nullcontext()))
             enter_context(self, patch.object(management.uninstall, "edition_lock", side_effect=lambda _: nullcontext()))
@@ -667,7 +658,7 @@ class ManagerCleanupTests(unittest.TestCase):
         self.assertIn("快捷命令及受管管理代码已移除", "\n".join(self.messages))
 
     def test_retained_other_edition_data_and_session_keep_management(self):
-        directory = Path(self.products["openlist"].install_dir)
+        directory = Path(self.products["clouddrive2"].install_dir)
         directory.mkdir()
         session = directory / "bot.session"
         session.write_text("FAKE_KEEP_SESSION", encoding="utf-8")
@@ -677,7 +668,7 @@ class ManagerCleanupTests(unittest.TestCase):
         self.assertEqual(session.read_text(), "FAKE_KEEP_SESSION")
 
     def test_stopped_partial_container_or_managed_network_keeps_command(self):
-        for value in (({"tg2cloud-openlist": {"running": False}}, {}), ({}, {"tg2cloud-openlist-net": {}})):
+        for value in (({"tgcloud-openlist": {"running": False}}, {}), ({}, {"tgcloud-openlist-net": {}})):
             self.snapshot.return_value = value
             management.uninstall.cleanup_manager(self.session, self.log)
             self.assertTrue(self.command.exists())
@@ -718,7 +709,7 @@ class FriendlyInstallTests(unittest.TestCase):
         enter_context(self, patch.object(runtime, "lifecycle_lock", side_effect=lambda: nullcontext()))
 
     def test_confirmed_installer_creates_offline_command_but_check_and_cancel_do_not(self):
-        product = PRODUCTS["openlist"]
+        product = PRODUCTS["clouddrive2"]
         instance = instances.Instance(product, Path(product.install_dir), True, "1.3.1")
         release = releases.Release("v1.3.1", "a" * 40)
         plan = install.Plan(instance, "upgrade", Mock())
@@ -730,14 +721,14 @@ class FriendlyInstallTests(unittest.TestCase):
                 plan.action = "current" if mode in {"no-change", "removed"} else "upgrade"
                 discovery = [instance, instances.Instance(product, instance.directory, False)] if mode == "removed" else None
                 with patch.object(vps.preflight, "validate_host"), patch.object(instances, "docker_inventory", return_value=set()), patch.object(instances, "discover", return_value=instance, side_effect=discovery), patch.object(releases, "ReleaseClient", return_value=client), patch.object(terminal, "Terminal", return_value=ui), patch.object(install, "make_plan", return_value=plan), patch.object(install, "execute_plan") as execute, patch.object(runtime, "check_destination") as check, patch.object(runtime, "install_release") as local, patch.object(vps, "SafeLog", return_value=SafeLog(lambda _: None)):
-                    args = ["--edition", product.key] + (["--check"] if mode == "check" else [])
+                    args = ["--edition", product.key, "--source-dir", str(ROOT)] + (["--check"] if mode == "check" else [])
                     self.assertEqual(vps.main(args, friendly=True), 1 if mode == "removed" else 0)
                     self.assertEqual(local.call_count, int(mode in {"execute", "no-change"}))
                     self.assertEqual(execute.call_count, int(mode == "execute"))
                     self.assertEqual(check.call_count, int(mode != "check"))
 
     def test_fresh_setup_render_occurs_only_after_https_success(self):
-        product = PRODUCTS["openlist"]
+        product = PRODUCTS["clouddrive2"]
         instance = instances.Instance(product, Path(product.install_dir), False)
         manager = Mock()
         plan = install.Plan(instance, "install", manager, {})

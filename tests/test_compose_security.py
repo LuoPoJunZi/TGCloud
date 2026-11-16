@@ -10,34 +10,36 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from tg2cloud.compose import packaging
-from tg2cloud.monitoring import memory, readiness
-from tg2cloud.monitoring.resources import AdaptiveWindow, ResourceSnapshot
-from tg2cloud.transfer.scheduler import _start_downloads
+from test_compose import local_bundle_files
+
+from tgcloud.compose import packaging
+from tgcloud.monitoring import memory, readiness
+from tgcloud.monitoring.resources import AdaptiveWindow, ResourceSnapshot
+from tgcloud.transfer.scheduler import _start_downloads
 
 ROOT = Path(__file__).resolve().parents[1]
-IMAGE = "ghcr.io/example/tg2cloud@sha256:" + "a" * 64
+IMAGE = "ghcr.io/example/tgcloud@sha256:" + "a" * 64
 
 
 class ComposeSecurityTests(unittest.TestCase):
     def test_bot_only_receives_declared_runtime_settings_for_both_editions(self):
-        for edition in ("clouddrive2", "openlist"):
+        for edition in ("clouddrive2",):
             with self.subTest(edition=edition):
-                rendered = packaging.render(ROOT, edition, IMAGE)
-                bot = rendered.split("  tg2cloud-" + edition + "-bot:", 1)[1].split("  setup:", 1)[0]
+                rendered = local_bundle_files()["docker-compose.yml"].decode()
+                bot = rendered.split("  tgcloud-" + edition + "-bot:", 1)[1].split("  setup:", 1)[0]
                 self.assertNotIn("env_file:", bot)
-                for name in ("OPENLIST_ADMIN_PASSWORD", "DOCKER_HOST", "PYTHONPATH", "TG2CLOUD_BIND_IP"):
+                for name in ("OPENLIST_ADMIN_PASSWORD", "DOCKER_HOST", "PYTHONPATH", "TGCLOUD_BIND_IP"):
                     self.assertNotIn(name + ":", bot)
                 for name in packaging.BOT_ENVIRONMENT:
                     self.assertIn("      " + name + ":", bot)
                 self.assertIn("MEMORY_HARD_MIN_MB: ${MEMORY_HARD_MIN_MB:-512}", bot)
-                if edition == "openlist":
-                    self.assertIn("OPENLIST_ADMIN_PASSWORD: ${OPENLIST_ADMIN_PASSWORD:-}", rendered)
+                self.assertNotIn("OPENLIST_ADMIN_PASSWORD:", rendered)
 
-    def test_legacy_render_is_explicit_and_new_contract_is_versioned(self):
-        self.assertIn("path: .env", packaging.render(ROOT, "openlist", IMAGE, legacy=True))
-        files = packaging.bundle_files(ROOT, "openlist", IMAGE)
-        self.assertEqual(json.loads(files["compose-bundle.json"])["format"], 3)
+    def test_legacy_render_refused_and_local_contract_is_versioned(self):
+        with self.assertRaises(ValueError):
+            packaging.render(ROOT, "clouddrive2", IMAGE, source_digest="a" * 64, legacy=True)
+        files = local_bundle_files()
+        self.assertEqual(json.loads(files["compose-bundle.json"])["format"], 4)
 
 
 class CgroupMemoryTests(unittest.TestCase):
@@ -71,7 +73,7 @@ class CgroupMemoryTests(unittest.TestCase):
         self.assertEqual(memory.available(1800, 2000, root=self.root), (0, 1000))
 
     def test_low_memory_does_not_report_ready_and_recovers_without_changing_thresholds(self):
-        settings = SimpleNamespace(data_dir=self.root, storage_backend="openlist", control_interval=3,
+        settings = SimpleNamespace(data_dir=self.root, storage_backend="clouddrive2", control_interval=3,
                                    min_free_disk_bytes=100, local_budget_bytes=1000, memory_hard_min_bytes=512)
         window = AdaptiveWindow(settings, "download")
         service = SimpleNamespace(settings=settings, client=SimpleNamespace(is_connected=lambda: True),

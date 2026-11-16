@@ -16,14 +16,18 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import tg2cloud.cli.terminal as tgdep_terminal
-import tg2cloud.deployment.preflight as tgdep_preflight
-from tg2cloud.deployment import uninstall
-from tg2cloud.deployment.host import SafeLog
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.deployment.proxy.manager import render_compose
+import tgcloud.cli.terminal as tgdep_terminal
+import tgcloud.deployment.preflight as tgdep_preflight
+from tgcloud.deployment import local_source, uninstall
+from tgcloud.deployment.host import SafeLog
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.proxy.manager import render_compose
 
 ROOT = Path(__file__).resolve().parents[1]
+RETIRED = replace(PRODUCTS["clouddrive2"], key="openlist", install_dir="/opt/tgcloud-openlist",
+                  backup_dir="/opt/tgcloud-openlist-backups", bot_container="tgcloud-openlist-bot",
+                  storage_container="tgcloud-openlist", bot_service="tgcloud-openlist-bot",
+                  docker_network="tgcloud-openlist-net")
 
 
 def identifier(number):
@@ -48,7 +52,7 @@ def container(product, *, bot=False, number=1):
 def lan_container(product, number=5):
     directory = uninstall.LAN_ROOT / product.key
     return {"id": identifier(number), "name": "/" + uninstall.lan_name(product), "running": True, "network": "host",
-            "labels": {uninstall.MANAGED: "true", uninstall.ROLE: "lan-management", "com.tg2cloud.edition": product.key,
+            "labels": {uninstall.MANAGED: "true", uninstall.ROLE: "lan-management", "com.tgcloud.edition": product.key,
                        uninstall.COMPOSE + "project": uninstall.lan_name(product), uninstall.COMPOSE + "service": "lan",
                        uninstall.COMPOSE + "project.working_dir": str(directory),
                        uninstall.COMPOSE + "project.config_files": str(directory / "compose.json")},
@@ -73,7 +77,7 @@ def proxy_container(*, nginx=True, number=7):
 
 
 class FakeDocker:
-    def __init__(self, *, both=True, proxy=False, lan=False):
+    def __init__(self, *, both=True, proxy=False, lan=False, retired=False):
         self.containers = {}
         self.networks = {}
         self.commands = []
@@ -104,6 +108,10 @@ class FakeDocker:
                 "labels": {uninstall.COMPOSE + "project": uninstall.PROXY_PROJECT, uninstall.COMPOSE + "network": "default"},
                 "containers": {identifier(8): {}},
             }
+        # Retired resources are foreign fixtures, never a selectable product.
+        if retired:
+            self.containers[RETIRED.bot_container] = container(RETIRED, bot=True, number=25)
+            self.containers[RETIRED.storage_container] = container(RETIRED, number=26)
         self.containers["unrelated-nginx"] = {"id": identifier(20), "name": "/unrelated-nginx", "running": True,
                                                "labels": {}, "mounts": [], "network": "host"}
 
@@ -158,18 +166,25 @@ class PlanTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.docker = FakeDocker()
+        self.identity = self.stack.enter_context(patch.object(local_source, "verify_installed", return_value={"project": "tgcloud"}))
         self.stack.enter_context(patch.object(uninstall, "checked_path"))
         self.stack.enter_context(patch.object(uninstall, "read_state", side_effect=lambda: copy.deepcopy(self.docker.state)))
         self.stack.enter_context(patch.object(uninstall, "docker_snapshot", side_effect=self.docker.snapshot))
         self.stack.enter_context(patch.object(Path, "exists", return_value=False))
 
     def test_each_edition_and_all_remove_only_matching_runtime_resources(self):
-        for keys in (("clouddrive2",), ("openlist",), tuple(PRODUCTS)):
+        for keys in (("clouddrive2",),):
             with self.subTest(editions=keys):
                 plan = uninstall.build_plan(keys, self.docker)
                 self.assertEqual(set(plan.containers), {name for key in keys for name in (PRODUCTS[key].bot_container, PRODUCTS[key].storage_container)})
                 self.assertEqual(set(plan.networks), {PRODUCTS[key].docker_network for key in keys})
                 self.assertFalse(plan.purge_data)
+
+    def test_missing_or_foreign_source_marker_blocks_every_runtime_mutation(self):
+        for message in ("missing marker", "foreign project", "changed program"):
+            with self.subTest(marker=message), patch.object(local_source, "verify_installed", side_effect=ValueError(message)), self.assertRaisesRegex(uninstall.UninstallError, "来源标记"):
+                uninstall.build_plan(("clouddrive2",), self.docker, purge_data=True)
+        self.assertEqual(self.docker.commands, [])
 
     def test_same_name_foreign_container_rejected_before_mutation(self):
         for field, value in (("project.working_dir", "/opt/foreign"), ("service", "unrelated"), ("project.config_files", "/etc/compose.yml"), ("project", "$(id)")):
@@ -232,15 +247,16 @@ class PlanTests(unittest.TestCase):
                     uninstall.build_plan((product.key,), self.docker)
                 del self.docker.containers[name]
 
-    def test_shared_proxy_kept_until_no_other_edition_route(self):
-        self.docker = FakeDocker(proxy=True)
+    def test_shared_proxy_kept_while_retired_runtime_exists(self):
+        self.docker = FakeDocker(proxy=True, retired=True)
         self.stack.enter_context(patch.object(uninstall, "docker_snapshot", side_effect=self.docker.snapshot))
         self.stack.enter_context(patch.object(Path, "exists", lambda path: path == Path(uninstall.PROXY_ROOT, "state/domains.json")))
-        for keys in (("clouddrive2",), ("openlist",)):
-            plan = uninstall.build_plan(keys, self.docker)
-            self.assertFalse(plan.remove_proxy)
-            self.assertNotIn(uninstall.PROXY_NGINX_CONTAINER, plan.containers)
-        plan = uninstall.build_plan(tuple(PRODUCTS), self.docker)
+        plan = uninstall.build_plan(("clouddrive2",), self.docker)
+        self.assertFalse(plan.remove_proxy)
+        self.assertNotIn(uninstall.PROXY_NGINX_CONTAINER, plan.containers)
+        for name in (RETIRED.bot_container, RETIRED.storage_container):
+            self.docker.containers.pop(name)
+        plan = uninstall.build_plan(("clouddrive2",), self.docker)
         self.assertTrue(plan.remove_proxy)
         self.assertIn(uninstall.PROXY_NGINX_CONTAINER, plan.containers)
         self.assertIn(uninstall.PROXY_NETWORK, plan.networks)
@@ -305,12 +321,12 @@ class PlanTests(unittest.TestCase):
         item = proxy_container(nginx=False)
         item["labels"][uninstall.COMPOSE + "oneoff"] = "True"
         with self.assertRaises(uninstall.UninstallError):
-            uninstall.proxy_identity("tg2cloud-proxy-certbot-run-abcd", item)
+            uninstall.proxy_identity("tgcloud-proxy-certbot-run-abcd", item)
         item["running"] = False
-        uninstall.proxy_identity("tg2cloud-proxy-certbot-run-abcd", item)
+        uninstall.proxy_identity("tgcloud-proxy-certbot-run-abcd", item)
 
     def test_maintenance_helpers_not_force_removed(self):
-        self.docker.containers["tg2cloud-proxy-dry-run-example"] = {
+        self.docker.containers["tgcloud-proxy-dry-run-example"] = {
             "id": identifier(31), "labels": {uninstall.ROLE: "maintenance-dry-run"}, "mounts": [],
         }
         with self.assertRaisesRegex(uninstall.UninstallError, "维护"):
@@ -322,8 +338,10 @@ class ExecutionTests(unittest.TestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.docker = FakeDocker()
+        self.docker = FakeDocker(retired=True)
         self.logs = []
         self.log = SafeLog(self.logs.append)
+        self.identity = self.stack.enter_context(patch.object(local_source, "verify_installed", return_value={"project": "tgcloud"}))
         self.stack.enter_context(patch.object(uninstall, "checked_path"))
         self.stack.enter_context(patch.object(uninstall, "docker_snapshot", side_effect=self.docker.snapshot))
         self.stack.enter_context(patch.object(uninstall, "read_state", side_effect=lambda: copy.deepcopy(self.docker.state)))
@@ -333,10 +351,10 @@ class ExecutionTests(unittest.TestCase):
 
     def test_single_then_all_removal_preserve_foreign_and_are_repeatable(self):
         uninstall.execute(uninstall.build_plan(("clouddrive2",), self.docker), self.docker, self.log)
-        self.assertIn(PRODUCTS["openlist"].bot_container, self.docker.containers)
+        self.assertIn(RETIRED.bot_container, self.docker.containers)
         uninstall.execute(uninstall.build_plan(tuple(PRODUCTS), self.docker), self.docker, self.log)
         uninstall.execute(uninstall.build_plan(tuple(PRODUCTS), self.docker), self.docker, self.log)
-        self.assertEqual(set(self.docker.containers), {"unrelated-nginx"})
+        self.assertEqual(set(self.docker.containers), {"unrelated-nginx", RETIRED.bot_container, RETIRED.storage_container})
         self.assertEqual(self.docker.networks, {})
         self.deleted.assert_not_called()
         for command in self.docker.commands:
@@ -380,39 +398,40 @@ class ExecutionTests(unittest.TestCase):
             self.docker.state["domains"][key] = {"domain": key + ".example.test", "backend_port": PRODUCTS[key].management_port}
         with patch.object(uninstall, "DomainProxyManager", side_effect=self.docker.manager):
             uninstall.execute(uninstall.build_plan(("clouddrive2",), self.docker), self.docker, self.log)
-        self.assertEqual(set(self.docker.state["domains"]), {"openlist"})
-        self.assertIn(PRODUCTS["openlist"].bot_container, self.docker.containers)
+        self.assertEqual(set(self.docker.state["domains"]), set())
+        self.assertIn(RETIRED.bot_container, self.docker.containers)
 
-    def test_all_routes_removed_as_one_transaction_before_runtime_removal(self):
-        for key in PRODUCTS:
-            self.docker.state["domains"][key] = {"domain": key + ".example.test", "backend_port": PRODUCTS[key].management_port}
-        manager = Mock()
-        manager._compose.return_value = (0, "")
-        manager._commit_state.side_effect = lambda state: setattr(self.docker, "state", copy.deepcopy(state))
+    def test_last_owned_route_is_removed_before_runtime_containers(self):
+        self.docker.state["domains"]["clouddrive2"] = {"domain": "cd2.example.test", "backend_port": 19798}
+        manager = self.docker.manager(None, PRODUCTS["clouddrive2"], {}, self.log)
+        original = self.docker.run
+        def run(command, **kwargs):
+            self.assertNotIn("clouddrive2", self.docker.state["domains"])
+            return original(command, **kwargs)
+        self.docker.run = run
         with patch.object(uninstall, "DomainProxyManager", return_value=manager):
-            uninstall.execute(uninstall.build_plan(tuple(PRODUCTS), self.docker), self.docker, self.log)
-        manager._install_config.assert_called_once_with(uninstall.empty_state())
-        manager._commit_state.assert_called_once_with(uninstall.empty_state())
-        manager._remove_locked.assert_not_called()
+            uninstall.execute(uninstall.build_plan(("clouddrive2",), self.docker), self.docker, self.log)
+        manager._remove_locked.assert_called_once()
+        manager._install_config.assert_not_called()
         self.assertEqual(self.docker.state, uninstall.empty_state())
 
-    def test_all_routes_failure_attempts_restore_and_leaves_core_untouched(self):
-        for key in PRODUCTS:
-            self.docker.state["domains"][key] = {"domain": key + ".example.test", "backend_port": PRODUCTS[key].management_port}
+    def test_last_route_failure_leaves_core_untouched_for_proxy_recovery(self):
+        self.docker.state["domains"]["clouddrive2"] = {"domain": "cd2.example.test", "backend_port": 19798}
         previous = copy.deepcopy(self.docker.state)
         manager = Mock()
-        manager._compose.side_effect = [(1, "FAKE_OFFLINE_SECRET"), (0, "")]
-        with patch.object(uninstall, "DomainProxyManager", return_value=manager), self.assertRaises(uninstall.UninstallError):
-            uninstall.execute(uninstall.build_plan(tuple(PRODUCTS), self.docker), self.docker, self.log)
-        manager._activate.assert_called_once_with(previous)
-        manager._commit_state.assert_not_called()
+        manager._remove_locked.side_effect = RuntimeError("FAKE_OFFLINE_SECRET")
+        with patch.object(uninstall, "DomainProxyManager", return_value=manager), self.assertRaises(uninstall.UninstallError) as error:
+            uninstall.execute(uninstall.build_plan(("clouddrive2",), self.docker), self.docker, self.log)
+        self.assertEqual(self.docker.state, previous)
         self.assertEqual(self.docker.commands, [])
+        self.assertNotIn("FAKE_OFFLINE_SECRET", str(error.exception))
+        self.deleted.assert_not_called()
 
     def test_proxy_containers_and_default_network_removed_only_after_last_routes(self):
         self.docker = FakeDocker(proxy=True)
         self.stack.enter_context(patch.object(uninstall, "docker_snapshot", side_effect=self.docker.snapshot))
         self.stack.enter_context(patch.object(Path, "exists", lambda path: path == Path(uninstall.PROXY_ROOT, "state/domains.json")))
-        manager = Mock()
+        manager = self.docker.manager(None, PRODUCTS["clouddrive2"], {}, self.log)
         manager._compose.return_value = (0, "")
         manager._commit_state.side_effect = lambda state: setattr(self.docker, "state", copy.deepcopy(state))
         with patch.object(uninstall, "DomainProxyManager", return_value=manager):
@@ -420,16 +439,14 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(set(self.docker.containers), {"unrelated-nginx"})
         self.assertEqual(self.docker.networks, {})
 
-    def test_proxy_restore_failure_reports_warning_without_exposing_original_output(self):
-        for key in PRODUCTS:
-            self.docker.state["domains"][key] = {"domain": key + ".example.test", "backend_port": PRODUCTS[key].management_port}
+    def test_proxy_recovery_failure_reports_safe_hint_without_original_output(self):
+        self.docker.state["domains"]["clouddrive2"] = {"domain": "cd2.example.test", "backend_port": 19798}
         manager = Mock()
-        manager._compose.return_value = (1, "FAKE_OFFLINE_SECRET")
-        manager._activate.side_effect = RuntimeError("FAKE_OFFLINE_SECRET")
-        with patch.object(uninstall, "DomainProxyManager", return_value=manager), self.assertRaises(uninstall.UninstallError):
-            uninstall.execute(uninstall.build_plan(tuple(PRODUCTS), self.docker), self.docker, self.log)
-        self.assertIn("恢复失败", "\n".join(self.logs))
-        self.assertNotIn("FAKE_OFFLINE_SECRET", "\n".join(self.logs))
+        manager._remove_locked.side_effect = RuntimeError("FAKE_OFFLINE_SECRET")
+        with patch.object(uninstall, "DomainProxyManager", return_value=manager), self.assertRaises(uninstall.UninstallError) as error:
+            uninstall.execute(uninstall.build_plan(("clouddrive2",), self.docker), self.docker, self.log)
+        self.assertIn("恢复结果", str(error.exception))
+        self.assertNotIn("FAKE_OFFLINE_SECRET", str(error.exception))
         self.assertEqual(self.docker.commands, [])
 
     def test_purge_deletes_only_selected_data_and_not_shared_certificates_with_other_core_present(self):
@@ -438,6 +455,8 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in self.deleted.call_args_list], [Path(PRODUCTS["clouddrive2"].install_dir)])
 
     def test_purge_all_includes_known_proxy_children_but_never_lock_files_or_backups(self):
+        self.docker.containers.pop(RETIRED.bot_container)
+        self.docker.containers.pop(RETIRED.storage_container)
         with patch.object(uninstall, "purge_preflight"):
             uninstall.execute(uninstall.build_plan(tuple(PRODUCTS), self.docker, purge_data=True), self.docker, self.log)
         deleted = {call.args[0] for call in self.deleted.call_args_list}
@@ -463,9 +482,11 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(set(plan.backups), {root})
         self.assertEqual({call.args[0] for call in self.deleted.call_args_list},
                          {root, Path(PRODUCTS["clouddrive2"].install_dir)})
-        self.assertIn(PRODUCTS["openlist"].bot_container, self.docker.containers)
+        self.assertIn(RETIRED.bot_container, self.docker.containers)
 
     def test_full_cleanup_all_deletes_generated_backups_and_shared_certificate_children(self):
+        self.docker.containers.pop(RETIRED.bot_container)
+        self.docker.containers.pop(RETIRED.storage_container)
         with patch.object(uninstall, "purge_preflight"), patch.object(uninstall, "backup_identity", return_value=(1, 2, 3, 0, ())):
             plan = uninstall.build_plan(tuple(PRODUCTS), self.docker, purge_backups=True)
             uninstall.execute(plan, self.docker, self.log)
@@ -540,7 +561,7 @@ class DataSafetyTests(unittest.TestCase):
                 uninstall.purge_preflight(("clouddrive2",), containers, {}, False, (root,))
 
     def test_shared_certificates_and_backups_kept_for_retained_other_edition_data(self):
-        retained = Path(PRODUCTS["openlist"].install_dir)
+        retained = Path(RETIRED.install_dir)
         with patch.object(Path, "exists", lambda path: path == retained):
             self.assertTrue(uninstall.other_edition_present(("clouddrive2",), {}))
             self.assertNotIn(uninstall.PROXY_BACKUP_ROOT, uninstall.backup_targets(("clouddrive2",), {}, True))
@@ -550,9 +571,9 @@ class DataSafetyTests(unittest.TestCase):
     def test_backup_patterns_are_edition_specific_and_do_not_match_foreign_files(self):
         patterns = uninstall.backup_targets(tuple(PRODUCTS), {}, True)
         cd2 = patterns[Path(PRODUCTS["clouddrive2"].backup_dir)]
-        openlist = patterns[Path(PRODUCTS["openlist"].backup_dir)]
+        self.assertNotIn(Path(RETIRED.backup_dir), patterns)
         self.assertIsNone(cd2.fullmatch("openlist-state-12345678.tar.gz"))
-        self.assertIsNotNone(openlist.fullmatch("openlist-state-12345678.tar.gz"))
+        self.assertNotIn(Path(RETIRED.install_dir), patterns)
         for name in ("config-custom.tar.gz", "../../config-12345678.tar.gz", "database-12345678.db-journal", "personal.zip"):
             self.assertIsNone(cd2.fullmatch(name))
 
@@ -589,23 +610,25 @@ class DataSafetyTests(unittest.TestCase):
             self.assertEqual((foreign / "keep.txt").read_text(encoding="utf-8"), "KEEP")
             self.assertEqual(set(docker.containers), {"unrelated-nginx"})
 
-    def test_residual_purge_requires_recognizable_compose_and_does_not_adopt_unknown_directory(self):
+    def test_residual_purge_requires_valid_source_and_complete_compose(self):
+        from local_project_fixture import installed
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary).resolve()
+            root = Path(temporary).resolve() / "instance"
             product = replace(PRODUCTS["clouddrive2"], install_dir=str(root))
             session = Mock()
             with patch.dict(uninstall.PRODUCTS, {"clouddrive2": product}), patch.object(uninstall, "LAN_ROOT", root / "lan"), patch.object(uninstall, "read_state", return_value=uninstall.empty_state()), patch.object(uninstall, "docker_snapshot", return_value=({}, {})), patch.object(uninstall, "purge_preflight"):
-                with self.assertRaisesRegex(uninstall.UninstallError, "残留目录"):
+                installed(root)
+                compose = root / "docker-compose.yml"
+                original = compose.read_bytes()
+                compose.write_text("services: {foreign: {}}\n", encoding="utf-8")
+                with self.assertRaisesRegex(uninstall.UninstallError, "来源标记"):
                     uninstall.build_plan(("clouddrive2",), session, purge_data=True)
-                source = root / "docker-compose.yml"
-                source.write_text("services:\n  foreign:\n    container_name: foreign\n", encoding="utf-8")
-                with self.assertRaisesRegex(uninstall.UninstallError, "标准 payload"):
+                compose.write_bytes(original)
+                self.assertTrue(uninstall.build_plan(("clouddrive2",), session, purge_data=True).purge_data)
+                (root / local_source.MARKER).unlink()
+                with self.assertRaisesRegex(uninstall.UninstallError, "来源标记"):
                     uninstall.build_plan(("clouddrive2",), session, purge_data=True)
-                source.write_text("services:\n  bot:\n    container_name: " + product.bot_container
-                                  + "\n  gateway:\n    container_name: " + product.storage_container + "\n", encoding="utf-8")
-                plan = uninstall.build_plan(("clouddrive2",), session, purge_data=True)
-                self.assertTrue(plan.purge_data)
-                self.assertEqual(plan.containers, {})
+            session.run.assert_not_called()
 
     def test_child_symlink_is_not_followed_and_targets_require_exact_allowlist(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -640,10 +663,10 @@ class DataSafetyTests(unittest.TestCase):
                     uninstall.checked_path(path)
 
     def test_mountinfo_octals_and_cloud_mount_descendants(self):
-        data = "1 2 0:1 / / rw - ext4 /dev/test rw\n2 1 0:2 / /opt/tg2cloud-clouddrive2/clouddrive/mounts/Cloud\\040Disk rw - fuse cloud rw\n"
+        data = "1 2 0:1 / / rw - ext4 /dev/test rw\n2 1 0:2 / /opt/tgcloud-clouddrive2/clouddrive/mounts/Cloud\\040Disk rw - fuse cloud rw\n"
         with patch.object(Path, "read_text", return_value=data):
             points = uninstall.mountpoints()
-        self.assertEqual(str(points[1]).replace("\\", "/"), "/opt/tg2cloud-clouddrive2/clouddrive/mounts/Cloud Disk")
+        self.assertEqual(str(points[1]).replace("\\", "/"), "/opt/tgcloud-clouddrive2/clouddrive/mounts/Cloud Disk")
         with patch.object(uninstall, "checked_path"), patch.object(uninstall, "mountpoints", return_value=points), self.assertRaisesRegex(uninstall.UninstallError, "挂载点"):
             uninstall.purge_preflight(("clouddrive2",), {}, {}, False)
         for invalid in ("", "broken line"):
@@ -651,8 +674,8 @@ class DataSafetyTests(unittest.TestCase):
                 uninstall.mountpoints()
 
     def test_shared_certificate_data_kept_while_other_edition_container_exists(self):
-        docker = FakeDocker()
-        points = (Path(PRODUCTS["openlist"].install_dir), Path(uninstall.PROXY_ROOT))
+        docker = FakeDocker(retired=True)
+        points = (Path(RETIRED.install_dir), Path(uninstall.PROXY_ROOT))
         with patch.object(uninstall, "checked_path"), patch.object(uninstall, "mountpoints", return_value=points):
             uninstall.purge_preflight(("clouddrive2",), docker.containers,
                                       {PRODUCTS["clouddrive2"].bot_container: {}, PRODUCTS["clouddrive2"].storage_container: {}}, True)
@@ -697,19 +720,19 @@ class DataSafetyTests(unittest.TestCase):
 class EntryTests(unittest.TestCase):
     def test_incomplete_manager_cleanup_reports_partial_not_full_success(self):
         with patch.object(uninstall, "cleanup_manager", return_value="incomplete"):
-            code, output, execute, _ = self.run_main(["--edition", "all"], typed="DELETE ALL all")
+            code, output, execute, _ = self.run_main(["--edition", "clouddrive2"], typed="DELETE ALL clouddrive2")
         self.assertEqual(code, 1)
         execute.assert_called_once()
         self.assertIn("RESULT=PARTIAL", output)
         self.assertNotIn("RESULT=OK", output)
 
     def test_manager_cleanup_only_after_full_success_never_check_cancel_or_keep_data(self):
-        scenarios = [(["--edition", "all", "--check"], True, "", None, False),
-                     (["--edition", "all"], False, "", None, False),
-                     (["--edition", "all", "--keep-data"], True, "", None, False),
-                     (["--edition", "all", "--purge-data"], True, "DELETE all", None, False),
-                     (["--edition", "all"], True, "DELETE ALL all", RuntimeError("fixture"), False),
-                     (["--edition", "all"], True, "DELETE ALL all", None, True)]
+        scenarios = [(["--edition", "clouddrive2", "--check"], True, "", None, False),
+                     (["--edition", "clouddrive2"], False, "", None, False),
+                     (["--edition", "clouddrive2", "--keep-data"], True, "", None, False),
+                     (["--edition", "clouddrive2", "--purge-data"], True, "DELETE clouddrive2", None, False),
+                     (["--edition", "clouddrive2"], True, "DELETE ALL clouddrive2", RuntimeError("fixture"), False),
+                     (["--edition", "clouddrive2"], True, "DELETE ALL clouddrive2", None, True)]
         for args, confirmed, typed, failure, expected in scenarios:
             with self.subTest(args=args, failure=bool(failure)), patch.object(uninstall, "cleanup_manager") as cleanup:
                 self.run_main(args, confirm=confirmed, typed=typed, failure=failure)
@@ -728,14 +751,14 @@ class EntryTests(unittest.TestCase):
         return code, output.getvalue(), execute, ui
 
     def test_check_does_not_prompt_or_execute_even_with_purge_flag(self):
-        code, output, execute, ui = self.run_main(["--edition", "all", "--check", "--purge-data"])
+        code, output, execute, ui = self.run_main(["--edition", "clouddrive2", "--check", "--purge-data"])
         self.assertEqual(code, 0)
-        self.assertIn("TG2CLOUD_UNINSTALL_CHECK=OK", output)
+        self.assertIn("TGCLOUD_UNINSTALL_CHECK=OK", output)
         execute.assert_not_called()
         ui.confirm.assert_not_called()
 
     def test_cancel_and_wrong_delete_token_leave_resources_untouched(self):
-        for args, confirmed, typed in ((["--edition", "all"], False, ""), (["--edition", "all", "--purge-data"], True, "DELETE openlist")):
+        for args, confirmed, typed in ((["--edition", "clouddrive2"], False, ""), (["--edition", "clouddrive2", "--purge-data"], True, "DELETE openlist")):
             with self.subTest(args=args):
                 code, output, execute, ui = self.run_main(args, confirm=confirmed, typed=typed)
                 self.assertEqual(code, 0)
@@ -744,7 +767,7 @@ class EntryTests(unittest.TestCase):
                 ui.close.assert_called_once()
 
     def test_purge_requires_both_confirmations_and_success_only_after_execute(self):
-        code, output, execute, ui = self.run_main(["--edition", "all", "--purge-data"], typed="DELETE all")
+        code, output, execute, ui = self.run_main(["--edition", "clouddrive2", "--purge-data"], typed="DELETE clouddrive2")
         self.assertEqual(code, 0)
         execute.assert_called_once()
         ui.confirm.assert_called_once()
@@ -752,9 +775,9 @@ class EntryTests(unittest.TestCase):
         self.assertIn("RESULT=OK", output)
 
     def test_default_full_cleanup_requires_typed_all_deletion_confirmation(self):
-        for args in (["--edition", "all"], ["--edition", "all", "--purge-all"]):
+        for args in (["--edition", "clouddrive2"], ["--edition", "clouddrive2", "--purge-all"]):
             with self.subTest(args=args):
-                code, output, execute, ui = self.run_main(args, typed="DELETE ALL all")
+                code, output, execute, ui = self.run_main(args, typed="DELETE ALL clouddrive2")
                 self.assertEqual(code, 0)
                 execute.assert_called_once()
                 self.assertTrue(execute.call_args.args[0].purge_backups)
@@ -762,14 +785,14 @@ class EntryTests(unittest.TestCase):
                 self.assertIn("历史备份也删除", output)
 
     def test_default_full_cleanup_wrong_token_does_not_execute(self):
-        for token in ("", "DELETE all", "DELETE ALL openlist"):
-            code, output, execute, _ui = self.run_main(["--edition", "all"], typed=token)
+        for token in ("", "DELETE clouddrive2", "DELETE ALL openlist"):
+            code, output, execute, _ui = self.run_main(["--edition", "clouddrive2"], typed=token)
             self.assertEqual(code, 0)
             self.assertIn("CANCELLED", output)
             execute.assert_not_called()
 
     def test_keep_data_preserves_prior_runtime_only_behavior(self):
-        code, output, execute, ui = self.run_main(["--edition", "all", "--keep-data"])
+        code, output, execute, ui = self.run_main(["--edition", "clouddrive2", "--keep-data"])
         self.assertEqual(code, 0)
         execute.assert_called_once()
         self.assertFalse(execute.call_args.args[0].purge_data)
@@ -777,7 +800,7 @@ class EntryTests(unittest.TestCase):
         self.assertIn("--keep-data 保留", output)
 
     def test_default_full_check_is_read_only_without_prompts(self):
-        code, output, execute, ui = self.run_main(["--edition", "all", "--check"])
+        code, output, execute, ui = self.run_main(["--edition", "clouddrive2", "--check"])
         self.assertEqual(code, 0)
         execute.assert_not_called()
         ui.confirm.assert_not_called()
@@ -787,7 +810,7 @@ class EntryTests(unittest.TestCase):
     def test_failure_and_interruption_never_show_success_or_raw_secret(self):
         for failure, expected in ((RuntimeError("FAKE_OFFLINE_SECRET"), 1), (KeyboardInterrupt(), 130), (EOFError(), 130)):
             with self.subTest(error=type(failure).__name__):
-                code, output, execute, _ui = self.run_main(["--edition", "all", "--keep-data"], failure=failure)
+                code, output, execute, _ui = self.run_main(["--edition", "clouddrive2", "--keep-data"], failure=failure)
                 self.assertEqual(code, expected)
                 self.assertNotIn("RESULT=OK", output)
                 self.assertNotIn("FAKE_OFFLINE_SECRET", output)
@@ -800,12 +823,12 @@ class EntryTests(unittest.TestCase):
         native = platform.machine()
         for key in ("DOCKER_HOST", "DOCKER_CONTEXT", "COMPOSE_FILE", "COMPOSE_PROJECT_NAME"):
             session = Mock()
-            with patch.object(tgdep_preflight, "validate_host"), patch("tg2cloud.deployment.architecture.platform.machine", return_value=native), patch.dict(os.environ, {key: "external"}, clear=True), self.assertRaises(uninstall.UninstallError):
+            with patch.object(tgdep_preflight, "validate_host"), patch("tgcloud.deployment.architecture.platform.machine", return_value=native), patch.dict(os.environ, {key: "external"}, clear=True), self.assertRaises(uninstall.UninstallError):
                 uninstall.validate_environment(session)
             session.run.assert_not_called()
         session = Mock()
         session.run.return_value = (0, '"tcp://external:2375"')
-        with patch.object(tgdep_preflight, "validate_host"), patch("tg2cloud.deployment.architecture.platform.machine", return_value=native), patch.dict(os.environ, {}, clear=True), self.assertRaises(uninstall.UninstallError):
+        with patch.object(tgdep_preflight, "validate_host"), patch("tgcloud.deployment.architecture.platform.machine", return_value=native), patch.dict(os.environ, {}, clear=True), self.assertRaises(uninstall.UninstallError):
             uninstall.validate_environment(session)
 
     def test_inventory_filters_env_and_reports_daemon_failure(self):
@@ -821,21 +844,22 @@ class EntryTests(unittest.TestCase):
             uninstall.docker_snapshot(session)
 
     def test_no_package_removal_prune_remote_operations_or_broad_delete_commands(self):
-        source = (ROOT / "src/tg2cloud/deployment/uninstall.py").read_text(encoding="utf-8")
+        source = (ROOT / "src/tgcloud/deployment/uninstall.py").read_text(encoding="utf-8")
         for forbidden in ("apt-get", "apt remove", "apt purge", "systemctl", "docker system prune", "docker volume prune", "docker network prune", "docker image rm", "rm -rf", "SSHSession", "requests", "paramiko"):
             self.assertNotIn(forbidden, source)
         self.assertNotIn("PySide6", source)
         self.assertFalse((ROOT / "uninstall.sh").exists())
         for name in ("install.sh", "install-lan.sh"):
             bootstrap = (ROOT / name).read_text(encoding="utf-8")
-            self.assertRegex(bootstrap, r'(?m)^installer_commit\s*=\s*"[0-9a-f]{40}"$')
-            self.assertIn("src/tg2cloud/deployment/uninstall.py", bootstrap)
+            self.assertNotIn("installer_commit", bootstrap)
+            self.assertIn("scripts/run_source.py", bootstrap)
+            self.assertNotIn("curl", bootstrap)
             self.assertNotIn("packaging/hooks/openlist/remote_install.sh", bootstrap)
 
     def test_unified_dispatch_retains_all_edition_cleanup_and_preview_flags(self):
-        from tg2cloud.cli import commands
+        from tgcloud.cli import commands
 
-        for edition in (*PRODUCTS, "all"):
+        for edition in PRODUCTS:
             for mode in ("--keep-data", "--purge-data", "--purge-all"):
                 options = ["--edition", edition, mode, "--check"]
                 with self.subTest(edition=edition, mode=mode), patch.object(uninstall, "main", return_value=0) as operation:

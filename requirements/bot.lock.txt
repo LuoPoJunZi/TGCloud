@@ -51,7 +51,7 @@ cryptg==0.6.0 \
     --hash=sha256:ec462b2237a393859271a030da83dac51de994178748e5c859aa8d8d2b47324b \
     --hash=sha256:f532bca1ac36bde607907a82b25a901934089bf76f62ea62b6131fdbeb01633a \
     --hash=sha256:f8fd59fea56398ab812f218c044b42fbbaeee8a9ae32771d3108a3cf210781aa
-    # via tg2cloud (pyproject.toml)
+    # via tgcloud (pyproject.toml)
 psutil==7.2.2 \
     --hash=sha256:0746f5f8d406af344fd547f1c8daa5f5c33dbc293bb8d6a16d80b4bb88f59372 \
     --hash=sha256:076a2d2f923fd4821644f5ba89f059523da90dc9014e85f8e45a5774ca5bc6f9 \
@@ -74,7 +74,7 @@ psutil==7.2.2 \
     --hash=sha256:ed0cace939114f62738d808fdcecd4c869222507e266e574799e9c0faa17d486 \
     --hash=sha256:eed63d3b4d62449571547b60578c5b2c4bcccc5387148db46e0c2313dad0ee00 \
     --hash=sha256:fd04ef36b4a6d599bbdb225dd1d3f51e00105f6d48a28f006da7f9822f2606d8
-    # via tg2cloud (pyproject.toml)
+    # via tgcloud (pyproject.toml)
 pyaes==1.6.1 \
     --hash=sha256:02c1b1405c38d3c370b085fb952dd8bea3fadcee6411ad99f312cc129c536d8f
     # via telethon
@@ -82,7 +82,7 @@ pyasn1==0.6.5 \
     --hash=sha256:4017b0fce125096b8573b39c989fdb1a4b19cf761e683398184550fea0e66587 \
     --hash=sha256:6b11616a6bcf3a40e635f082bb232fa57b5e0dd7f517bd7ddd69ec3794508a47
     # via
-    #   tg2cloud (pyproject.toml)
+    #   tgcloud (pyproject.toml)
     #   rsa
 rsa==4.9.1 \
     --hash=sha256:68635866661c6836b8d39430f97a996acbd61bfa49406748ea243539fe239762 \
@@ -91,4 +91,4 @@ rsa==4.9.1 \
 telethon==1.45.0 \
     --hash=sha256:339e24c83aedc9f12cbe389264627edc49779e4289c535aa90aafc4ce62f7972 \
     --hash=sha256:4cb7ae269b8ab9dad9fc490b859f0bc2f885121e990f5b20407b1faa0db2a1d9
-    # via tg2cloud (pyproject.toml)
+    # via tgcloud (pyproject.toml)

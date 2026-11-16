@@ -10,21 +10,21 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def helper_files(root: Path) -> list[str]:
-    paths = ["scripts/run_source.py", "src/tg2cloud/__init__.py", "src/tg2cloud/version.py", "src/tg2cloud/config.py"]
-    if (root / "src/tg2cloud/deployment/backup.py").is_file() or (root / "src/tg2cloud/cli/naming.py").is_file():
-        paths.extend("src/tg2cloud/" + name for name in (
+    paths = ["scripts/run_source.py", "src/tgcloud/__init__.py", "src/tgcloud/version.py", "src/tgcloud/config.py"]
+    if (root / "src/tgcloud/deployment/backup.py").is_file() or (root / "src/tgcloud/cli/naming.py").is_file():
+        paths.extend("src/tgcloud/" + name for name in (
             "persistence/__init__.py", "persistence/backup.py", "persistence/bundle.py",
             "domain/__init__.py", "domain/naming.py"))
-    if (root / "src/tg2cloud/persistence/paths.py").is_file():
-        paths.append("src/tg2cloud/persistence/paths.py")
+    if (root / "src/tgcloud/persistence/paths.py").is_file():
+        paths.append("src/tgcloud/persistence/paths.py")
     for directory in ("cli", "deployment", "addons"):
-        for path in (root / "src/tg2cloud" / directory).rglob("*.py"):
+        for path in (root / "src/tgcloud" / directory).rglob("*.py"):
             if path.is_symlink() or path.absolute() != path.resolve():
                 raise ValueError("helper source contains a link")
             paths.append(path.relative_to(root).as_posix())
-    if (root / "src/tg2cloud/compose/management.py").is_file():
-        paths.extend(path.relative_to(root).as_posix() for path in (root / "src/tg2cloud/compose").rglob("*.py"))
-        paths.extend("packaging/compose/docker-compose." + edition + ".yml" for edition in ("clouddrive2", "openlist"))
+    if (root / "src/tgcloud/compose/management.py").is_file():
+        paths.extend(path.relative_to(root).as_posix() for path in (root / "src/tgcloud/compose").rglob("*.py"))
+        paths.append("packaging/compose/docker-compose.clouddrive2.yml")
     for name in paths:
         path = root / name
         if not path.is_file() or path.is_symlink() or path.absolute() != path.resolve():
@@ -34,7 +34,7 @@ def helper_files(root: Path) -> list[str]:
 
 def runtime_files(root: Path) -> list[str]:
     paths = []
-    for path in (root / "src/tg2cloud").rglob("*.py"):
+    for path in (root / "src/tgcloud").rglob("*.py"):
         if path.is_symlink() or path.absolute() != path.resolve():
             raise ValueError("runtime source contains a link")
         paths.append(path.relative_to(root).as_posix())
@@ -43,6 +43,8 @@ def runtime_files(root: Path) -> list[str]:
 
 def render_entry(root: Path, name: str) -> str:
     text = (root / name).read_text(encoding="utf-8")
+    if "<<'PY' &\n" not in text:
+        return text
     start = text.index("<<'PY' &\n") + len("<<'PY' &\n")
     end = text.index("\nPY\n", start)
     block = text[start:end]
@@ -55,7 +57,7 @@ def render_entry(root: Path, name: str) -> str:
     indentation = " " * node.col_offset
     replacement = indentation + "files = (\n" + "".join(indentation + "    " + repr(path) + ",\n" for path in helper_files(root)) + indentation + ")"
     lines[node.lineno-1:node.end_lineno] = replacement.splitlines()
-    block = "\n".join(lines).replace("payload_clouddrive2/app/version.py", "src/tg2cloud/version.py")
+    block = "\n".join(lines).replace("payload_clouddrive2/app/version.py", "src/tgcloud/version.py")
     result = text[:start] + block + text[end:]
     command = {"install.sh": "install", "install-lan.sh": "lan"}[name]
     module = {"install.sh": "scripts.vps_installer", "install-lan.sh": "scripts.lan_installer"}[name]

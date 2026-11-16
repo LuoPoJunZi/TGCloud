@@ -8,9 +8,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tg2cloud.cli.presentation import OperationReport
-from tg2cloud.deployment import diagnostics, install, instances
-from tg2cloud.deployment.profiles import PRODUCTS
+from tgcloud.cli.presentation import OperationReport
+from tgcloud.deployment import diagnostics, install, instances
+from tgcloud.deployment.profiles import PRODUCTS
 
 
 class ContainerLogTests(unittest.TestCase):
@@ -19,11 +19,11 @@ class ContainerLogTests(unittest.TestCase):
         instance = instances.Instance(product, Path(product.install_dir), True, version="1.5.6")
         def run(command, **kwargs):
             name = shlex.split(command)[-1]
-            shared = name in {"tg2cloud-proxy-nginx", "tg2cloud-proxy-certbot"}
+            shared = name in {"tgcloud-proxy-nginx", "tgcloud-proxy-certbot"}
             service = ("nginx" if name.endswith("nginx") else "certbot") if shared else (
                 product.bot_service if name == product.bot_container else edition)
             value = {"driver": "json-file", "size": "10m", "files": "3",
-                     "directory": "/opt/tg2cloud-proxy" if shared else str(instance.directory),
+                     "directory": "/opt/tgcloud-proxy" if shared else str(instance.directory),
                      "service": service, "managed": "true",
                      "role": "reverse-proxy" if service == "nginx" else "certificate-manager"}
             if mutation:
@@ -38,8 +38,7 @@ class ContainerLogTests(unittest.TestCase):
             commands = "\n".join(call.args[0] for call in session.run.call_args_list)
             for forbidden in (" restart ", " stop ", " rm ", "compose up", ".Config.Env", ".Config.Cmd", "logs "):
                 self.assertNotIn(forbidden, commands)
-            other = "openlist" if edition == "clouddrive2" else "clouddrive2"
-            self.assertNotIn(PRODUCTS[other].bot_container, commands)
+            self.assertNotIn("tgcloud-openlist", commands)
             self.assertEqual(session.run.call_count, 4)
 
     def test_old_gateway_is_pending_without_recreating_or_changing_anything(self):

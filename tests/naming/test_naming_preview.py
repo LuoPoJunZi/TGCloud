@@ -11,8 +11,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from tg2cloud.cli import naming
-from tg2cloud.domain.naming import explain_media_name, media_file_name
+from tgcloud.cli import naming
+from tgcloud.domain.naming import explain_media_name, media_file_name
 
 ROOT = Path(__file__).resolve().parents[2]
 

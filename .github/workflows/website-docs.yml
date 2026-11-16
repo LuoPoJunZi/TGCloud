@@ -9,9 +9,10 @@ on:
       - "website/**"
       - "assets/brand/**"
       - "docs/**"
+      - "archive/project-history/**"
       - "README.md"
       - "README_EN.md"
-      - "src/tg2cloud/version.py"
+      - "src/tgcloud/version.py"
       - ".github/workflows/website-docs.yml"
   pull_request:
     branches:
@@ -20,9 +21,10 @@ on:
       - "website/**"
       - "assets/brand/**"
       - "docs/**"
+      - "archive/project-history/**"
       - "README.md"
       - "README_EN.md"
-      - "src/tg2cloud/version.py"
+      - "src/tgcloud/version.py"
       - ".github/workflows/website-docs.yml"
 
 permissions:

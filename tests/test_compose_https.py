@@ -12,17 +12,20 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import Mock, patch
 
-from tg2cloud.compose import https, packaging, runtime
-from tg2cloud.deployment import configuration
-from tg2cloud.deployment.host import SafeLog
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.deployment.proxy.manager import DomainProxyManager
-from tg2cloud.deployment.proxy.rendering import render_compose
-from tg2cloud.deployment.proxy.state import ProxyReport, empty_state, state_with_route
-from tg2cloud.version import VERSION
+from test_compose import local_bundle_files, write_candidate
+
+from tgcloud.compose import https, packaging, runtime
+from tgcloud.deployment import configuration
+from tgcloud.deployment.fingerprints import deployed_fingerprint
+from tgcloud.deployment.host import SafeLog
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.proxy.manager import DomainProxyManager
+from tgcloud.deployment.proxy.rendering import render_compose
+from tgcloud.deployment.proxy.state import ProxyReport, empty_state, state_with_route
+from tgcloud.version import VERSION
 
 SOURCE = Path(__file__).resolve().parents[1]
-IMAGE = "ghcr.io/luopojunzi/tg2cloud@sha256:" + "a" * 64
+IMAGE = "ghcr.io/luopojunzi/tgcloud@sha256:" + "a" * 64
 
 
 class ComposeHttpsTests(unittest.TestCase):
@@ -65,6 +68,7 @@ class ComposeHttpsTests(unittest.TestCase):
         patch.object(runtime, "private_config_file").start()
         patch.object(https.architecture, "check_docker").start()
         patch.object(https.architecture, "check_container").start()
+        patch.object(https.architecture, "check_image").start()
         if os.name != "posix":
             strict_parse = https.parse_compose_registry
             def synthetic_registry(raw, **_):
@@ -88,41 +92,44 @@ class ComposeHttpsTests(unittest.TestCase):
         if command.startswith("docker image inspect --format "):
             for item in self.containers.values():
                 if command.endswith(item["image"]):
+                    if "{{json .}}" in command:
+                        info = json.loads(local_bundle_files()["compose-bundle.json"])
+                        return 0, json.dumps({"Id": item["image_id"], "Config": {"Labels": {
+                            packaging.PROJECT_LABEL: packaging.PROJECT_ID, packaging.SOURCE_LABEL: info["source_sha256"]}}})
                     return 0, json.dumps(item["image_id"])
+        if command.startswith(("docker run --rm --pull never", "docker exec ")):
+            return 0, json.dumps({"version": VERSION, "fingerprint": deployed_fingerprint(self.directory / "clouddrive2/build-context/app")})
         if command == "id -u":
             return 0, "0\n"
         return 0, ""
 
-    def candidate(self, edition="openlist"):
+    def candidate(self, edition="clouddrive2"):
         product = PRODUCTS[edition]
-        root = self.directory / edition
-        root.mkdir()
-        (root / "docker-compose.yml").write_text(packaging.render(SOURCE, edition, IMAGE), encoding="utf-8")
-        (root / "compose-bundle.json").write_text(json.dumps({"format": 3, "https_tools": 1, "mode": "compose", "edition": edition,
-                                                            "version": VERSION, "image": IMAGE, "commit": "a" * 40}), encoding="utf-8")
+        root = write_candidate(self.directory / edition)
+        image = json.loads(local_bundle_files()["compose-bundle.json"])["image"]
         config = configuration.new_config(product, {"api_id": "123456", "api_hash": "a" * 32,
-            "bot_token": "123456789:FAKE_COMPOSE_HTTPS_TEST_ONLY", "user_id": "123456789", "webdav_user": "tg2cloud",
+            "bot_token": "123456789:FAKE_COMPOSE_HTTPS_TEST_ONLY", "user_id": "123456789", "webdav_user": "tgcloud",
             "webdav_password": "FAKE_PASSWORD_COMPOSE_TEST", "target": "", "budget": "20", "reserve": "8",
             "timezone": "Asia/Shanghai", "admin_password": "FAKE_ADMIN_COMPOSE_TEST"})
-        config.update(TG2CLOUD_INSTALL_MODE="compose", TG2CLOUD_BIND_IP="127.0.0.1")
+        config.update(TGCLOUD_INSTALL_MODE="compose", TGCLOUD_BIND_IP="127.0.0.1")
         (root / ".env").write_text("".join(key + "=" + value + "\n" for key, value in config.items()), encoding="utf-8")
-        (root / runtime.MARKER).write_text(json.dumps({"format": 1, "edition": edition, "state": "ready"}), encoding="utf-8")
-        for child in ("data", "downloads", "logs", "config", "openlist/data", "clouddrive/config", "clouddrive/mounts"):
+        (root / runtime.MARKER).write_text(json.dumps({"format": 2, "project": packaging.PROJECT_ID, "edition": edition,
+                                                     "state": "ready", "initialized_version": VERSION}), encoding="utf-8")
+        for child in ("data", "downloads", "logs", "config", "clouddrive/config", "clouddrive/mounts"):
             (root / child).mkdir(parents=True, exist_ok=True)
         gateway_image = next(line.split(": ", 1)[1] for line in
             (SOURCE / "packaging/compose" / ("docker-compose." + edition + ".yml")).read_text().splitlines()
             if line.startswith("    image: "))
-        for index, (name, service, image) in enumerate(((product.storage_container, edition, gateway_image),
-                                                      (product.bot_container, product.bot_service, IMAGE)), 1):
+        for index, (name, service, reference) in enumerate(((product.storage_container, edition, gateway_image),
+                                                      (product.bot_container, product.bot_service, image)), 1):
             gateway = service == edition
             mounts = {"/" + child: str(root / child) for child in ("data", "downloads", "logs", "config")}
             if gateway:
-                mounts = ({"/opt/openlist/data": str(root / "openlist/data")} if product.is_openlist else
-                          {"/Config": str(root / "clouddrive/config"), "/CloudNAS": str(root / "clouddrive/mounts")})
+                mounts = {"/Config": str(root / "clouddrive/config"), "/CloudNAS": str(root / "clouddrive/mounts")}
             port = str(product.management_port)
             self.containers[name] = {"id": str(index) * 64, "name": "/" + name, "running": gateway,
-                "image": image, "image_id": "sha256:" + str(index) * 64, "network": "test_default",
-                "labels": {"com.tg2cloud.install-mode": "compose", https.COMPOSE + "service": service,
+                "image": reference, "image_id": "sha256:" + str(index) * 64, "network": "test_default",
+                "labels": {"com.tgcloud.install-mode": "compose", packaging.PROJECT_LABEL: packaging.PROJECT_ID, https.COMPOSE + "service": service,
                            https.COMPOSE + "project": "test", https.COMPOSE + "project.working_dir": str(root),
                            https.COMPOSE + "project.config_files": str(root / "docker-compose.yml")},
                 "mounts": [{"Type": "bind", "Destination": target, "Source": source} for target, source in mounts.items()],
@@ -141,7 +148,8 @@ class ComposeHttpsTests(unittest.TestCase):
             (self.proxy / "state" / https.REGISTRY).write_text(json.dumps(registry), encoding="utf-8")
 
     def registry(self, instance, domain="panel.example.com"):
-        return {"format": 1, "owner": https.OWNER, "instances": {instance.product.key: {"root": str(instance.root), "domain": domain}}}
+        return {"format": 1, "owner": https.OWNER, "project": packaging.PROJECT_ID,
+                "instances": {instance.product.key: {"root": str(instance.root), "domain": domain}}}
 
     def test_both_editions_validate_without_any_business_mutation(self):
         for edition in PRODUCTS:
@@ -163,7 +171,7 @@ class ComposeHttpsTests(unittest.TestCase):
     def test_missing_marker_and_unready_marker_reject(self):
         instance, _ = self.candidate()
         marker = instance.root / runtime.MARKER
-        marker.write_text('{"format":1,"edition":"openlist","state":"pending"}')
+        marker.write_text('{"format":1,"edition":"clouddrive2","state":"pending"}')
         with self.assertRaises(ValueError):
             instance.validate()
         marker.unlink()
@@ -199,11 +207,27 @@ class ComposeHttpsTests(unittest.TestCase):
                 instance.validate()
         gateway.clear()
         gateway.update(original)
-        for label in ("com.tg2cloud.install-mode", https.COMPOSE + "project.config_files", https.COMPOSE + "project.working_dir", https.COMPOSE + "project"):
+        for label in ("com.tgcloud.install-mode", https.COMPOSE + "project.config_files", https.COMPOSE + "project.working_dir", https.COMPOSE + "project"):
             gateway["labels"][label] = "foreign"
             with self.subTest(label=label), self.assertRaises(ValueError):
                 instance.validate()
             gateway["labels"][label] = original["labels"][label]
+
+    def test_source_label_and_fingerprint_must_match_even_with_same_tag(self):
+        instance, _ = self.candidate()
+        original = self.session.run.side_effect
+        for bad in ("labels", "fingerprint"):
+            def changed(command, *, bad=bad, **kwargs):
+                code, output = original(command, **kwargs)
+                if bad == "labels" and command.startswith("docker image inspect") and "{{json .}}" in command:
+                    value = json.loads(output)
+                    value["Config"]["Labels"][packaging.SOURCE_LABEL] = "f" * 64
+                    return code, json.dumps(value)
+                if bad == "fingerprint" and command.startswith("docker run --rm --pull never"):
+                    return 0, json.dumps({"version": VERSION, "fingerprint": "foreign"})
+                return code, output
+            with self.subTest(bad=bad), patch.object(self.session, "run", side_effect=changed), self.assertRaises(ValueError):
+                instance.validate()
 
     def test_actual_image_id_and_remote_context_errors_propagate(self):
         instance, _ = self.candidate()
@@ -245,12 +269,13 @@ class ComposeHttpsTests(unittest.TestCase):
         self.state(value, self.registry(instance))
         self.assertEqual(manager.guard(), value)
 
-    def test_other_script_edition_preserved_and_domain_conflict_rejected(self):
+    def test_unregistered_existing_route_rejected_and_preserved(self):
         _, manager = self.candidate()
         value = state_with_route(empty_state(), PRODUCTS["clouddrive2"], "other.example.com")
         self.state(value)
-        self.assertEqual(manager.guard(), value)
         before = (self.proxy / "state/domains.json").read_bytes()
+        with self.assertRaises(ValueError):
+            manager.guard()
         with self.assertRaises(ValueError):
             manager.configure("other.example.com", "")
         self.assertEqual((self.proxy / "state/domains.json").read_bytes(), before)
@@ -296,10 +321,9 @@ class ComposeHttpsTests(unittest.TestCase):
             self.assertEqual(manager.configure("panel.example.com", ""), "done")
         self.assertEqual(seen, [False, True])
 
-    def test_pair_commit_keeps_other_edition_registry_and_fences_failure(self):
+    def test_pair_commit_updates_own_registry_and_fences_failure(self):
         instance, manager = self.candidate()
-        other_root = self.directory / "other"
-        registry = {"format": 1, "owner": https.OWNER, "instances": {"clouddrive2": {"root": str(other_root), "domain": "other.example.com"}}}
+        registry = self.registry(instance, "other.example.com")
         previous = state_with_route(empty_state(), PRODUCTS["clouddrive2"], "other.example.com")
         self.state(previous, registry)
         manager.guard()
@@ -312,8 +336,8 @@ class ComposeHttpsTests(unittest.TestCase):
         with patch.object(DomainProxyManager, "_commit_state", autospec=True, side_effect=commit), patch.object(https, "atomic_private", side_effect=atomic):
             manager._commit_state(target)
         saved = json.loads((self.proxy / "state" / https.REGISTRY).read_text())
-        self.assertEqual(saved["instances"]["clouddrive2"], registry["instances"]["clouddrive2"])
-        self.assertEqual(saved["instances"]["openlist"]["root"], str(instance.root))
+        self.assertEqual(saved["project"], packaging.PROJECT_ID)
+        self.assertEqual(saved["instances"]["clouddrive2"], {"root": str(instance.root), "domain": "panel.example.com"})
         self.assertFalse((self.proxy / "state" / https.JOURNAL).exists())
         with patch.object(DomainProxyManager, "_commit_state", side_effect=OSError("synthetic failure")), patch.object(https, "atomic_private", side_effect=atomic), self.assertRaisesRegex(ValueError, "不确定"):
             manager._commit_state(previous)
@@ -346,7 +370,7 @@ class ComposeHttpsTests(unittest.TestCase):
         text = target.read_text()
         self.assertIn("ssl_certificate /srv/certs/fullchain.pem;", text)
         self.assertIn("ssl_certificate_key /srv/certs/privkey.pem;", text)
-        self.assertIn("proxy_pass http://127.0.0.1:5244;", text)
+        self.assertIn("proxy_pass http://127.0.0.1:19798;", text)
         self.assertIn("location ^~ /dav/ { return 403; }", text)
         self.assertIn("bridge", "\n".join(self.messages))
         self.assertEqual(before, (instance.root / ".env").read_bytes())
@@ -373,7 +397,7 @@ class ComposeHttpsTests(unittest.TestCase):
             result = https.main(["export-existing", "--root", str(instance.root)], session=self.session, ui=ui, log=self.log)
         self.assertEqual(result, 0)
         self.assertEqual(state_file.read_bytes(), shared_before)
-        self.assertEqual(len(list(instance.root.glob("nginx-openlist-*.conf"))), 1)
+        self.assertEqual(len(list(instance.root.glob("nginx-clouddrive2-*.conf"))), 1)
         self.session.hold_lock.assert_not_called()
         self.assertFalse(any(token in command for command in self.commands for token in ("restart", " up ", " stop ", "nginx -s reload")))
 
@@ -420,8 +444,8 @@ class ComposeHttpsTests(unittest.TestCase):
         remove.assert_not_called()
 
     def test_configure_can_change_local_plan_and_cancel_preserves_plan_and_env(self):
-        from tg2cloud.compose import access
-        from tg2cloud.compose.access import ACCESS_FILE, OWNER
+        from tgcloud.compose import access
+        from tgcloud.compose.access import ACCESS_FILE, OWNER
         instance, _ = self.candidate()
         old = {"format": 1, "owner": OWNER, "edition": instance.product.key,
                "mode": "local", "domain": "", "email": ""}

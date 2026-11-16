@@ -6,7 +6,7 @@ import http.server
 import threading
 import unittest
 
-from tg2cloud.addons.external_webdav import verification
+from tgcloud.addons.external_webdav import verification
 
 from .test_feature import SECRET, XML
 

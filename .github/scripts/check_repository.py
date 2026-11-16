@@ -12,32 +12,32 @@ from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 BUILD_FILES = (
-    "packaging/compose-https.sh", "src/tg2cloud/compose/https.py", "src/tg2cloud/compose/access.py",
-    "src/tg2cloud/compose/management.py", "src/tg2cloud/compose/lifecycle.py", "src/tg2cloud/compose/releases.py",
-    "src/tg2cloud/compose/maintenance.py", "src/tg2cloud/compose/webdav.py", "docs/COMPOSE-MANAGEMENT.md",
+    "packaging/compose-https.sh", "src/tgcloud/compose/https.py", "src/tgcloud/compose/access.py",
+    "src/tgcloud/compose/management.py", "src/tgcloud/compose/lifecycle.py", "src/tgcloud/compose/releases.py",
+    "src/tgcloud/compose/maintenance.py", "src/tgcloud/compose/webdav.py", "docs/operations-guide.md",
     "packaging/compose-release.json", ".github/scripts/compose_release.py",
-    ".github/workflows/compose-images.yml", "docs/COMPOSE.md",
+    ".github/workflows/compose-images.yml", "docs/compose-guide.md",
     "install.sh", "install-lan.sh", "packaging/external-webdav.json", ".github/scripts/release_metadata.py",
     "scripts/run_source.py", "pyproject.toml", "requirements/bot.lock.txt", "requirements/dev.lock.txt",
-    "src/tg2cloud/__init__.py", "src/tg2cloud/version.py", "src/tg2cloud/app.py",
-    "src/tg2cloud/deployment/profiles.py", "src/tg2cloud/deployment/fingerprints.py",
-    "src/tg2cloud/cli/commands.py", "packaging/Dockerfile",
-    "src/tg2cloud/cli/management.py", "src/tg2cloud/deployment/uninstall.py",
-    "src/tg2cloud/addons/external_webdav/entry.py", "src/tg2cloud/addons/external_webdav/cli.py",
-    "src/tg2cloud/addons/external_webdav/service.py",
+    "src/tgcloud/__init__.py", "src/tgcloud/version.py", "src/tgcloud/app.py",
+    "src/tgcloud/deployment/profiles.py", "src/tgcloud/deployment/fingerprints.py",
+    "src/tgcloud/cli/commands.py", "packaging/Dockerfile",
+    "src/tgcloud/cli/management.py", "src/tgcloud/deployment/uninstall.py",
+    "src/tgcloud/addons/external_webdav/entry.py", "src/tgcloud/addons/external_webdav/cli.py",
+    "src/tgcloud/addons/external_webdav/service.py",
     "packaging/bootstrap-manifest.json", "packaging/runtime-manifest.json",
     ".github/scripts/build_payload.py", ".github/scripts/prepare_bootstrap.py", ".github/scripts/lock_dependencies.py",
     "LICENSE", ".github/CONTRIBUTING.md", ".github/SECURITY.md",
-    "assets/brand/tg2cloud.ico", "assets/brand/tg2cloud-logo.svg",
-    "assets/brand/tg2cloud-icon-256.png",
+    "assets/brand/tgcloud.ico", "assets/brand/tgcloud-logo.svg",
+    "assets/brand/tgcloud-icon-256.png",
 )
 LOCAL_DIRECTORIES = frozenset({
     "build", "dist", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache",
     ".mypy_cache", ".hypothesis", ".tox", ".nox", ".venv", "venv", "htmlcov", ".codex",
 })
 INTERNAL_FILES = frozenset({
-    "agents.md", "agents_old.md", "qa_report.md", "tg2cloud-codex-kickoff-prompt.md",
-    "tg2cloud-v1.0.0-release-checklist.md",
+    "agents.md", "agents_old.md", "qa_report.md", "tgcloud-codex-kickoff-prompt.md",
+    "tgcloud-v1.0.0-release-checklist.md",
 })
 PRIVATE_EXTENSIONS = frozenset({
     ".exe", ".pyc", ".pyo", ".spec", ".db", ".sqlite", ".sqlite3", ".session", ".log",
@@ -99,16 +99,16 @@ def forbidden_reason(name: str) -> str | None:
 
 def payload_files(root: Path) -> set[str]:
     # Inspect literal paths in product definitions without importing runtime modules.
-    tree = ast.parse((root / "src/tg2cloud/deployment/profiles.py").read_text(encoding="utf-8"))
+    tree = ast.parse((root / "src/tgcloud/deployment/profiles.py").read_text(encoding="utf-8"))
     paths = {
         node.value for node in ast.walk(tree)
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
         and node.value.startswith(("packaging/", "requirements/"))
         and (PurePosixPath(node.value).suffix or PurePosixPath(node.value).name == ".dockerignore")
     }
-    if not {"packaging/compose/docker-compose.clouddrive2.yml", "packaging/compose/docker-compose.openlist.yml"} <= paths:
-        raise ValueError("both product payload manifests must contain literal paths")
-    paths.update(path.relative_to(root).as_posix() for path in (root / "src/tg2cloud").rglob("*.py"))
+    if "packaging/compose/docker-compose.clouddrive2.yml" not in paths:
+        raise ValueError("CloudDrive2 payload manifest must contain its literal Compose path")
+    paths.update(path.relative_to(root).as_posix() for path in (root / "src/tgcloud").rglob("*.py"))
     return paths
 
 
@@ -116,12 +116,12 @@ def check_build_inputs(root: Path, files: list[str]) -> list[str]:
     errors: list[str] = []
     candidate_files = set(files)
     required = set(BUILD_FILES)
-    product_path = root / "src/tg2cloud/deployment/profiles.py"
+    product_path = root / "src/tgcloud/deployment/profiles.py"
     if product_path.is_file() and not product_path.is_symlink():
         try:
             required.update(payload_files(root))
         except (OSError, SyntaxError, UnicodeError, ValueError):
-            errors.append("src/tg2cloud/deployment/profiles.py: cannot inspect both payload manifests")
+            errors.append("src/tgcloud/deployment/profiles.py: cannot inspect CloudDrive2 payload manifest")
     for name in sorted(required):
         path = root / name
         if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(root):

@@ -6,9 +6,7 @@ import datetime as dt
 import hashlib
 import io
 import json
-import os
 import shlex
-import shutil
 import subprocess
 import tempfile
 import threading
@@ -19,14 +17,16 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tg2cloud.cli import terminal
-from tg2cloud.deployment import install, instances, preflight, releases
-from tg2cloud.deployment.host import SafeLog
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.deployment.proxy import certificates
-from tg2cloud.deployment.proxy import maintenance as backups
-from tg2cloud.deployment.proxy import manager as proxy
-from tg2cloud.deployment.proxy import state as proxy_state
+from test_deployment import BASH
+
+from tgcloud.cli import terminal
+from tgcloud.deployment import install, instances, preflight, releases
+from tgcloud.deployment.host import SafeLog
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.proxy import certificates
+from tgcloud.deployment.proxy import maintenance as backups
+from tgcloud.deployment.proxy import manager as proxy
+from tgcloud.deployment.proxy import state as proxy_state
 
 
 class HostCompatibilityTests(unittest.TestCase):
@@ -96,7 +96,7 @@ class HostCompatibilityTests(unittest.TestCase):
 
     def test_missing_tools_report_packages_before_generic_probe_failure(self):
         session = Mock()
-        session.run.return_value = (3, "TG2CLOUD_PROXY_MISSING_TOOLS=ss ip python3\n")
+        session.run.return_value = (3, "TGCLOUD_PROXY_MISSING_TOOLS=ss ip python3\n")
         for product in PRODUCTS.values():
             manager = proxy.DomainProxyManager(session, product, {}, Mock())
             with self.subTest(edition=product.key), self.assertRaisesRegex(RuntimeError, "缺少宿主依赖.*ss.*ip.*python3.*apt-get install -y iproute2 python3"):
@@ -106,10 +106,9 @@ class HostCompatibilityTests(unittest.TestCase):
             upload.assert_not_called()
 
     def test_probe_stops_before_docker_or_dns_when_tools_are_missing(self):
-        bash = os.environ.get("TG115_TEST_BASH") or shutil.which("bash")
-        if not bash:
+        if not BASH:
             self.skipTest("Bash is not available")
-        script = shlex.split(proxy.environment_probe_command(PRODUCTS["openlist"], "files.example.test"))[2]
+        script = shlex.split(proxy.environment_probe_command(PRODUCTS["clouddrive2"], "files.example.test"))[2]
         for missing in ("ss", "ip", "python3", "curl", "getent", "timeout", "flock"):
             # Builtin-only fixture: all other tools are reported available, but
             # no real Docker, DNS or host mutation may run after preflight fails.
@@ -118,9 +117,9 @@ docker() {{ printf 'UNEXPECTED_DOCKER_CALL\\n'; }}
 getent() {{ printf 'UNEXPECTED_DNS_CALL\\n'; }}
 '''
             with self.subTest(tool=missing):
-                result = subprocess.run([bash, "-c", stub + script], capture_output=True, text=True, timeout=15, check=False)
+                result = subprocess.run([BASH, "-c", stub + script], capture_output=True, text=True, timeout=15, check=False)
                 self.assertEqual(result.returncode, 3, result.stderr)
-                self.assertEqual(result.stdout.strip(), "TG2CLOUD_PROXY_MISSING_TOOLS=" + missing)
+                self.assertEqual(result.stdout.strip(), "TGCLOUD_PROXY_MISSING_TOOLS=" + missing)
 
     def test_both_installers_include_host_dependencies(self):
         root = Path(__file__).resolve().parents[1]
@@ -139,7 +138,7 @@ class NatProxyTests(unittest.TestCase):
 
     @staticmethod
     def output(environment):
-        return "\n".join("TG2CLOUD_PROXY_" + key + "=" + value for key, value in (
+        return "\n".join("TGCLOUD_PROXY_" + key + "=" + value for key, value in (
             ("CORE", environment.core), ("DOCKER", environment.docker),
             ("PORT_80", environment.port_80), ("PORT_443", environment.port_443),
             ("DNS_A", ",".join(environment.dns_a)), ("DNS_AAAA", ",".join(environment.dns_aaaa)),
@@ -226,10 +225,10 @@ class NatProxyTests(unittest.TestCase):
 
     def test_confirmation_is_not_accepted_from_probe_output_or_new_manager(self):
         manager, _ = self.manager()
-        manager.session.run.return_value = (0, self.output(self.ENVIRONMENT) + "\nTG2CLOUD_PROXY_CONFIRMED_PUBLIC_IPV4=" + self.PUBLIC)
+        manager.session.run.return_value = (0, self.output(self.ENVIRONMENT) + "\nTGCLOUD_PROXY_CONFIRMED_PUBLIC_IPV4=" + self.PUBLIC)
         self.assertEqual(manager.probe(self.DOMAIN).confirmed_public_ipv4, "")
         manager.detect(self.DOMAIN)
-        other = proxy.DomainProxyManager(manager.session, PRODUCTS["openlist"], {"vps_host": "127.0.0.1"}, Mock())
+        other = proxy.DomainProxyManager(manager.session, PRODUCTS["clouddrive2"], {"vps_host": "127.0.0.1"}, Mock())
         self.assertEqual(other.probe(self.DOMAIN).confirmed_public_ipv4, "")
 
     def test_reprobe_invalidates_confirmation_after_dns_domain_or_vnic_change(self):

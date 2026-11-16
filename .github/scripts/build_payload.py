@@ -8,9 +8,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from tg2cloud.deployment.fingerprints import fingerprint
-from tg2cloud.deployment.payload import build_payload
-from tg2cloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.fingerprints import fingerprint
+from tgcloud.deployment.payload import build_payload
+from tgcloud.deployment.profiles import PRODUCTS
 
 
 def main() -> int:

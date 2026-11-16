@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from tg2cloud.domain.naming import caption_title, safe_file_name, video_file_name
+from tgcloud.domain.naming import caption_title, safe_file_name, video_file_name
 
 
 class CaptionQualityTests(unittest.TestCase):

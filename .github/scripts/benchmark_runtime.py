@@ -16,8 +16,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from tg2cloud.domain.states import SCHEDULING_STATES
-from tg2cloud.persistence.sqlite import TaskDB
+from tgcloud.domain.states import SCHEDULING_STATES
+from tgcloud.persistence.sqlite import TaskDB
 
 
 def bounded_integer(low: int, high: int):
@@ -43,7 +43,7 @@ def median_ms(operation, repetitions: int = 20) -> float:
 
 def run(*, tasks: int, cycles: int, duration_seconds: int, interval_ms: int) -> dict:
     # No user-selectable DB path: all writes and schema checks stay in this directory.
-    with tempfile.TemporaryDirectory(prefix="tg2cloud-benchmark-") as directory:
+    with tempfile.TemporaryDirectory(prefix="tgcloud-benchmark-") as directory:
         path = Path(directory) / "synthetic.db"
         with closing(TaskDB(path)) as seed:
             seed._conn.execute("BEGIN IMMEDIATE")

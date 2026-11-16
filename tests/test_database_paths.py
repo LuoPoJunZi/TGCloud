@@ -1,4 +1,4 @@
-"""Fresh TG2Cloud naming and safe legacy data compatibility, without services."""
+"""Fresh TGCloud naming and safe legacy data compatibility, without services."""
 from __future__ import annotations
 
 import io
@@ -12,13 +12,13 @@ from contextlib import closing, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-import test_openlist_backup as shell
+import test_backup_shell as shell
 
-from tg2cloud.deployment import configuration
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.persistence import bundle, paths, rehearsal
-from tg2cloud.persistence.sqlite import TaskDB
-from tg2cloud.version import VERSION
+from tgcloud.deployment import configuration
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.persistence import bundle, paths, rehearsal
+from tgcloud.persistence.sqlite import TaskDB
+from tgcloud.version import VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,7 +41,7 @@ class DatabaseNameTests(unittest.TestCase):
         return path
 
     def test_new_database_uses_project_name_without_creating_files_during_selection(self):
-        self.assertEqual(paths.database_path(self.root), self.root / "tg2cloud.db")
+        self.assertEqual(paths.database_path(self.root), self.root / "tgcloud.db")
         self.assertEqual(list(self.root.iterdir()), [])
         with self.assertRaises(ValueError):
             paths.database_path(self.root, require_existing=True)
@@ -57,10 +57,10 @@ class DatabaseNameTests(unittest.TestCase):
             self.assertEqual(db.get(1)["state"], "completed")
         finally:
             db.close()
-        self.assertFalse((self.root / "tg2cloud.db").exists())
+        self.assertFalse((self.root / "tgcloud.db").exists())
 
     def test_canonical_existing_database_remains_selected(self):
-        path = self.database("tg2cloud.db")
+        path = self.database("tgcloud.db")
         self.assertEqual(paths.database_path(self.root, require_existing=True), path)
         self.assertFalse((self.root / "tg115.db").exists())
 
@@ -86,7 +86,7 @@ class DatabaseNameTests(unittest.TestCase):
         self.assertFalse(any((self.root / name).exists() for name in paths.DATABASE_NAMES))
 
     def test_hardlinks_and_nonfiles_are_rejected(self):
-        target = self.root / "tg2cloud.db"
+        target = self.root / "tgcloud.db"
         other = self.root / "alias"
         other.write_bytes(b"synthetic")
         os.link(other, target)
@@ -99,7 +99,7 @@ class DatabaseNameTests(unittest.TestCase):
 
     def test_symlink_rejected_even_if_other_database_exists(self):
         self.database("tg115.db")
-        link = self.root / "tg2cloud.db"
+        link = self.root / "tgcloud.db"
         link.write_bytes(b"synthetic link stand-in")
         original = Path.is_symlink
         # Covers the same refusal where Windows disallows creating a real link.
@@ -107,10 +107,10 @@ class DatabaseNameTests(unittest.TestCase):
             paths.database_path(self.root)
 
     def test_standalone_selector_works_without_site_or_bot_dependencies(self):
-        code = ROOT / "src/tg2cloud/persistence/paths.py"
+        code = ROOT / "src/tgcloud/persistence/paths.py"
         result = subprocess.run([sys.executable, "-I", "-S", "-B", str(code), str(self.root)], capture_output=True, text=True, check=False, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "tg2cloud.db")
+        self.assertEqual(result.stdout.strip(), "tgcloud.db")
         for name in paths.DATABASE_NAMES:
             (self.root / name).write_bytes(b"synthetic")
         with redirect_stdout(io.StringIO()) as stdout, redirect_stderr(io.StringIO()) as stderr:
@@ -120,12 +120,12 @@ class DatabaseNameTests(unittest.TestCase):
 
     def test_new_generated_config_has_no_old_project_variables(self):
         values = {"api_id":"123456", "api_hash":"a"*32, "bot_token":"123456789:SYNTHETIC_TEST_TOKEN_ONLY",
-                  "user_id":"123456789", "webdav_user":"tg2cloud", "webdav_password":"SYNTHETIC", "target":"",
+                  "user_id":"123456789", "webdav_user":"tgcloud", "webdav_password":"SYNTHETIC", "target":"",
                   "budget":"20", "reserve":"8", "timezone":"Asia/Shanghai", "admin_password":"SYNTHETIC"}
         for product in PRODUCTS.values():
             config = configuration.new_config(product, values)
             self.assertFalse(any(key.startswith("TG115_") for key in config))
-            self.assertEqual(config["TG2CLOUD_STORAGE_BACKEND"], product.key)
+            self.assertEqual(config["TGCLOUD_STORAGE_BACKEND"], product.key)
 
     def test_new_and_legacy_backup_rehearsal_for_both_editions(self):
         for edition in PRODUCTS:
@@ -154,16 +154,16 @@ class DatabaseNameTests(unittest.TestCase):
 @unittest.skipUnless(shell.BASH, "Requires Bash for isolated upgrade and rollback fixtures")
 class CanonicalShellTests(unittest.TestCase):
     def fixture(self):
-        fixture = shell.OpenListBackupTests(methodName="runTest")
+        fixture = shell.CloudDriveBackupTests(methodName="runTest")
         fixture.setUp()
         self.addCleanup(fixture.doCleanups)
-        canonical = fixture.database.with_name("tg2cloud.db")
+        canonical = fixture.database.with_name("tgcloud.db")
         fixture.database.rename(canonical)  # Only our synthetic isolated fixture.
         fixture.database = canonical
         return fixture
 
     def test_canonical_upgrade_snapshot_and_manual_backup(self):
-        for action in (shell.UPGRADE, shell.MANUAL + "\ncreate_backup\n"):
+        for action in (shell.UPGRADE,):
             fixture = self.fixture()
             result, _ = fixture.execute(action)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -192,7 +192,7 @@ class CanonicalShellTests(unittest.TestCase):
             fixture = self.fixture()
             script = (ROOT / "packaging/hooks" / edition / "remote_install.sh").read_text(encoding="utf-8")
             prefix = script.split('[[ "$(id -u)" -eq 0 ]]', 1)[0]
-            before = 'DATABASE_BACKUP="$test_root/good.db"\nDATABASE_NAME=tg2cloud.db\n'
+            before = 'DATABASE_BACKUP="$test_root/good.db"\nDATABASE_NAME=tgcloud.db\n'
             with patch.object(shell, "PREFIX", prefix):
                 result, _ = fixture.execute("rollback_install\n", before=before)
             self.assertEqual(result.returncode, 0, result.stderr)

@@ -12,9 +12,9 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from tg2cloud.deployment import backup, instances
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.persistence import bundle
+from tgcloud.deployment import backup, instances
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.persistence import bundle
 
 
 class Docker:
@@ -59,7 +59,7 @@ class SnapshotTests(unittest.TestCase):
         (directory / "config/rclone/rclone.conf").write_text("[fixture]\n")
         gateway = directory / ("openlist/data" if product.is_openlist else "clouddrive/config")
         (gateway / "settings.json").write_text("{}")
-        (directory / "tg2cloud-release.json").write_text('{"tag":"v1.4.2"}')
+        (directory / "tgcloud-release.json").write_text('{"tag":"v1.4.2"}')
         (directory / "downloads/keep.bin").write_bytes(b"keep original")
         instance = instances.Instance(product, directory, True, "1.4.2", True)
         docker = Docker(product)
@@ -73,12 +73,12 @@ class SnapshotTests(unittest.TestCase):
         for edition in PRODUCTS:
             with self.subTest(edition=edition):
                 instance, _, _ = self.fixture(edition)
-                names = {"tg2cloud-compose.json", "compose-bundle.json", "compose-access.json"}
+                names = {"tgcloud-compose.json", "compose-bundle.json", "compose-access.json"}
                 for name in names:
                     (instance.directory / name).write_text('{"synthetic":true}')
                 script_files = backup.selected_files(instance)
                 self.assertFalse(names & script_files.keys())
-                self.assertIn("tg2cloud-release.json", script_files)
+                self.assertIn("tgcloud-release.json", script_files)
                 instance.deployment_mode = "compose"
                 self.assertTrue(names <= backup.selected_files(instance).keys())
                 self.assertEqual((instance.directory / ".env").read_bytes(), b"SYNTHETIC_BACKUP_FIXTURE=true\n")
@@ -142,9 +142,11 @@ class SnapshotTests(unittest.TestCase):
         self.assertFalse(docker.calls)
 
     def test_failure_or_normal_interrupt_restores_services_and_preserves_original_files(self):
+        fixture_root = self.root
         for failure in (ValueError("synthetic"), KeyboardInterrupt()):
             with self.subTest(failure=type(failure).__name__):
-                instance, docker, target = self.fixture("openlist" if isinstance(failure, KeyboardInterrupt) else "clouddrive2")
+                self.root = fixture_root / type(failure).__name__
+                instance, docker, target = self.fixture("clouddrive2")
                 with patch.object(bundle, "pack", side_effect=failure), self.assertRaises(type(failure)):
                     self.create(instance, docker, target)
                 self.assertTrue(all(state["running"] for state in docker.states.values()))

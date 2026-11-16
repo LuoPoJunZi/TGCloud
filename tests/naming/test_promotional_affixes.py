@@ -1,8 +1,8 @@
 """Synthetic filenames only; never mutate existing saved files."""
 import unittest
 
-from tg2cloud.domain.naming import caption_title, explain_media_name, media_file_name
-from tg2cloud.domain.planning import name_plan
+from tgcloud.domain.naming import caption_title, explain_media_name, media_file_name
+from tgcloud.domain.planning import name_plan
 
 
 class ContactAffixTests(unittest.TestCase):

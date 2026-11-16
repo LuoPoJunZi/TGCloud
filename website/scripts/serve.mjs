@@ -35,4 +35,4 @@ const server=http.createServer(async(req,res)=>{
   }
 });
 server.on('error',error=>{console.error(error.message);process.exit(1);});
-server.listen(port,'127.0.0.1',()=>console.log(`TG2Cloud Docs preview: http://127.0.0.1:${port}\nPress Ctrl+C to stop.`));
+server.listen(port,'127.0.0.1',()=>console.log(`TGCloud Docs preview: http://127.0.0.1:${port}\nPress Ctrl+C to stop.`));

@@ -10,11 +10,11 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tg2cloud.addons.external_webdav import config, users, verification
-from tg2cloud.addons.external_webdav.service import Service
-from tg2cloud.deployment.host import SafeLog
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.deployment.resources import validate_install_dir
+from tgcloud.addons.external_webdav import config, users, verification
+from tgcloud.addons.external_webdav.service import Service
+from tgcloud.deployment.host import SafeLog
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.resources import validate_install_dir
 
 from .test_feature import SECRET, env, route, shared
 
@@ -29,17 +29,17 @@ class FamilyWebDAVTests(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         # Gateway instance is a simulated Linux path (never a real install).
         # Real private record/hash files still use canonical temporary paths.
-        self.paths = patch("tg2cloud.deployment.configuration.checked_directory",
+        self.paths = patch("tgcloud.deployment.configuration.checked_directory",
                            side_effect=lambda value: (validate_install_dir(value), PurePosixPath(value))[1])
         self.paths.start()
         self.addCleanup(self.paths.stop)
         self.ui, self.session = Mock(), Mock()
         self.session.run.return_value = (0, "")
         self.messages = []
-        self.service = Service(PRODUCTS["openlist"], self.session, SafeLog(self.messages.append), self.ui, root=self.root)
-        self.service.auth = self.root / "auth/openlist.htpasswd"
+        self.service = Service(PRODUCTS["clouddrive2"], self.session, SafeLog(self.messages.append), self.ui, root=self.root)
+        self.service.auth = self.root / "auth/clouddrive2.htpasswd"
         self.service.locked = lambda: nullcontext()
-        self.item = {"schema": 1, "owner": config.OWNER, "edition": "openlist", "instance_dir": PRODUCTS["openlist"].install_dir,
+        self.item = {"schema": 1, "owner": config.OWNER, "edition": "clouddrive2", "instance_dir": PRODUCTS["clouddrive2"].install_dir,
                      "domain": route()["domain"], "username": "phone-reader", "bot_root": "/媒体", "target_dir": "/媒体/Telegram",
                      "binding": config.binding(env()), "phase": "enabled", "scope_verification": "manual-native-readonly",
                      "backend_image": "pinned-test-image", "revision": "a" * 32}
@@ -105,7 +105,7 @@ class FamilyWebDAVTests(unittest.TestCase):
         self.assertEqual(users.entries(self.service, item), {"phone-reader": HASH, "family-reader": NEW_HASH})
         self.service.manager.apply_shared_state_locked.assert_not_called()
         self.assertEqual({call.args[0] for call in self.session.run.call_args_list}, {
-            "docker exec tg2cloud-proxy-nginx nginx -t", "docker exec tg2cloud-proxy-nginx nginx -s reload"})
+            "docker exec tgcloud-proxy-nginx nginx -t", "docker exec tgcloud-proxy-nginx nginx -s reload"})
         self.assertNotIn(SECRET, self.service.record_path.read_text())
         self.assertNotIn(SECRET, "\n".join(self.messages))
         # The old v1 reader required exactly its fields + schema=1: it rejects,
@@ -224,7 +224,7 @@ class FamilyWebDAVTests(unittest.TestCase):
     def test_disabled_portal_and_drift_still_allow_removing_a_family_grant(self):
         self.run_account()
         self.service.maintain("disable")
-        self.state["external_webdav"]["openlist"]["enabled"] = False
+        self.state["external_webdav"]["clouddrive2"]["enabled"] = False
         self.instance.config = env("changed-shared-directory")
         self.run_account("remove")
         self.assertEqual(self.service.record()["members"], [])

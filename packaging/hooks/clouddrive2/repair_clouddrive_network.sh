@@ -2,28 +2,28 @@
 set -Eeuo pipefail
 umask 077
 
-INSTALL_DIR="${INSTALL_DIR:-/opt/tg2cloud-clouddrive2}"
-BACKUP_DIR="/opt/tg2cloud-clouddrive2-backups"
-BOT_SERVICE="tg2cloud-clouddrive2-bot"
-BOT_CONTAINER="tg2cloud-clouddrive2-bot"
-CD2_MANAGED_CONTAINER="tg2cloud-clouddrive2"
-DOCKER_NETWORK="tg2cloud-clouddrive2-net"
+INSTALL_DIR="${INSTALL_DIR:-/opt/tgcloud-clouddrive2}"
+BACKUP_DIR="/opt/tgcloud-clouddrive2-backups"
+BOT_SERVICE="tgcloud-clouddrive2-bot"
+BOT_CONTAINER="tgcloud-clouddrive2-bot"
+CD2_MANAGED_CONTAINER="tgcloud-clouddrive2"
+DOCKER_NETWORK="tgcloud-clouddrive2-net"
 MODE="${1:-full}"
 
 log() {
-  printf '[TG2Cloud-REPAIR] %s\n' "$*"
+  printf '[TGCloud-REPAIR] %s\n' "$*"
 }
 
 fail() {
   trap - ERR
-  printf '[TG2Cloud-REPAIR][ERROR] %s\n' "$*" >&2
-  printf 'TG2CLOUD_REPAIR=FAILED\n' >&2
+  printf '[TGCloud-REPAIR][ERROR] %s\n' "$*" >&2
+  printf 'TGCLOUD_REPAIR=FAILED\n' >&2
   exit 1
 }
 
 recover_webdav_credentials() {
   local backup temp_env username_b64 password_b64 username password status
-  temp_env="$(mktemp /tmp/tg2cloud-webdav-credentials.XXXXXX)"
+  temp_env="$(mktemp /tmp/tgcloud-webdav-credentials.XXXXXX)"
   while IFS= read -r backup; do
     [[ -n "$backup" ]] || continue
     if ! tar -xOf "$backup" ./.env > "$temp_env" 2>/dev/null; then
@@ -77,9 +77,9 @@ trap 'fail "修复在第 ${LINENO} 行失败。请保留完整日志。"' ERR
 [[ "/$INSTALL_DIR/" != *"/../"* && "/$INSTALL_DIR/" != *"/./"* ]] \
   || fail "安装目录不能包含 . 或 .. 路径段"
 [[ "$INSTALL_DIR" != /opt/tg115 ]] \
-  || fail "检测到旧 TG115 安装目录 /opt/tg115；TG2Cloud 不会迁移、覆盖或修复该部署"
-[[ -f "$INSTALL_DIR/docker-compose.yml" ]] || fail "找不到现有 TG2Cloud 部署"
-[[ -f "$INSTALL_DIR/.env" ]] || fail "找不到现有 TG2Cloud 配置"
+  || fail "检测到旧 TG115 安装目录 /opt/tg115；TGCloud 不会迁移、覆盖或修复该部署"
+[[ -f "$INSTALL_DIR/docker-compose.yml" ]] || fail "找不到现有 TGCloud 部署"
+[[ -f "$INSTALL_DIR/.env" ]] || fail "找不到现有 TGCloud 配置"
 command -v docker >/dev/null 2>&1 || fail "Docker 不可用"
 
 [[ ! -e /opt/tg115 ]] || log "检测到旧目录 /opt/tg115；保留不动"
@@ -157,9 +157,9 @@ CD2_NETWORK_MODE="$(
 CD2_ENDPOINT_HOST="$CD2_MANAGED_CONTAINER"
 if [[ "$CD2_NETWORK_MODE" == "host" || "$CD2_NETWORK_MODE" == container:* ]]; then
   log "CloudDrive2 使用 $CD2_NETWORK_MODE 网络；Bot 自动使用相同网络命名空间"
-  COMPOSE_TMP="$INSTALL_DIR/.docker-compose.yml.tg2cloud-repair"
+  COMPOSE_TMP="$INSTALL_DIR/.docker-compose.yml.tgcloud-repair"
   awk -v network_mode="$CD2_NETWORK_MODE" '
-    /^  tg2cloud-clouddrive2-bot:/ { in_bot=1; print; next }
+    /^  tgcloud-clouddrive2-bot:/ { in_bot=1; print; next }
     in_bot && /^networks:/ { in_bot=0 }
     in_bot && /^    (extra_hosts|networks):[[:space:]]*$/ {
       skip_list=1
@@ -168,7 +168,7 @@ if [[ "$CD2_NETWORK_MODE" == "host" || "$CD2_NETWORK_MODE" == container:* ]]; th
     skip_list && /^      - / { next }
     skip_list { skip_list=0 }
     in_bot && /^    network_mode:/ { next }
-    in_bot && /^    container_name:[[:space:]]*tg2cloud-clouddrive2-bot[[:space:]]*$/ {
+    in_bot && /^    container_name:[[:space:]]*tgcloud-clouddrive2-bot[[:space:]]*$/ {
       print
       print "    network_mode: " network_mode
       next
@@ -197,7 +197,7 @@ if [[ "$CD2_NETWORK_MODE" == "host" || "$CD2_NETWORK_MODE" == container:* ]]; th
 else
   if [[ "$(
     docker inspect \
-      --format '{{if index .NetworkSettings.Networks "tg2cloud-clouddrive2-net"}}yes{{end}}' \
+      --format '{{if index .NetworkSettings.Networks "tgcloud-clouddrive2-net"}}yes{{end}}' \
       "$CD2_CONTAINER"
   )" == "yes" ]]; then
     log "刷新现有 $DOCKER_NETWORK 网络连接和 $CD2_MANAGED_CONTAINER 别名"
@@ -212,9 +212,9 @@ log "等待 CloudDrive2 管理端口和 Bot 内部 DNS/TCP 连通"
 NETWORK_OK="false"
 for _ in $(seq 1 45); do
   if curl -fsS --max-time 5 http://127.0.0.1:19798/ >/dev/null 2>&1 \
-    && docker exec -e TG2CLOUD_CD2_ENDPOINT="$CD2_ENDPOINT_HOST" \
+    && docker exec -e TGCLOUD_CD2_ENDPOINT="$CD2_ENDPOINT_HOST" \
       "$BOT_CONTAINER" python -c \
-      'import os,socket; h=os.environ["TG2CLOUD_CD2_ENDPOINT"]; socket.getaddrinfo(h,19798); s=socket.create_connection((h,19798),5); s.close()' \
+      'import os,socket; h=os.environ["TGCLOUD_CD2_ENDPOINT"]; socket.getaddrinfo(h,19798); s=socket.create_connection((h,19798),5); s.close()' \
       >/dev/null 2>&1; then
     NETWORK_OK="true"
     break
@@ -229,9 +229,9 @@ if [[ "$NETWORK_OK" != "true" ]]; then
 fi
 
 CD2_IP="$(
-  docker exec -e TG2CLOUD_CD2_ENDPOINT="$CD2_ENDPOINT_HOST" \
+  docker exec -e TGCLOUD_CD2_ENDPOINT="$CD2_ENDPOINT_HOST" \
     "$BOT_CONTAINER" python -c \
-    'import os,socket; print(socket.gethostbyname(os.environ["TG2CLOUD_CD2_ENDPOINT"]))'
+    'import os,socket; print(socket.gethostbyname(os.environ["TGCLOUD_CD2_ENDPOINT"]))'
 )"
 log "Bot 已解析并连通 CloudDrive2：$CD2_IP:19798"
 
@@ -268,5 +268,5 @@ if [[ "$(readlink -f "$0")" != "$(readlink -f "$PERSISTED_REPAIR")" ]]; then
   log "Persisted the current repair program to $PERSISTED_REPAIR"
 fi
 
-printf 'TG2CLOUD_REPAIR_CONTAINER=%s\n' "$CD2_CONTAINER"
-printf 'TG2CLOUD_REPAIR=SUCCESS\n'
+printf 'TGCLOUD_REPAIR_CONTAINER=%s\n' "$CD2_CONTAINER"
+printf 'TGCLOUD_REPAIR=SUCCESS\n'

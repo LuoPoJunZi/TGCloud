@@ -5,10 +5,10 @@ import argparse
 import tempfile
 from pathlib import Path
 
-from tg2cloud.deployment import architecture, payload
-from tg2cloud.deployment.host import LocalSession, SafeLog
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.deployment.proxy.manager import CERTBOT_IMAGE, NGINX_IMAGE
+from tgcloud.deployment import architecture, payload
+from tgcloud.deployment.host import LocalSession, SafeLog
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.proxy.manager import CERTBOT_IMAGE, NGINX_IMAGE
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -24,10 +24,10 @@ def main() -> int:
     session = LocalSession(SafeLog())
     architecture.check_docker(session)
     for product in PRODUCTS.values():
-        with tempfile.TemporaryDirectory(prefix="tg2cloud-native-ci-") as private:
+        with tempfile.TemporaryDirectory(prefix="tgcloud-native-ci-") as private:
             context = Path(private) / "payload"
             payload.build_payload(ROOT, product, context)
-            (context / ".env").write_text("OPENLIST_ADMIN_PASSWORD=isolated-ci-only\n", encoding="utf-8")
+            (context / ".env").write_text("# isolated CloudDrive2 CI\n", encoding="utf-8")
             architecture.prepare_images(session, context / "docker-compose.yml", [product.key])
     for image in (NGINX_IMAGE, CERTBOT_IMAGE):
         architecture.ensure_image(session, image)

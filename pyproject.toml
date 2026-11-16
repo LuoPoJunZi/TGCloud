@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tg2cloud"
+name = "tgcloud"
 dynamic = ["version"]
 description = "Self-hosted Telegram to cloud transfers and Linux deployment tools"
 requires-python = ">=3.10"
@@ -16,14 +16,14 @@ bot = ["Telethon==1.45.0", "cryptg==0.6.0", "psutil==7.2.2", "pyasn1==0.6.5"]
 dev = ["pytest==9.2.0", "ruff==0.17.3", "bandit==1.9.4", "cryptography==50.0.2", "pip-audit==2.10.1", "certifi==2026.10.19", "filelock==4.2.1", "uv==0.13.6"]
 
 [project.scripts]
-tg2cloud = "tg2cloud.cli.commands:main"
-tg2cloud-webdav = "tg2cloud.addons.external_webdav.cli:main"
+tgcloud = "tgcloud.cli.commands:main"
+tgcloud-webdav = "tgcloud.addons.external_webdav.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.dynamic]
-version = {attr = "tg2cloud.version.VERSION"}
+version = {attr = "tgcloud.version.VERSION"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

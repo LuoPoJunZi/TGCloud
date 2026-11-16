@@ -20,10 +20,10 @@ SOURCE = Path(__file__).resolve().parents[1]
 PAYLOAD = payload("clouddrive2")
 sys.path.insert(0, str(PAYLOAD))
 
-from tg2cloud.app import TransferService
-from tg2cloud.config import Settings
-from tg2cloud.monitoring.resources import ResourceSnapshot
-from tg2cloud.persistence.sqlite import TaskDB
+from tgcloud.app import TransferService
+from tgcloud.config import Settings
+from tgcloud.monitoring.resources import ResourceSnapshot
+from tgcloud.persistence.sqlite import TaskDB
 
 
 def encoded(value: str) -> str:
@@ -413,7 +413,7 @@ class EndToEndSimulationTests(unittest.TestCase):
             async def no_wait(_: float) -> None:
                 return None
 
-            with patch("tg2cloud.app.asyncio.sleep", new=no_wait):
+            with patch("tgcloud.app.asyncio.sleep", new=no_wait):
                 asyncio.run(service._download_one(task["id"]))
             recovered = db.get(task["id"])
             self.assertEqual(client.calls, 2)
@@ -434,7 +434,7 @@ class EndToEndSimulationTests(unittest.TestCase):
         service.client = SimpleNamespace(get_messages=AsyncMock(return_value=SimpleNamespace(media=True)),
             download_media=AsyncMock(side_effect=TimeoutError("PRIVATE_TOKEN https://private.invalid/file.mp4")))
         service._notify = AsyncMock()
-        with patch("tg2cloud.transfer.download.asyncio.sleep", new=AsyncMock()):
+        with patch("tgcloud.transfer.download.asyncio.sleep", new=AsyncMock()):
             asyncio.run(service._download_one(task["id"]))
         saved = db.get(task["id"])
         self.assertEqual(saved["state"], "download_failed")
@@ -448,7 +448,7 @@ class EndToEndSimulationTests(unittest.TestCase):
 
 
     def test_stream_exhaustion_preserves_safe_destination_cause_and_recorded_path(self) -> None:
-        from tg2cloud.storage.rclone import RcloneError
+        from tgcloud.storage.rclone import RcloneError
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         settings = make_settings(Path(temp.name))
@@ -463,7 +463,7 @@ class EndToEndSimulationTests(unittest.TestCase):
         service.rclone = FakeRclone()
         service.rclone.open_upload_stream = AsyncMock(side_effect=RcloneError(
             "503 PRIVATE_TOKEN https://private.invalid/secret"))
-        with patch("tg2cloud.transfer.streaming.asyncio.sleep", new=AsyncMock()):
+        with patch("tgcloud.transfer.streaming.asyncio.sleep", new=AsyncMock()):
             asyncio.run(service._download_one(task["id"]))
         saved = db.get(task["id"])
         self.assertEqual(saved["state"], "download_failed")
@@ -715,7 +715,7 @@ class QueueAndResourceSimulationTests(unittest.TestCase):
                 try:
                     # This scenario controls capacity through the snapshot. Keep
                     # the live check consistent, including on small CI tmpfs.
-                    with patch("tg2cloud.transfer.scheduler.shutil.disk_usage", return_value=SimpleNamespace(
+                    with patch("tgcloud.transfer.scheduler.shutil.disk_usage", return_value=SimpleNamespace(
                         free=service.snapshot.disk_free,
                     )):
                         await service._start_downloads()

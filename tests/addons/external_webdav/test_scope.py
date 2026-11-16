@@ -9,11 +9,11 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
-from tg2cloud.addons.external_webdav import cli, config, scope
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.deployment.proxy.state import validate_domain, validate_email
+from tgcloud.addons.external_webdav import cli, config, scope
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.proxy.state import validate_domain, validate_email
 
 
 class ScopeTests(unittest.TestCase):
@@ -23,7 +23,7 @@ class ScopeTests(unittest.TestCase):
         self.directory = Path(self.private.name).resolve()
         self.native = self.directory / "clouddrive/config/webdav_config.json"
         self.native.parent.mkdir(parents=True)
-        values = {"URL": "http://tg2cloud-clouddrive2:19798/dav", "USERNAME": "bot-reader",
+        values = {"URL": "http://tgcloud-clouddrive2:19798/dav", "USERNAME": "bot-reader",
                   "PASSWORD": "SYNTHETIC_BOT_ONLY", "TARGET_PATH": "电影/家庭"}
         self.settings = {"WEBDAV_" + key + "_B64": base64.b64encode(value.encode()).decode()
                          for key, value in values.items()}
@@ -99,51 +99,34 @@ class ScopeTests(unittest.TestCase):
             with patch.object(scope.os, "fstat", return_value=info):
                 self.assertEqual(scope.resolve(self.instance, PRODUCTS["clouddrive2"]).path, "")
 
-    def test_openlist_uses_only_bot_login_and_current_user_with_no_admin(self):
-        with patch.object(scope, "openlist_json", side_effect=[{"token": "TEMPORARY_ONLY"},
-                     {"username": "bot-reader", "disabled": False, "base_path": "/媒体"}]) as request:
-            self.assertEqual(scope.openlist_root(self.instance, PRODUCTS["openlist"]), "/媒体")
-        self.assertEqual(request.call_args_list[0].args, (5244, "POST", "/api/auth/login"))
-        self.assertEqual(request.call_args_list[0].kwargs["payload"]["username"], "bot-reader")
-        self.assertEqual(request.call_args_list[1].args, (5244, "GET", "/api/me"))
-        self.assertEqual(request.call_args_list[1].kwargs, {"token": "TEMPORARY_ONLY"})
+    def test_retired_account_scope_rejected_before_reading_credentials(self):
+        with patch.object(scope, "openlist_json") as request, self.assertRaises(ValueError):
+            scope.openlist_root(self.instance, SimpleNamespace(key="openlist"))
+        request.assert_not_called()
 
-    def test_openlist_does_not_accept_guest_wrong_user_disabled_or_missing_root(self):
-        for user in ({"username": "guest", "disabled": False, "base_path": "/"},
-                     {"username": "bot-reader", "disabled": True, "base_path": "/a"},
-                     {"username": "bot-reader", "disabled": False}):
-            with patch.object(scope, "openlist_json", side_effect=[{"token": "TEMP"}, user]):
-                self.assertEqual(scope.resolve(self.instance, PRODUCTS["openlist"]).path, "")
+    def test_retired_scope_cannot_reuse_a_previous_confirmed_root(self):
+        previous = {"instance_dir": str(self.directory), "bot_root": "/private"}
+        with patch.object(scope, "clouddrive2_root") as native, self.assertRaises(ValueError):
+            scope.resolve(self.instance, SimpleNamespace(key="openlist"), previous)
+        native.assert_not_called()
 
-    def test_openlist_http_is_fixed_to_loopback_bounded_and_never_redirects(self):
-        connection = Mock()
-        response = connection.getresponse.return_value
-        response.status = 200
-        response.read.return_value = b'{"code":200,"data":{"base_path":"/media"}}'
-        with patch.object(scope.http.client, "HTTPConnection", return_value=connection) as factory:
-            result = scope.openlist_json(5244, "GET", "/api/me", token="PRIVATE_TOKEN")
-        self.assertEqual(result, {"base_path": "/media"})
-        factory.assert_called_once_with("127.0.0.1", 5244, timeout=4)
-        response.read.assert_called_once_with(scope.LIMIT+1)
-        connection.close.assert_called_once()
-        for status, content in ((302, b""), (401, b"PRIVATE_TOKEN"), (500, b""),
-                                (200, b"x"*(scope.LIMIT+1)), (200, b'{"code":401,"message":"PRIVATE_TOKEN"}')):
-            response.status, response.read.return_value = status, content
-            with patch.object(scope.http.client, "HTTPConnection", return_value=connection), self.assertRaises(ValueError) as error:
-                scope.openlist_json(5244, "GET", "/api/me", token="PRIVATE_TOKEN")
-            self.assertNotIn("PRIVATE_TOKEN", str(error.exception))
+    def test_retired_http_never_opens_a_connection_or_echoes_tokens(self):
+        with patch.object(scope.http.client, "HTTPConnection") as connect, self.assertRaises(ValueError) as error:
+            scope.openlist_json(5244, "GET", "/api/me", token="PRIVATE_TOKEN")
+        connect.assert_not_called()
+        self.assertNotIn("PRIVATE_TOKEN", str(error.exception))
 
     def test_management_link_uses_selected_edition_and_cannot_be_external_dav_domain(self):
         state = {"domains": {"clouddrive2": {"domain": "manage.example.test"},
                               "openlist": {"domain": "list.example.test"}}}
         self.assertEqual(scope.management_address(self.instance, PRODUCTS["clouddrive2"], state),
                          "https://manage.example.test")
-        self.assertEqual(scope.management_address(self.instance, PRODUCTS["openlist"], state),
-                         "https://list.example.test")
-        from tg2cloud.deployment.proxy import lan
+        with self.assertRaises(ValueError):
+            scope.management_address(self.instance, SimpleNamespace(key="openlist"), state)
+        from tgcloud.deployment.proxy import lan
         with patch.object(lan, "load_state", return_value={"install_dir": str(self.directory), "bind_ip": "192.168.26.5"}):
-            self.assertEqual(scope.management_address(self.instance, PRODUCTS["openlist"], {"domains": {}}),
-                             "http://192.168.26.5:5244")
+            self.assertEqual(scope.management_address(self.instance, PRODUCTS["clouddrive2"], {"domains": {}}),
+                             "http://192.168.26.5:19798")
 
 
 class InputFeedbackTests(unittest.TestCase):

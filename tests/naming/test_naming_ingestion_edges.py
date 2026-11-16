@@ -13,7 +13,7 @@ from telethon import events
 from telethon.tl import types
 from test_scenarios import make_service, make_settings
 
-from tg2cloud.persistence.sqlite import TaskDB
+from tgcloud.persistence.sqlite import TaskDB
 
 
 class NamingIngestionEdgeTests(unittest.IsolatedAsyncioTestCase):
@@ -49,7 +49,7 @@ class NamingIngestionEdgeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_slash_prefixed_media_caption_is_not_a_command_in_both_editions(self):
         self.service._handle_command = AsyncMock(side_effect=AssertionError("caption is not a command"))
-        for ident, backend in enumerate(("clouddrive2", "openlist"), 1):
+        for ident, backend in enumerate(("clouddrive2",), 1):
             with self.subTest(backend=backend):
                 self.service.settings = replace(self.settings, storage_backend=backend)
                 message = self.video(ident, "/春日旅行 第12集")
@@ -88,7 +88,7 @@ class NamingIngestionEdgeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_real_video_mime_corrects_only_nonvideo_extension_in_both_editions(self):
         ident = 0
-        for backend in ("clouddrive2", "openlist"):
+        for backend in ("clouddrive2",):
             self.service.settings = replace(self.settings, storage_backend=backend)
             for original, expected in (("123.exe", "春日旅行.mp4"),
                                        ("Movie.MKV", "Movie.MKV")):

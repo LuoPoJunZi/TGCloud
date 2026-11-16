@@ -6,10 +6,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from tg2cloud.domain import classification
-from tg2cloud.persistence import features
-from tg2cloud.persistence.sqlite import TaskDB
-from tg2cloud.transfer.upload import _choose_remote_final
+from tgcloud.domain import classification
+from tgcloud.persistence import features
+from tgcloud.persistence.sqlite import TaskDB
+from tgcloud.transfer.upload import _choose_remote_final
 
 
 class ClassificationTests(unittest.IsolatedAsyncioTestCase):

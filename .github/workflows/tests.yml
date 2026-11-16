@@ -70,33 +70,33 @@ jobs:
         run: python .github/scripts/check_native_architecture.py --expected '${{ matrix.arch }}'
 
       - name: Build Linux Bot image
-        run: docker build -t tg2cloud-bot:test build/ci-contexts/clouddrive2
+        run: docker build -t tgcloud-bot:test build/ci-contexts/clouddrive2
 
       - name: Direct Compose initialization and non-root checks
         env:
-          TG2CLOUD_TEST_COMPOSE_DOCKER: "1"
+          TGCLOUD_TEST_COMPOSE_DOCKER: "1"
         run: python -B -m unittest discover -s tests -p test_compose_docker.py -v
 
       - name: Isolated external WebDAV Nginx, authentication and Range
         env:
-          TG2CLOUD_TEST_EXTERNAL_WEBDAV_DOCKER: "1"
+          TGCLOUD_TEST_EXTERNAL_WEBDAV_DOCKER: "1"
         run: python -B -m unittest discover -s tests -p test_docker.py -v
 
       - name: Isolated existing Nginx single-hop, reload and original-site preservation
         env:
-          TG2CLOUD_TEST_EXTERNAL_NGINX_DOCKER: "1"
+          TGCLOUD_TEST_EXTERNAL_NGINX_DOCKER: "1"
         run: python -B -m unittest discover -s tests -p test_external_nginx_docker.py -v
 
       - name: Run both Edition candidate images as non-root
         timeout-minutes: 20
         env:
-          TG2CLOUD_TEST_DOCKER: "1"
+          TGCLOUD_TEST_DOCKER: "1"
         run: python -m unittest discover -s tests -p test_runtime_namespace.py -v
 
       - name: Native gateway HTTP, FUSE and proxy executable smoke
         timeout-minutes: 10
         env:
-          TG2CLOUD_TEST_NATIVE_DOCKER: "1"
+          TGCLOUD_TEST_NATIVE_DOCKER: "1"
         run: |
           sudo modprobe fuse
           test -c /dev/fuse

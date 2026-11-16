@@ -14,14 +14,14 @@ from telethon import events
 from telethon.tl import types
 from test_scenarios import FakeRclone, make_service, make_settings
 
-from tg2cloud.domain.naming import (
+from tgcloud.domain.naming import (
     album_file_name,
     caption_candidate,
     caption_title,
     safe_file_name,
     video_file_name,
 )
-from tg2cloud.persistence.sqlite import TaskDB
+from tgcloud.persistence.sqlite import TaskDB
 
 
 class MultilingualNamingTests(unittest.TestCase):
@@ -217,7 +217,7 @@ class CaptionIngestionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_optional_title_failure_still_persists_safe_original_without_leaking_text(self):
         message = self.message(caption="仅作为测试的私密说明")
-        with patch("tg2cloud.telegram.handlers.video_file_name", side_effect=ValueError("private-metadata")):
+        with patch("tgcloud.telegram.handlers.video_file_name", side_effect=ValueError("private-metadata")):
             await self.service._on_message(self.event(message))
         self.assertEqual(self.db.get(1)["file_name"], "Ab83Kd91X.mp4")
         self.assertEqual(self.db.get(1)["state"], "queued")
@@ -226,8 +226,8 @@ class CaptionIngestionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_optional_album_failure_keeps_every_task(self):
         messages = [self.message(1, "说明", group=123), self.message(2, "第二条", group=123)]
-        with patch("tg2cloud.telegram.handlers.caption_candidate", side_effect=RuntimeError("private")), \
-             patch("tg2cloud.telegram.handlers.video_file_name", side_effect=RuntimeError("private")):
+        with patch("tgcloud.telegram.handlers.caption_candidate", side_effect=RuntimeError("private")), \
+             patch("tgcloud.telegram.handlers.video_file_name", side_effect=RuntimeError("private")):
             await self.service._on_album(self.album(messages))
         self.assertEqual(len(self.db.list_recent()), 2)
         self.assertTrue(all(task["file_name"] == "Ab83Kd91X.mp4" for task in self.db.list_recent()))
@@ -255,20 +255,20 @@ class CaptionIngestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.db.list_recent()), 2)
         self.assertEqual(self.db.get(1)["original_file_name"], "Ab83Kd91X.mp4")
 
-    async def test_ingest_download_restart_and_upload_in_both_editions(self):
+    async def test_cd2_ingest_download_restart_and_upload_preserves_caption_cases(self):
         async def download(_message, *, file, progress_callback):
             Path(file).write_bytes(b"data")
             progress_callback(4, 4)
             return file
 
         cases = [("clouddrive2", "三体 第12集", "Ab83Kd91X.mp4", "三体 第12集.mp4"),
-                 ("openlist", "오늘의 여행", "A8k3P91zX7.mp4", "오늘의 여행.mp4"),
+                 ("clouddrive2", "오늘의 여행", "A8k3P91zX7.mp4", "오늘의 여행.mp4"),
                  ("clouddrive2", "", "12345.mp4", "12345.mp4"),
-                 ("openlist", "", "67890.mp4", "67890.mp4")]
+                 ("clouddrive2", "", "67890.mp4", "67890.mp4")]
         for ident, (backend, caption, original, expected) in enumerate(cases, 1):
             with self.subTest(backend=backend, caption=caption):
                 settings = replace(self.settings, storage_backend=backend,
-                                   destination_label="OpenList" if backend == "openlist" else "CloudDrive2")
+                                   destination_label="CloudDrive2")
                 self.service.settings = settings
                 await self.service._on_message(self.event(self.message(ident, caption, name=original)))
                 self.db.update(ident, state="reserved")

@@ -10,11 +10,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from tg2cloud.listening import account
-from tg2cloud.listening.service import ListenerRateLimited, ListenerReadError
-from tg2cloud.persistence.plans import Plans
-from tg2cloud.persistence.sqlite import TaskDB
-from tg2cloud.transfer.download import _download_one
+from tgcloud.listening import account
+from tgcloud.listening.service import ListenerRateLimited, ListenerReadError
+from tgcloud.persistence.plans import Plans
+from tgcloud.persistence.sqlite import TaskDB
+from tgcloud.transfer.download import _download_one
 
 
 class CooldownRecoveryTests(unittest.IsolatedAsyncioTestCase):
@@ -47,8 +47,8 @@ class CooldownRecoveryTests(unittest.IsolatedAsyncioTestCase):
         progress_callback(2, 4)
         raise ListenerRateLimited("Telegram 限流，需等待至少 5 秒", retry_after_seconds=5)
 
-    async def test_short_limit_requeues_twice_and_never_runs_before_due_for_each_backend(self):
-        for backend in ("clouddrive2", "openlist"):
+    async def test_cd2_short_limit_requeues_twice_and_never_runs_before_due(self):
+        for backend in ("clouddrive2",):
             with self.subTest(backend=backend):
                 if self.db.count_states(("download_failed",)):
                     # Isolate each Edition's task identity without deleting history.
@@ -58,8 +58,8 @@ class CooldownRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 owner = self.owner(backend)
                 source = SimpleNamespace(get_messages=AsyncMock(return_value=SimpleNamespace(media=True)),
                                          download_media=AsyncMock(side_effect=self.partial_limit))
-                with patch("tg2cloud.persistence.sqlite.time.time", side_effect=lambda: self.clock), \
-                        patch("tg2cloud.listening.service.task_source", return_value=source):
+                with patch("tgcloud.persistence.sqlite.time.time", side_effect=lambda: self.clock), \
+                        patch("tgcloud.listening.service.task_source", return_value=source):
                     for attempt in (1, 2, 3):
                         await _download_one(owner, task["id"])
                         saved = self.db.get(task["id"])
@@ -97,7 +97,7 @@ class CooldownRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.db.recover(self.root)
         self.assertEqual(self.db.get(task["id"]), saved)
         limits = {"budget_bytes": 100, "current_free_bytes": 1000, "minimum_free_bytes": 10}
-        with patch("tg2cloud.persistence.sqlite.time.time", return_value=saved["next_retry_at"] + 1):
+        with patch("tgcloud.persistence.sqlite.time.time", return_value=saved["next_retry_at"] + 1):
             self.assertTrue(self.db.reserve(task["id"], **limits)[0])
         (self.root / "1.part").write_bytes(b"ab")
         self.db.close()
@@ -153,7 +153,7 @@ class CooldownRecoveryTests(unittest.IsolatedAsyncioTestCase):
         task = self.create()
         owner = self.owner()
         source = SimpleNamespace(get_messages=AsyncMock(side_effect=ListenerReadError("来源消息或附件暂不可读")))
-        with patch("tg2cloud.listening.service.task_source", return_value=source):
+        with patch("tgcloud.listening.service.task_source", return_value=source):
             await _download_one(owner, task["id"])
         self.assertEqual(self.db.get(task["id"])["state"], "download_failed")
         self.assertIn("附件暂不可读", owner._notify.await_args.args[0])
@@ -173,7 +173,7 @@ class CooldownRecoveryTests(unittest.IsolatedAsyncioTestCase):
             raise ListenerRateLimited("Telegram 限流", retry_after_seconds=5)
         source = SimpleNamespace(get_messages=AsyncMock(return_value=SimpleNamespace(media=True)),
                                  download_media=AsyncMock(side_effect=fail))
-        with patch("tg2cloud.listening.service.task_source", return_value=source):
+        with patch("tgcloud.listening.service.task_source", return_value=source):
             await asyncio.wait_for(asyncio.gather(_download_one(owner, task["id"]),
                                                 _download_one(owner, task["id"])), 3)
         saved = self.db.get(task["id"])
@@ -186,7 +186,7 @@ class CooldownRecoveryTests(unittest.IsolatedAsyncioTestCase):
         owner = self.owner()
         source = SimpleNamespace(get_messages=AsyncMock(return_value=SimpleNamespace(media=True)),
                                  download_media=AsyncMock(side_effect=self.partial_limit))
-        with patch("tg2cloud.listening.service.task_source", return_value=source), \
+        with patch("tgcloud.listening.service.task_source", return_value=source), \
                 patch.object(Path, "unlink", side_effect=OSError("synthetic cleanup denial")):
             await _download_one(owner, task["id"])
         saved = self.db.get(task["id"])
@@ -203,17 +203,17 @@ class CooldownRecoveryTests(unittest.IsolatedAsyncioTestCase):
         owner = self.owner()
         source = SimpleNamespace(get_messages=AsyncMock(return_value=SimpleNamespace(media=True)),
                                  download_media=AsyncMock(side_effect=self.partial_limit))
-        with patch("tg2cloud.listening.service.task_source", return_value=source):
+        with patch("tgcloud.listening.service.task_source", return_value=source):
             await _download_one(owner, task["id"])
         saved = self.db.get(task["id"])
-        with patch("tg2cloud.persistence.sqlite.time.time", return_value=saved["next_retry_at"] + 1):
+        with patch("tgcloud.persistence.sqlite.time.time", return_value=saved["next_retry_at"] + 1):
             self.assertTrue(self.db.reserve(task["id"], budget_bytes=100, current_free_bytes=1000, minimum_free_bytes=10)[0])
         async def completed(message, *, file, progress_callback):
             Path(file).write_bytes(b"abcd")
             progress_callback(4, 4)
             return file
         source.download_media.side_effect = completed
-        with patch("tg2cloud.listening.service.task_source", return_value=source):
+        with patch("tgcloud.listening.service.task_source", return_value=source):
             await _download_one(owner, task["id"])
         saved = self.db.get(task["id"])
         self.assertEqual(saved["state"], "waiting_upload")

@@ -16,8 +16,8 @@ from telethon.tl import functions, types
 
 SOURCE = Path(__file__).resolve().parents[1]
 
-from tg2cloud.app import TransferService
-from tg2cloud.telegram.views import TaskViews as CommandMixin
+from tgcloud.app import TransferService
+from tgcloud.telegram.views import TaskViews as CommandMixin
 
 
 def callback_data(button: object) -> bytes:

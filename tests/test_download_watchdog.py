@@ -14,11 +14,11 @@ from unittest.mock import AsyncMock, Mock, patch
 import test_readiness as readiness_fixtures
 from test_scenarios import FakeRclone, make_service, make_settings
 
-from tg2cloud.domain.errors import DownloadStalledError, safe_failure
-from tg2cloud.monitoring import readiness
-from tg2cloud.monitoring.diagnostics import collect
-from tg2cloud.persistence.sqlite import TaskDB
-from tg2cloud.transfer import watchdog
+from tgcloud.domain.errors import DownloadStalledError, safe_failure
+from tgcloud.monitoring import readiness
+from tgcloud.monitoring.diagnostics import collect
+from tgcloud.persistence.sqlite import TaskDB
+from tgcloud.transfer import watchdog
 
 
 class GuardTests(unittest.IsolatedAsyncioTestCase):
@@ -184,7 +184,7 @@ class TransferGuardTests(unittest.IsolatedAsyncioTestCase):
         return self.db.get(task["id"])
 
     async def test_stuck_download_exhausts_bounded_attempts_then_next_task_can_finish(self):
-        for number, edition in enumerate(("clouddrive2", "openlist")):
+        for number, edition in enumerate(("clouddrive2",)):
             with self.subTest(edition=edition):
                 self.service.settings = replace(self.settings, storage_backend=edition, max_retries=1)
                 stalled = self.task(10 + number * 2, state="reserved")
@@ -228,7 +228,7 @@ class TransferGuardTests(unittest.IsolatedAsyncioTestCase):
             self.clock += 301
             await asyncio.Event().wait()
         self.service._source = SimpleNamespace(get_messages=get, download_media=AsyncMock())
-        with patch("tg2cloud.transfer.download.asyncio.sleep", new=AsyncMock()):
+        with patch("tgcloud.transfer.download.asyncio.sleep", new=AsyncMock()):
             await asyncio.wait_for(self.service._download_one(task["id"]), 1)
         saved = self.db.get(task["id"])
         self.assertEqual((calls, saved["state"], saved["failure_kind"]), (2, "download_failed", "network"))
@@ -260,7 +260,7 @@ class TransferGuardTests(unittest.IsolatedAsyncioTestCase):
         self.service._source = SimpleNamespace(
             get_messages=AsyncMock(side_effect=lambda entity, *, ids: SimpleNamespace(id=ids, media=True)),
             download_media=download)
-        with patch("tg2cloud.transfer.scheduler.shutil.disk_usage", return_value=SimpleNamespace(free=10**12)):
+        with patch("tgcloud.transfer.scheduler.shutil.disk_usage", return_value=SimpleNamespace(free=10**12)):
             await self.service._start_downloads()
             self.assertEqual(set(self.service.download_tasks), {failed["id"]})
             await asyncio.gather(*self.service.download_tasks.values())
@@ -274,7 +274,7 @@ class TransferGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.service.download_tasks)
 
     async def test_stream_stall_aborts_writer_without_deleting_remote_partial(self):
-        for number, edition in enumerate(("clouddrive2", "openlist")):
+        for number, edition in enumerate(("clouddrive2",)):
             with self.subTest(edition=edition):
                 self.service.settings = replace(self.settings, storage_backend=edition, max_retries=1)
                 task = self.task(1 + number, state="reserved", transfer_mode="stream")
@@ -351,17 +351,17 @@ class ProgressReadinessTests(unittest.TestCase):
             self.assertNotIn("PRIVATE_CONTENT", str(report))
 
     def test_diagnostic_waiting_summary_reuses_observed_slot_and_preserves_other_causes(self):
-        from tg2cloud.deployment import readiness as host
+        from tgcloud.deployment import readiness as host
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            db = TaskDB(root / "tg2cloud.db")
+            db = TaskDB(root / "tgcloud.db")
             try:
                 for number in (1, 2):
                     db.create_task(chat_id=1, message_id=number, sender_id=1, file_name="private.bin", file_size=4)
                 db.update(2, next_retry_at=time.time() + 500)
                 for reason in ("download_slots", "download_stall", None):
                     snapshot = self.fixture.report() | {"queue_wait": reason}
-                    with patch("tg2cloud.monitoring.diagnostics.readiness.read", return_value=snapshot):
+                    with patch("tgcloud.monitoring.diagnostics.readiness.read", return_value=snapshot):
                         report = collect(root, environment={})
                     self.assertEqual(report["waiting"], {reason or "other": 1, "retry": 1})
                     self.assertNotIn("private.bin", str(report))

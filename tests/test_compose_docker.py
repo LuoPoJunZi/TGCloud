@@ -12,15 +12,15 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
-from tg2cloud.compose.packaging import bundle_files
-from tg2cloud.deployment import diagnostics
-from tg2cloud.deployment.profiles import PRODUCTS
+from tgcloud.compose.packaging import bundle_files
+from tgcloud.deployment import diagnostics
+from tgcloud.deployment.profiles import PRODUCTS
 
 ROOT = Path(__file__).resolve().parents[1]
-IMAGE = "tg2cloud-bot:test"
+IMAGE = "tgcloud-bot:test"
 SETUP = r"""
 from pathlib import Path
-from tg2cloud.compose.runtime import setup
+from tgcloud.compose.runtime import setup
 class UI:
     def ask(self, prompt, default='', secret=False, validate=lambda v:v):
         values={'Telegram API ID':'123456', 'Telegram API Hash（隐藏输入）':'a'*32,
@@ -32,7 +32,7 @@ class UI:
 assert setup(Path('/workspace'),UI()) is True
 assert setup(Path('/workspace'),UI()) is False
 """
-CHECK = """import os;from pathlib import Path;from tg2cloud.config import Settings
+CHECK = """import os;from pathlib import Path;from tgcloud.config import Settings
 assert os.geteuid()==10001
 assert 'OPENLIST_ADMIN_PASSWORD' not in os.environ
 assert 'DOCKER_HOST' not in os.environ
@@ -43,7 +43,7 @@ print('COMPOSE_NONROOT=OK')
 """
 
 
-@unittest.skipUnless(os.getenv("TG2CLOUD_TEST_COMPOSE_DOCKER") == "1", "direct Compose native Docker test requires explicit opt-in")
+@unittest.skipUnless(os.getenv("TGCLOUD_TEST_COMPOSE_DOCKER") == "1", "direct Compose native Docker test requires explicit opt-in")
 class ComposeDockerTests(unittest.TestCase):
     def run_command(self, args, **kwargs):
         # Setup deliberately creates a root-owned 0600 .env. Compose must read
@@ -56,7 +56,7 @@ class ComposeDockerTests(unittest.TestCase):
 
     def check_actual_log_template(self, root, product):
         # Created-only isolated container: no Bot login, data mount or network.
-        identifier = "tg2cloud-log-test-" + uuid.uuid4().hex
+        identifier = "tgcloud-log-test-" + uuid.uuid4().hex
         created = False
         try:
             self.run_command(["docker", "create", "--name", identifier, "--network", "none",
@@ -87,15 +87,16 @@ class ComposeDockerTests(unittest.TestCase):
             if mode == "managed":
                 setup = setup.replace("'任务暂存预算 GB':'1'", "'任务暂存预算 GB':'1','选择访问方式':'2','管理页域名（只填域名）':'panel.example.com'")
             setup += "\nimport json;assert json.loads(Path('/workspace/compose-access.json').read_text())['mode']==" + repr(mode)
-            with self.subTest(edition=edition, mode=mode), tempfile.TemporaryDirectory(prefix="tg2cloud-compose-ci-") as temp:
+            with self.subTest(edition=edition, mode=mode), tempfile.TemporaryDirectory(prefix="tgcloud-compose-ci-") as temp:
                 root = Path(temp)
                 if mode == "local":
                     self.check_actual_log_template(root, product)
-                for name, data in bundle_files(ROOT, edition, "ghcr.io/luopojunzi/tg2cloud:ci").items():
+                from local_project_fixture import source
+                for name, data in bundle_files(ROOT, edition, source_digest=source().digest).items():
                     target = root / name
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(data)
-                identifier = "tg2cloud-compose-test-" + uuid.uuid4().hex
+                identifier = "tgcloud-compose-test-" + uuid.uuid4().hex
                 override = {"services": {"setup": {"image": IMAGE}, product.bot_service: {
                     "image": IMAGE, "container_name": identifier, "mem_limit": "1g", "pids_limit": 128, "cpus": 0.5}},
                             "networks": {product.docker_network: {"name": identifier}}}
@@ -106,7 +107,7 @@ class ComposeDockerTests(unittest.TestCase):
                     self.assertIn("HTTPS", self.run_command(["bash", str(root / "https.sh"), "--help"]))
                     self.assertIn("uninstall", self.run_command(["bash", str(root / "manage.sh"), "--help"]))
                     self.run_command([*compose, "run", "--rm", "-T", "--pull", "never", "setup", "python", "-c", setup])
-                    self.run_command([*compose, "run", "--rm", "-T", "--pull", "never", "setup", "python", "-m", "tg2cloud.compose", "check"])
+                    self.run_command([*compose, "run", "--rm", "-T", "--pull", "never", "setup", "python", "-m", "tgcloud.compose", "check"])
                     self.run_command([*compose, "up", "--no-start", "--no-deps", "--no-build", "--pull", "never", product.bot_service])
                     actual = self.run_command(["docker", "inspect", "--format",
                         "{{json .HostConfig.Memory}} {{json .HostConfig.NanoCpus}} {{json .HostConfig.PidsLimit}}", identifier])

@@ -19,26 +19,26 @@ from test_listening import event, message
 from test_scenarios import FakeRclone, make_service, make_settings
 from test_telethon_compat import callback_data
 
-from tg2cloud.domain.actors import user_scope
-from tg2cloud.domain.classification import safe_directory
-from tg2cloud.domain.planning import name_plan
-from tg2cloud.domain.source_directories import (
+from tgcloud.domain.actors import user_scope
+from tgcloud.domain.classification import safe_directory
+from tgcloud.domain.planning import name_plan
+from tgcloud.domain.source_directories import (
     CATEGORIES,
     columns,
     folder_name,
     media_directory,
 )
-from tg2cloud.listening import account, rules
-from tg2cloud.listening.service import (
+from tgcloud.listening import account, rules
+from tgcloud.listening.service import (
     CheckedSource,
     Listener,
     ListenerReadError,
     source_error,
 )
-from tg2cloud.persistence import features
-from tg2cloud.persistence.plans import Plans
-from tg2cloud.persistence.sqlite import TaskDB
-from tg2cloud.telegram import planning
+from tgcloud.persistence import features
+from tgcloud.persistence.plans import Plans
+from tgcloud.persistence.sqlite import TaskDB
+from tgcloud.telegram import planning
 
 
 class FolderNameTests(unittest.TestCase):
@@ -145,7 +145,7 @@ class SourceDirectoryTests(unittest.IsolatedAsyncioTestCase):
     ):
         with (
             patch(
-                "tg2cloud.listening.service.verified_chat",
+                "tgcloud.listening.service.verified_chat",
                 new=AsyncMock(return_value=NS(title="🎬 城市旅行")),
             ),
             patch("telethon.utils.get_peer_id", return_value=-1001),
@@ -191,7 +191,7 @@ class SourceDirectoryTests(unittest.IsolatedAsyncioTestCase):
         self.owner.rclone.ensure_directory.side_effect = RuntimeError("private-token")
         with (
             patch(
-                "tg2cloud.listening.service.verified_chat",
+                "tgcloud.listening.service.verified_chat",
                 new=AsyncMock(return_value=NS(title="旅行")),
             ),
             patch("telethon.utils.get_peer_id", return_value=-1001),
@@ -368,19 +368,19 @@ class SourceDirectoryTests(unittest.IsolatedAsyncioTestCase):
     async def test_preview_is_read_only_and_shows_actual_source_media_path(self):
         source = self.source()
         self.listener.client.get_messages.return_value = [message()]
-        with patch("tg2cloud.listening.service.verified_chat", new=AsyncMock()):
+        with patch("tgcloud.listening.service.verified_chat", new=AsyncMock()):
             before = self.db._conn.total_changes
             result = await self.listener.test(self.admin, source["id"])
         self.assertEqual(result[0][3]["directory_preview"], "城市旅行/视频")
         self.assertEqual(self.db._conn.total_changes, before)
         self.owner.rclone.ensure_directory.assert_not_awaited()
 
-    async def test_both_backends_local_and_streaming_keep_existing_commit_verification(
+    async def test_clouddrive2_local_and_streaming_keep_existing_commit_verification(
         self,
     ):
         source = self.source()
         for index, (backend, stream) in enumerate(
-            ((b, s) for b in ("clouddrive2", "openlist") for s in (False, True)), 1
+            ((b, s) for b in ("clouddrive2",) for s in (False, True)), 1
         ):
             with self.subTest(backend=backend, stream=stream):
                 msg = message(index, protected=True)
@@ -407,7 +407,7 @@ class SourceDirectoryTests(unittest.IsolatedAsyncioTestCase):
                     return file
 
                 self.listener.client.download_media = download
-                with patch("tg2cloud.listening.service.verified_chat", new=AsyncMock()):
+                with patch("tgcloud.listening.service.verified_chat", new=AsyncMock()):
                     await self.owner._download_one(task["id"])
                 if not stream:
                     await self.owner._upload_one(task["id"])
@@ -426,7 +426,7 @@ class SourceDirectoryTests(unittest.IsolatedAsyncioTestCase):
         reader = CheckedSource(self.listener, task)
         msg = message(protected=True)
         self.listener.client.get_messages.return_value = msg
-        with patch("tg2cloud.listening.service.verified_chat", new=AsyncMock()):
+        with patch("tgcloud.listening.service.verified_chat", new=AsyncMock()):
             await reader.get_messages(-1001, ids=1)
         self.listener.client.download_media.side_effect = ChatForwardsRestrictedError(
             request=None

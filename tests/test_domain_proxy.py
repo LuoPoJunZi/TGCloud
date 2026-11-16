@@ -15,8 +15,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from tg2cloud.deployment.profiles import CLOUDDRIVE2_PRODUCT, OPENLIST_PRODUCT
-from tg2cloud.deployment.proxy.manager import (
+from tgcloud.deployment.profiles import CLOUDDRIVE2_PRODUCT
+from tgcloud.deployment.proxy.manager import (
     _CERTIFICATE_CHECK_SCRIPT,
     CERTBOT_IMAGE,
     NGINX_IMAGE,
@@ -48,6 +48,15 @@ from tg2cloud.deployment.proxy.manager import (
     validate_email,
     verification_statuses,
 )
+
+
+def external_state(domain, base=None):
+    state = json.loads(json.dumps(base if base is not None else empty_state()))
+    state.update(version=2, external_webdav={"clouddrive2": {
+        "kind": "external_webdav", "owner": "tgcloud.external_webdav", "edition": "clouddrive2",
+        "instance_dir": "/opt/tgcloud-clouddrive2", "domain": domain, "enabled": True,
+        "backend_port": 19798, "auth_file": "external-auth/clouddrive2.htpasswd"}})
+    return normalize_state(json.dumps(state))
 
 
 class DomainValidationTests(unittest.TestCase):
@@ -95,9 +104,9 @@ class DomainValidationTests(unittest.TestCase):
 
 
 class RenderTests(unittest.TestCase):
-    def test_openlist_route_targets_loopback(self) -> None:
-        rendered = render_route_conf(DomainRoute("openlist", "ol.example.com", 5244))
-        self.assertIn("proxy_pass http://127.0.0.1:5244", rendered)
+    def test_clouddrive2_route_targets_loopback(self) -> None:
+        rendered = render_route_conf(DomainRoute("clouddrive2", "ol.example.com", 19798))
+        self.assertIn("proxy_pass http://127.0.0.1:19798", rendered)
 
     def test_clouddrive_route_targets_loopback(self) -> None:
         rendered = render_route_conf(
@@ -106,16 +115,16 @@ class RenderTests(unittest.TestCase):
         self.assertIn("proxy_pass http://127.0.0.1:19798", rendered)
 
     def test_public_dav_is_blocked(self) -> None:
-        rendered = render_route_conf(DomainRoute("openlist", "ol.example.com", 5244))
+        rendered = render_route_conf(DomainRoute("clouddrive2", "ol.example.com", 19798))
         self.assertIn("location = /dav { return 403; }", rendered)
         self.assertIn("location ^~ /dav/ { return 403; }", rendered)
 
     def test_http_redirect_is_permanent(self) -> None:
-        rendered = render_route_conf(DomainRoute("openlist", "ol.example.com", 5244))
+        rendered = render_route_conf(DomainRoute("clouddrive2", "ol.example.com", 19798))
         self.assertIn("return 308 https://$host$request_uri", rendered)
 
     def test_route_rejects_mismatched_host_header(self) -> None:
-        rendered = render_route_conf(DomainRoute("openlist", "ol.example.com", 5244))
+        rendered = render_route_conf(DomainRoute("clouddrive2", "ol.example.com", 19798))
         self.assertEqual(rendered.count("if ($host != ol.example.com) { return 444; }"), 2)
 
     def test_default_http_host_is_dropped(self) -> None:
@@ -134,8 +143,8 @@ class RenderTests(unittest.TestCase):
 
     def test_compose_has_one_shared_proxy_pair(self) -> None:
         rendered = render_compose()
-        self.assertEqual(rendered.count("container_name: tg2cloud-proxy-nginx"), 1)
-        self.assertEqual(rendered.count("container_name: tg2cloud-proxy-certbot"), 1)
+        self.assertEqual(rendered.count("container_name: tgcloud-proxy-nginx"), 1)
+        self.assertEqual(rendered.count("container_name: tgcloud-proxy-certbot"), 1)
         self.assertIn("network_mode: host", rendered)
 
     def test_images_are_version_pinned(self) -> None:
@@ -155,7 +164,7 @@ class RenderTests(unittest.TestCase):
         rendered = render_compose(("ol.example.com",))
         self.assertIn("certbot renew", rendered)
         self.assertIn('--cert-name "$$cert"', rendered)
-        self.assertIn('TG2CLOUD_CERT_NAMES: "ol.example.com"', rendered)
+        self.assertIn('TGCLOUD_CERT_NAMES: "ol.example.com"', rendered)
         self.assertIn("sleep 43200", rendered)
         self.assertIn("sleep 21600", rendered)
 
@@ -166,45 +175,48 @@ class RenderTests(unittest.TestCase):
 
     def test_config_set_renders_two_routes_and_no_second_nginx(self) -> None:
         state = state_with_route(empty_state(), CLOUDDRIVE2_PRODUCT, "cd.example.com")
-        state = state_with_route(state, OPENLIST_PRODUCT, "ol.example.com")
+        state = external_state("ol.example.com", state)
         files = render_config_set(state)
         self.assertIn("conf.d/20-clouddrive2.conf", files)
-        self.assertIn("conf.d/20-openlist.conf", files)
+        self.assertIn("conf.d/30-external-webdav-clouddrive2.conf", files)
         self.assertNotIn("docker-compose.yml", files)
 
 
 class StateTests(unittest.TestCase):
     def test_dual_edition_state(self) -> None:
         state = state_with_route(empty_state(), CLOUDDRIVE2_PRODUCT, "cd.example.com")
-        state = state_with_route(state, OPENLIST_PRODUCT, "ol.example.com")
-        self.assertEqual(set(state["domains"]), {"clouddrive2", "openlist"})
+        state = external_state("ol.example.com", state)
+        self.assertEqual(set(state["domains"]), {"clouddrive2"})
+        self.assertEqual(set(state["external_webdav"]), {"clouddrive2"})
 
     def test_duplicate_domain_is_rejected(self) -> None:
         state = state_with_route(empty_state(), CLOUDDRIVE2_PRODUCT, "same.example.com")
-        with self.assertRaisesRegex(ValueError, "另一个"):
-            state_with_route(state, OPENLIST_PRODUCT, "same.example.com")
+        with self.assertRaisesRegex(ValueError, "冲突"):
+            external_state("same.example.com", state)
 
     def test_remove_one_preserves_the_other(self) -> None:
         state = state_with_route(empty_state(), CLOUDDRIVE2_PRODUCT, "cd.example.com")
-        state = state_with_route(state, OPENLIST_PRODUCT, "ol.example.com")
-        state = state_without_route(state, "openlist")
-        self.assertEqual(list(state["domains"]), ["clouddrive2"])
+        state = external_state("ol.example.com", state)
+        state = state_without_route(state, "clouddrive2")
+        self.assertEqual(state["domains"], {})
+        self.assertIn("clouddrive2", state["external_webdav"])
 
     def test_remove_last_route_leaves_empty_state(self) -> None:
-        state = state_with_route(empty_state(), OPENLIST_PRODUCT, "ol.example.com")
-        self.assertEqual(state_without_route(state, "openlist"), empty_state())
+        state = state_with_route(empty_state(), CLOUDDRIVE2_PRODUCT, "ol.example.com")
+        self.assertEqual(state_without_route(state, "clouddrive2"), empty_state())
 
     def test_existing_state_is_normalized(self) -> None:
         raw = json.dumps(
             {
                 "version": 1,
+                "project": "tgcloud",
                 "domains": {
-                    "openlist": {"domain": "OL.Example.COM", "backend_port": 5244}
+                    "clouddrive2": {"domain": "OL.Example.COM", "backend_port": 19798}
                 },
             }
         )
         self.assertEqual(
-            normalize_state(raw)["domains"]["openlist"]["domain"],
+            normalize_state(raw)["domains"]["clouddrive2"]["domain"],
             "ol.example.com",
         )
 
@@ -212,16 +224,17 @@ class StateTests(unittest.TestCase):
         raw = json.dumps(
             {
                 "version": 1,
+                "project": "tgcloud",
                 "domains": {
-                    "openlist": {"domain": "ol.example.com", "backend_port": 19798}
+                    "clouddrive2": {"domain": "ol.example.com", "backend_port": 5244}
                 },
             }
         )
-        with self.assertRaisesRegex(ValueError, "应为 5244"):
+        with self.assertRaisesRegex(ValueError, "应为 19798"):
             normalize_state(raw)
 
     def test_utf8_bytes_state_is_supported(self) -> None:
-        self.assertEqual(normalize_state(b'{"version": 1, "domains": {}}'), empty_state())
+        self.assertEqual(normalize_state(json.dumps(empty_state()).encode()), empty_state())
 
     def test_unknown_state_is_not_overwritten(self) -> None:
         with self.assertRaisesRegex(ValueError, "无法识别"):
@@ -229,13 +242,13 @@ class StateTests(unittest.TestCase):
 
 
 class ProbeAndStatusTests(unittest.TestCase):
-    SAMPLE = """TG2CLOUD_PROXY_CORE=OK
-TG2CLOUD_PROXY_DOCKER=OK
-TG2CLOUD_PROXY_PORT_80=OWN
-TG2CLOUD_PROXY_PORT_443=FREE
-TG2CLOUD_PROXY_DNS_A=203.0.113.10
-TG2CLOUD_PROXY_DNS_AAAA=2001:db8::10
-TG2CLOUD_PROXY_LOCAL_IPS=203.0.113.10,2001:db8::10
+    SAMPLE = """TGCLOUD_PROXY_CORE=OK
+TGCLOUD_PROXY_DOCKER=OK
+TGCLOUD_PROXY_PORT_80=OWN
+TGCLOUD_PROXY_PORT_443=FREE
+TGCLOUD_PROXY_DNS_A=203.0.113.10
+TGCLOUD_PROXY_DNS_AAAA=2001:db8::10
+TGCLOUD_PROXY_LOCAL_IPS=203.0.113.10,2001:db8::10
 """
 
     def test_port_80_owner_is_parsed(self) -> None:
@@ -273,17 +286,17 @@ TG2CLOUD_PROXY_LOCAL_IPS=203.0.113.10,2001:db8::10
         self.assertIn("203.0.113.10", detail)
 
     def test_environment_command_uses_edition_backend(self) -> None:
-        self.assertIn("127.0.0.1:5244", environment_probe_command(OPENLIST_PRODUCT, "ol.example.com"))
+        self.assertIn("127.0.0.1:19798", environment_probe_command(CLOUDDRIVE2_PRODUCT, "ol.example.com"))
         self.assertIn("127.0.0.1:19798", environment_probe_command(CLOUDDRIVE2_PRODUCT, "cd.example.com"))
 
     def test_port_owner_requires_managed_container_pid_match(self) -> None:
-        command = environment_probe_command(OPENLIST_PRODUCT, "ol.example.com")
-        self.assertIn("docker top tg2cloud-proxy-nginx -eo pid", command)
+        command = environment_probe_command(CLOUDDRIVE2_PRODUCT, "ol.example.com")
+        self.assertIn("docker top tgcloud-proxy-nginx -eo pid", command)
         self.assertIn("ss -H -ltnp", command)
 
     def test_unknown_port_owner_hard_stops(self) -> None:
         manager = DomainProxyManager(
-            object(), OPENLIST_PRODUCT, {"vps_host": "203.0.113.10"}, lambda _line: None
+            object(), CLOUDDRIVE2_PRODUCT, {"vps_host": "203.0.113.10"}, lambda _line: None
         )
         environment = ProxyEnvironment(
             "OK", "OK", "UNKNOWN", "FREE", ("203.0.113.10",), (), ("203.0.113.10",)
@@ -292,24 +305,24 @@ TG2CLOUD_PROXY_LOCAL_IPS=203.0.113.10,2001:db8::10
             manager._validate_environment(environment)
 
     def test_status_command_checks_https_dav_and_local_binding(self) -> None:
-        command = status_command(OPENLIST_PRODUCT, "ol.example.com")
+        command = status_command(CLOUDDRIVE2_PRODUCT, "ol.example.com")
         self.assertIn("https://ol.example.com/dav/", command)
-        self.assertIn("sport = :5244", command)
+        self.assertIn("sport = :19798", command)
         self.assertIn("PROXY_PORTS", command)
-        self.assertIn("docker top tg2cloud-proxy-nginx -eo pid", command)
-        self.assertIn("docker exec tg2cloud-proxy-certbot python -c", command)
+        self.assertIn("docker top tgcloud-proxy-nginx -eo pid", command)
+        self.assertIn("docker exec tgcloud-proxy-certbot python -c", command)
         self.assertNotIn("nginx openssl", command)
 
     def test_status_uses_loopback_with_real_host_and_tls_name(self) -> None:
-        command = status_command(OPENLIST_PRODUCT, "ol.example.com")
+        command = status_command(CLOUDDRIVE2_PRODUCT, "ol.example.com")
         self.assertIn("--resolve ol.example.com:80:127.0.0.1", command)
         self.assertEqual(command.count("--resolve ol.example.com:443:127.0.0.1"), 2)
         self.assertEqual(command.count("--noproxy"), 3)
         self.assertIn("set +u", command)
-        self.assertIn("TG2CLOUD_PROXY_STATUS=OK", command)
+        self.assertIn("TGCLOUD_PROXY_STATUS=OK", command)
 
     def test_status_calls_port_helpers_outside_double_bracket_expression(self) -> None:
-        command = status_command(OPENLIST_PRODUCT, "ol.example.com")
+        command = status_command(CLOUDDRIVE2_PRODUCT, "ol.example.com")
         self.assertRegex(command, r"== host \]\]\s+&& owns_port 80 && owns_port 443; then")
         self.assertNotIn("owns_port 80 && owns_port 443 ]]", command)
 
@@ -320,9 +333,9 @@ TG2CLOUD_PROXY_LOCAL_IPS=203.0.113.10,2001:db8::10
 
         logs: list[str] = []
         manager = DomainProxyManager(
-            BrokenStatusSession(), OPENLIST_PRODUCT, {}, logs.append
+            BrokenStatusSession(), CLOUDDRIVE2_PRODUCT, {}, logs.append
         )
-        state = state_with_route(empty_state(), OPENLIST_PRODUCT, "ol.example.com")
+        state = state_with_route(empty_state(), CLOUDDRIVE2_PRODUCT, "ol.example.com")
         report = manager.status(state)
         self.assertEqual(report.statuses, (("状态检查脚本", "失败"),))
         self.assertIn("未完整执行", report.message)
@@ -344,8 +357,8 @@ TG2CLOUD_PROXY_LOCAL_IPS=203.0.113.10,2001:db8::10
         self.assertEqual(expires, "2026-10-23")
         self.assertEqual(days, 30)
 
-    def test_only_tg2cloud_markers_are_parsed(self) -> None:
-        markers = parse_markers("TOKEN=secret\nTG2CLOUD_PROXY_HTTPS=OK\nnoise")
+    def test_only_tgcloud_markers_are_parsed(self) -> None:
+        markers = parse_markers("TOKEN=secret\nTGCLOUD_PROXY_HTTPS=OK\nnoise")
         self.assertEqual(markers, {"PROXY_HTTPS": "OK"})
 
     def test_structured_statuses(self) -> None:
@@ -359,7 +372,7 @@ TG2CLOUD_PROXY_LOCAL_IPS=203.0.113.10,2001:db8::10
 
 
 class TransactionManager(DomainProxyManager):
-    def __init__(self, product=OPENLIST_PRODUCT) -> None:
+    def __init__(self, product=CLOUDDRIVE2_PRODUCT) -> None:
         session = SimpleNamespace(hold_lock=lambda *_args, **_kwargs: nullcontext())
         super().__init__(session, product, {"vps_host": "203.0.113.10"}, lambda _line: None)
         self.current = empty_state()
@@ -428,7 +441,7 @@ class TransactionManager(DomainProxyManager):
 class CertificateManager(DomainProxyManager):
     def __init__(self, *, exists: bool, valid: bool) -> None:
         self.logs: list[str] = []
-        super().__init__(object(), OPENLIST_PRODUCT, {}, self.logs.append)
+        super().__init__(object(), CLOUDDRIVE2_PRODUCT, {}, self.logs.append)
         self.exists = exists
         self.valid = valid
         self.compose_calls: list[str] = []
@@ -498,7 +511,7 @@ class CertificateTests(unittest.TestCase):
                 return 0, ""
 
         session = RecordingSession()
-        manager = DomainProxyManager(session, OPENLIST_PRODUCT, {}, lambda _line: None)
+        manager = DomainProxyManager(session, CLOUDDRIVE2_PRODUCT, {}, lambda _line: None)
         self.assertTrue(manager._certificate_valid("ol.example.com"))
         probe = session.commands[-1]
         self.assertIn(f"--entrypoint python {CERTBOT_IMAGE}", probe)
@@ -533,12 +546,11 @@ class CertificateTests(unittest.TestCase):
 
 class TransactionTests(unittest.TestCase):
     def test_interrupt_restores_runtime_and_preserves_other_edition(self) -> None:
-        for product in (OPENLIST_PRODUCT, CLOUDDRIVE2_PRODUCT):
-            other = CLOUDDRIVE2_PRODUCT if product.is_openlist else OPENLIST_PRODUCT
+        for product in (CLOUDDRIVE2_PRODUCT,):
             for scenario in ("fresh", "repair", "switch"):
                 with self.subTest(edition=product.key, scenario=scenario):
                     manager = TransactionManager(product)
-                    previous = state_with_route(empty_state(), other, "other.example.com")
+                    previous = external_state("other.example.com")
                     if scenario != "fresh":
                         previous = state_with_route(previous, product, "old.example.com")
                     manager.current = previous
@@ -584,7 +596,7 @@ class TransactionTests(unittest.TestCase):
     def test_repeated_signal_during_rollback_does_not_abort_recovery(self) -> None:
         manager = TransactionManager()
         manager.fail_certificate = True
-        manager.current = state_with_route(empty_state(), OPENLIST_PRODUCT, "old.example.com")
+        manager.current = state_with_route(empty_state(), CLOUDDRIVE2_PRODUCT, "old.example.com")
         activate = manager._activate
         original_handler = signal.getsignal(signal.SIGINT)
 
@@ -603,11 +615,11 @@ class TransactionTests(unittest.TestCase):
         class MissingStateSession:
             def run(self, command, **_kwargs):
                 self.command = command
-                return 3, "TG2CLOUD_PROXY_STATE_MISSING_WITH_RUNTIME=1\n"
+                return 3, "TGCLOUD_PROXY_STATE_MISSING_WITH_RUNTIME=1\n"
 
         session = MissingStateSession()
         manager = DomainProxyManager(
-            session, OPENLIST_PRODUCT, {"vps_host": "203.0.113.10"}, lambda _line: None
+            session, CLOUDDRIVE2_PRODUCT, {"vps_host": "203.0.113.10"}, lambda _line: None
         )
         with self.assertRaisesRegex(RuntimeError, "缺少 domains.json"):
             manager.read_state()
@@ -634,20 +646,20 @@ class TransactionTests(unittest.TestCase):
     def test_domain_update_failure_preserves_old_route(self) -> None:
         manager = TransactionManager()
         manager.current = state_with_route(
-            empty_state(), OPENLIST_PRODUCT, "old.example.com"
+            empty_state(), CLOUDDRIVE2_PRODUCT, "old.example.com"
         )
         manager.fail_certificate = True
         with self.assertRaises(RuntimeError):
             manager.configure("new.example.com", "")
         self.assertEqual(
-            manager.activations[-1][0]["domains"]["openlist"]["domain"],
+            manager.activations[-1][0]["domains"]["clouddrive2"]["domain"],
             "old.example.com",
         )
 
     def test_broken_existing_certificate_uses_bootstrap_before_retry(self) -> None:
         manager = TransactionManager()
         manager.current = state_with_route(
-            empty_state(), OPENLIST_PRODUCT, "ol.example.com"
+            empty_state(), CLOUDDRIVE2_PRODUCT, "ol.example.com"
         )
         manager.valid_certificate = False
         manager.fail_certificate = True
@@ -661,7 +673,7 @@ class TransactionTests(unittest.TestCase):
         manager = TransactionManager()
         report = manager.configure("ol.example.com", "")
         self.assertEqual(report.state, "healthy")
-        self.assertEqual(manager.commits[-1]["domains"]["openlist"]["domain"], "ol.example.com")
+        self.assertEqual(manager.commits[-1]["domains"]["clouddrive2"]["domain"], "ol.example.com")
 
     def test_failed_final_status_reports_exact_checks_before_rollback(self) -> None:
         class UnhealthyManager(TransactionManager):
@@ -681,34 +693,34 @@ class TransactionTests(unittest.TestCase):
         manager = UnhealthyManager()
         with self.assertRaisesRegex(RuntimeError, "HTTPS 管理页"):
             manager.configure("ol.example.com", "")
-        self.assertIn("TG2CLOUD_PROXY_CHECK=HTTPS 管理页:失败", manager.logs)
+        self.assertIn("TGCLOUD_PROXY_CHECK=HTTPS 管理页:失败", manager.logs)
         self.assertFalse(manager.commits)
 
     def test_remove_one_edition_does_not_stop_shared_proxy(self) -> None:
         manager = TransactionManager()
-        state = state_with_route(empty_state(), OPENLIST_PRODUCT, "ol.example.com")
+        state = external_state("ol.example.com")
         state = state_with_route(state, CLOUDDRIVE2_PRODUCT, "cd.example.com")
         manager.current = state
         manager.remove()
         self.assertFalse(manager.stop_called)
-        self.assertIn("clouddrive2", manager.commits[-1]["domains"])
+        self.assertIn("clouddrive2", manager.commits[-1]["external_webdav"])
 
     def test_remove_last_edition_stops_shared_proxy(self) -> None:
         manager = TransactionManager()
-        manager.current = state_with_route(empty_state(), OPENLIST_PRODUCT, "ol.example.com")
+        manager.current = state_with_route(empty_state(), CLOUDDRIVE2_PRODUCT, "ol.example.com")
         manager.remove()
         self.assertTrue(manager.stop_called)
         self.assertEqual(manager.commits[-1], empty_state())
 
     def test_remove_last_commit_failure_restarts_certbot_during_rollback(self) -> None:
         manager = TransactionManager()
-        manager.current = state_with_route(empty_state(), OPENLIST_PRODUCT, "ol.example.com")
+        manager.current = state_with_route(empty_state(), CLOUDDRIVE2_PRODUCT, "ol.example.com")
         manager.fail_commit = True
         with self.assertRaisesRegex(RuntimeError, "state commit"):
             manager.remove()
         self.assertIn("up -d certbot", manager.compose_calls)
         self.assertEqual(
-            manager.activations[-1][0]["domains"]["openlist"]["domain"],
+            manager.activations[-1][0]["domains"]["clouddrive2"]["domain"],
             "ol.example.com",
         )
 
@@ -717,9 +729,9 @@ class GeneratedArtifactTests(unittest.TestCase):
     @staticmethod
     def _bash_scripts() -> tuple[str, ...]:
         commands = (
-            environment_probe_command(OPENLIST_PRODUCT, "ol.example.com"),
-            status_command(OPENLIST_PRODUCT, "ol.example.com"),
-            install_config_command("/tmp/tg2cloud-proxy-" + "a" * 32),
+            environment_probe_command(CLOUDDRIVE2_PRODUCT, "ol.example.com"),
+            status_command(CLOUDDRIVE2_PRODUCT, "ol.example.com"),
+            install_config_command("/tmp/tgcloud-proxy-" + "a" * 32),
         )
         return tuple(shlex.split(command)[2] for command in commands) + (
             render_certbot_loop(),
@@ -728,7 +740,7 @@ class GeneratedArtifactTests(unittest.TestCase):
 
     def test_acme_webroot_is_traversable_but_certbot_state_stays_private(self) -> None:
         script = shlex.split(
-            install_config_command("/tmp/tg2cloud-proxy-" + "a" * 32)
+            install_config_command("/tmp/tgcloud-proxy-" + "a" * 32)
         )[2]
         self.assertIn('install -d -m 755 "$root/certbot/www"', script)
         self.assertIn('install -d -m 700 "$root"', script)
@@ -807,7 +819,7 @@ class GeneratedArtifactTests(unittest.TestCase):
         from cryptography.hazmat.primitives.asymmetric import rsa
         from cryptography.x509.oid import NameOID
 
-        state = state_with_route(empty_state(), OPENLIST_PRODUCT, "ol.example.com")
+        state = state_with_route(empty_state(), CLOUDDRIVE2_PRODUCT, "ol.example.com")
         state = state_with_route(state, CLOUDDRIVE2_PRODUCT, "cd.example.com")
         files = render_config_set(state)
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -879,14 +891,11 @@ class RegressionBoundaryTests(unittest.TestCase):
             '"127.0.0.1:19798:19798"',
             (root / "packaging/compose/docker-compose.clouddrive2.yml").read_text(encoding="utf-8"),
         )
-        self.assertIn(
-            '"127.0.0.1:5244:5244"',
-            (root / "packaging/compose/docker-compose.openlist.yml").read_text(encoding="utf-8"),
-        )
+        self.assertFalse((root / "packaging/compose/docker-compose.openlist.yml").exists())
 
     def test_templates_do_not_contain_credentials_or_private_keys(self) -> None:
         rendered = render_compose() + render_route_conf(
-            DomainRoute("openlist", "ol.example.com", 5244)
+            DomainRoute("clouddrive2", "ol.example.com", 19798)
         )
         self.assertNotIn("PRIVATE KEY", rendered)
         self.assertNotIn("password", rendered.lower())

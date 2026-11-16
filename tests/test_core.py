@@ -21,11 +21,11 @@ PAYLOAD = payload("clouddrive2")
 sys.path.insert(0, str(SOURCE))
 sys.path.insert(0, str(PAYLOAD))
 
-from tg2cloud import __version__
-from tg2cloud.app import TransferService, setup_logging
-from tg2cloud.config import Settings
-from tg2cloud.deployment.profiles import CLOUDDRIVE2_PRODUCT, RELEASE_VERSION
-from tg2cloud.deployment.resources import (
+from tgcloud import __version__
+from tgcloud.app import TransferService, setup_logging
+from tgcloud.config import Settings
+from tgcloud.deployment.profiles import CLOUDDRIVE2_PRODUCT, RELEASE_VERSION
+from tgcloud.deployment.resources import (
     GIB,
     LEGACY_PROBE_BEGIN,
     LEGACY_PROBE_END,
@@ -37,16 +37,18 @@ from tg2cloud.deployment.resources import (
     parse_probe_output,
     recommend_storage,
 )
-from tg2cloud.domain.naming import safe_file_name
-from tg2cloud.monitoring.resources import AdaptiveWindow, ResourceSnapshot
-from tg2cloud.persistence.backup import backup_database
-from tg2cloud.persistence.sqlite import TaskDB
-from tg2cloud.storage.rclone import RcloneClient, RcloneError
-from tg2cloud.storage.verify_destination import (
+from tgcloud.domain.naming import safe_file_name
+from tgcloud.monitoring.resources import AdaptiveWindow, ResourceSnapshot
+from tgcloud.persistence.backup import backup_database
+from tgcloud.persistence.sqlite import TaskDB
+from tgcloud.storage.clouddrive2 import CloudDrive2Commit
+from tgcloud.storage.policies import policy_for
+from tgcloud.storage.rclone import RcloneClient, RcloneError
+from tgcloud.storage.verify_destination import (
     DestinationVerificationError,
     verify_destination,
 )
-from tg2cloud.telegram.views import state_label
+from tgcloud.telegram.views import state_label
 
 
 def encoded(value: str) -> str:
@@ -157,19 +159,19 @@ class VpsResourceRecommendationTests(unittest.TestCase):
 
     def test_probe_command_accepts_only_safe_install_path(self) -> None:
         command = build_probe_command(
-            "/opt/tg2cloud-clouddrive2",
-            "/opt/tg2cloud-clouddrive2-backups",
+            "/opt/tgcloud-clouddrive2",
+            "/opt/tgcloud-clouddrive2-backups",
         )
         self.assertIn(PROBE_BEGIN, command)
         self.assertIn("df -PB1", command)
         self.assertIn("timeout 5s du", command)
         self.assertIn("timeout 5s docker info", command)
-        self.assertIn("/opt/tg2cloud-clouddrive2", command)
-        self.assertIn("/opt/tg2cloud-clouddrive2-backups", command)
+        self.assertIn("/opt/tgcloud-clouddrive2", command)
+        self.assertIn("/opt/tgcloud-clouddrive2-backups", command)
         with self.assertRaisesRegex(ValueError, "安装目录"):
             build_probe_command(
-                "/opt/tg2cloud-clouddrive2;touch /tmp/pwned",
-                "/opt/tg2cloud-clouddrive2-backups",
+                "/opt/tgcloud-clouddrive2;touch /tmp/pwned",
+                "/opt/tgcloud-clouddrive2-backups",
             )
 
     def test_small_vps_prefers_stream_first_without_changing_defaults(self) -> None:
@@ -364,6 +366,74 @@ class StatusTextTests(unittest.TestCase):
 
 
 class SettingsTests(unittest.TestCase):
+    @staticmethod
+    def environment() -> dict[str, str]:
+        return {
+            "TELEGRAM_API_ID": "12345",
+            "TELEGRAM_API_HASH_B64": encoded("a" * 32),
+            "BOT_TOKEN_B64": encoded("12345:abcdefghijklmnopqrstuvwxyz"),
+            "ALLOWED_USER_ID": "987654321",
+            "CD2_WEBDAV_URL_B64": encoded("http://clouddrive2:19798/dav"),
+            "CD2_WEBDAV_USERNAME_B64": encoded("synthetic-user"),
+            "CD2_WEBDAV_PASSWORD_B64": encoded("synthetic-password"),
+            "CD2_TARGET_PATH_B64": encoded("legacy-target"),
+        }
+
+    def test_only_cloud_drive_backend_and_remote_are_accepted(self) -> None:
+        for key in ("TGCLOUD_STORAGE_BACKEND", "TG115_STORAGE_BACKEND"):
+            for value in ("openlist", "cd2", "CloudDrive2", "", "unknown", "clouddrive2;bad"):
+                with self.subTest(key=key, backend=value), \
+                        patch.dict(os.environ, self.environment() | {key: value}, clear=True), \
+                        self.assertRaisesRegex(RuntimeError, "clouddrive2"):
+                    Settings.from_env(create_directories=False)
+        for key in ("TGCLOUD_RCLONE_REMOTE_NAME", "TG115_RCLONE_REMOTE_NAME"):
+            for value in ("openlist", "", "cd2;bad"):
+                with self.subTest(key=key, remote=value), \
+                        patch.dict(os.environ, self.environment() | {key: value}, clear=True), \
+                        self.assertRaisesRegex(RuntimeError, "存储后端不匹配"):
+                    Settings.from_env(create_directories=False)
+
+    def test_valid_legacy_backend_and_current_key_precedence_remain_compatible(self) -> None:
+        for extra in ({}, {"TG115_STORAGE_BACKEND": "clouddrive2", "TG115_RCLONE_REMOTE_NAME": "cd2"},
+                      {"TGCLOUD_STORAGE_BACKEND": "clouddrive2", "TG115_STORAGE_BACKEND": "openlist",
+                       "TGCLOUD_RCLONE_REMOTE_NAME": "cd2", "TG115_RCLONE_REMOTE_NAME": "openlist"}):
+            with self.subTest(keys=tuple(extra)), patch.dict(os.environ, self.environment() | extra, clear=True):
+                settings = Settings.from_env(create_directories=False)
+            self.assertEqual(settings.storage_backend, "clouddrive2")
+            self.assertEqual(settings.destination_label, "CloudDrive2")
+            self.assertEqual(settings.rclone_remote_name, "cd2")
+        with patch.dict(os.environ, self.environment() | {
+                "TGCLOUD_STORAGE_BACKEND": "openlist", "TG115_STORAGE_BACKEND": "clouddrive2"}, clear=True), \
+                self.assertRaises(RuntimeError):
+            Settings.from_env(create_directories=False)
+
+    def test_neutral_webdav_keys_prefer_current_nonempty_values_then_legacy(self) -> None:
+        env = self.environment() | {
+            "WEBDAV_URL_B64": encoded("http://127.0.0.1:19798/dav/"),
+            "WEBDAV_USERNAME_B64": encoded("current-user"),
+            "WEBDAV_PASSWORD_B64": encoded("current-password"),
+            "WEBDAV_TARGET_PATH_B64": encoded("current-target"),
+        }
+        with patch.dict(os.environ, env, clear=True):
+            settings = Settings.from_env(create_directories=False)
+        self.assertEqual((settings.cd2_url, settings.cd2_user, settings.cd2_password, settings.cd2_target),
+                         ("http://127.0.0.1:19798/dav/", "current-user", "current-password", "current-target"))
+        with patch.dict(os.environ, env | dict.fromkeys((
+                "WEBDAV_URL_B64", "WEBDAV_USERNAME_B64", "WEBDAV_PASSWORD_B64", "WEBDAV_TARGET_PATH_B64"), ""), clear=True):
+            legacy = Settings.from_env(create_directories=False)
+        self.assertEqual((legacy.cd2_user, legacy.cd2_password, legacy.cd2_target),
+                         ("synthetic-user", "synthetic-password", "legacy-target"))
+        with patch.dict(os.environ, env | {"WEBDAV_PASSWORD_B64": "not-base64"}, clear=True), \
+                self.assertRaisesRegex(RuntimeError, "WEBDAV_PASSWORD_B64"):
+            Settings.from_env(create_directories=False)
+
+    def test_policy_only_accepts_cloud_drive_or_missing_legacy_attribute(self) -> None:
+        self.assertIsInstance(policy_for(SimpleNamespace()), CloudDrive2Commit)
+        self.assertIsInstance(policy_for(SimpleNamespace(storage_backend="clouddrive2")), CloudDrive2Commit)
+        for backend in ("openlist", "unknown", "cd2", "", None, False):
+            with self.subTest(backend=backend), self.assertRaises(ValueError):
+                policy_for(SimpleNamespace(storage_backend=backend))
+
     def test_settings_decode_and_create_directories(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -957,6 +1027,17 @@ class RcloneConfigTests(unittest.TestCase):
                 asyncio.run(client.upload(Path("sample.bin"), "video.mp4"))
                 self.assertEqual(client._run.call_args.args[2], expected)
 
+    def test_cloud_drive_move_preserves_verified_retry_arguments(self) -> None:
+        client = RcloneClient(SimpleNamespace(cd2_target="Telegram", storage_backend="clouddrive2"))
+        client._run = AsyncMock(return_value=(0, "", ""))
+        client.remote_size = AsyncMock(side_effect=AssertionError("unexpected pre-MOVE size probe"))
+        asyncio.run(client.move(".uploading-1-file.bin", "file.bin"))
+        client._run.assert_awaited_once_with(
+            "moveto", "cd2:Telegram/.uploading-1-file.bin", "cd2:Telegram/file.bin",
+            "--retries", "3", timeout=120,
+        )
+        client.remote_size.assert_not_awaited()
+
     def test_existing_config_is_reconciled_with_new_settings(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             config_path = Path(temp) / "rclone.conf"
@@ -1066,7 +1147,7 @@ class RcloneConfigTests(unittest.TestCase):
             process = Process()
             spawn = AsyncMock(return_value=process)
             with patch(
-                "tg2cloud.storage.rclone.asyncio.create_subprocess_exec",
+                "tgcloud.storage.rclone.asyncio.create_subprocess_exec",
                 new=spawn,
             ):
                 stream = await client.open_upload_stream("large.bin", 7)
@@ -1080,6 +1161,8 @@ class RcloneConfigTests(unittest.TestCase):
         self.assertIn("cd2:Telegram/large.bin", arguments)
         size_index = arguments.index("--size")
         self.assertEqual(arguments[size_index + 1], "7")
+        self.assertEqual(arguments[arguments.index("--retries") + 1], "1")
+        self.assertEqual(arguments[arguments.index("--low-level-retries") + 1], "5")
         self.assertEqual(data, b"1234567")
 
 
@@ -1130,13 +1213,26 @@ class DestinationVerificationTests(unittest.TestCase):
             self.assertEqual(client.removed, [remote_path])
             self.assertEqual(list(Path(temp).iterdir()), [])
             for marker in (
-                "TG2CLOUD_WEBDAV=OK",
-                "TG2CLOUD_UPLOAD=OK",
-                "TG2CLOUD_RENAME=OK",
-                "TG2CLOUD_DELETE=OK",
+                "TGCLOUD_WEBDAV=OK",
+                "TGCLOUD_UPLOAD=OK",
+                "TGCLOUD_RENAME=OK",
+                "TGCLOUD_DELETE=OK",
             ):
                 self.assertIn(marker, reports)
-            self.assertTrue(all(marker.startswith("TG2CLOUD_") for marker in reports))
+            self.assertTrue(all(marker.startswith("TGCLOUD_") for marker in reports))
+
+    def test_destination_verification_rejects_invalid_backend_before_any_io(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            for backend in ("openlist", "unknown", "", None):
+                settings = SimpleNamespace(data_dir=Path(temp), storage_backend=backend)
+                client = self.FakeRclone()
+                with self.subTest(backend=backend), self.assertRaises(ValueError):
+                    asyncio.run(verify_destination(settings, client))
+                self.assertFalse(client.authenticated)
+                self.assertFalse(client.prepared)
+                self.assertEqual(client.files, {})
+                self.assertEqual(client.removed, [])
+                self.assertEqual(list(Path(temp).iterdir()), [])
 
     def test_real_destination_verification_fails_closed_and_cleans(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1191,7 +1287,7 @@ class DestinationVerificationTests(unittest.TestCase):
                     )
                 )
             self.assertEqual(raised.exception.stage, "LIST")
-            self.assertEqual(report, ["TG2CLOUD_WEBDAV_AUTH=OK"])
+            self.assertEqual(report, ["TGCLOUD_WEBDAV_AUTH=OK"])
             self.assertEqual(client.removed, [])
             self.assertEqual(list(Path(temp).iterdir()), [])
 
@@ -1408,29 +1504,29 @@ class UploadRecoveryTests(unittest.TestCase):
 class PayloadTests(unittest.TestCase):
     def test_active_container_namespace_and_code_read_permissions(self) -> None:
         dockerfile = (PAYLOAD / "Dockerfile").read_text(encoding="utf-8")
-        self.assertIn("PYTHONPATH=/opt/tg2cloud", dockerfile)
-        self.assertIn("WORKDIR /opt/tg2cloud", dockerfile)
-        self.assertIn("groupadd --system --gid 10001 tg2cloud", dockerfile)
-        self.assertIn("--shell /usr/sbin/nologin tg2cloud", dockerfile)
+        self.assertIn("PYTHONPATH=/opt/tgcloud", dockerfile)
+        self.assertIn("WORKDIR /opt/tgcloud", dockerfile)
+        self.assertIn("groupadd --system --gid 10001 tgcloud", dockerfile)
+        self.assertIn("--shell /usr/sbin/nologin tgcloud", dockerfile)
         self.assertNotIn("tg115", dockerfile)
         self.assertLess(dockerfile.index("COPY app ./app"), dockerfile.index("RUN chmod -R a+rX app"))
         self.assertLess(dockerfile.index("RUN chmod -R a+rX app"), dockerfile.index("USER 10001:10001"))
         self.assertNotIn("chmod -R 777", dockerfile)
 
-    def test_runtime_logger_is_tg2cloud_and_persistent_paths_are_unchanged(self) -> None:
+    def test_runtime_logger_is_tgcloud_and_persistent_paths_are_unchanged(self) -> None:
         settings = SimpleNamespace(allowed_user_id=123,
             log_dir=Mock(), data_dir=Path("/data"), download_dir=Path("/downloads"),
             rclone_config_path=Path("/config/rclone/rclone.conf"),
             api_id=123456, api_hash="FAKE_LOCAL_TEST_API_HASH",
         )
-        with patch("tg2cloud.app.setup_logging"), patch("tg2cloud.transfer.service.logging.getLogger") as get_logger, \
-                patch("tg2cloud.app.TaskDB") as database, patch("tg2cloud.telegram.client.TelegramClient") as telegram, \
-                patch("tg2cloud.telegram.client.private_sqlite"), \
-                patch("tg2cloud.app.RcloneClient"), patch("tg2cloud.app.ResourceMonitor"), \
-                patch("tg2cloud.transfer.service.AdaptiveWindow"), patch.object(TransferService, "_register_handlers"):
+        with patch("tgcloud.app.setup_logging"), patch("tgcloud.transfer.service.logging.getLogger") as get_logger, \
+                patch("tgcloud.app.TaskDB") as database, patch("tgcloud.telegram.client.TelegramClient") as telegram, \
+                patch("tgcloud.telegram.client.private_sqlite"), \
+                patch("tgcloud.app.RcloneClient"), patch("tgcloud.app.ResourceMonitor"), \
+                patch("tgcloud.transfer.service.AdaptiveWindow"), patch.object(TransferService, "_register_handlers"):
             TransferService(settings)
-        get_logger.assert_called_once_with("tg2cloud")
-        database.assert_called_once_with(Path("/data/tg2cloud.db").absolute())
+        get_logger.assert_called_once_with("tgcloud")
+        database.assert_called_once_with(Path("/data/tgcloud.db").absolute())
         self.assertEqual(telegram.call_args.args[0], str(Path("/data/bot")))
 
     def test_new_log_name_does_not_rename_or_delete_old_logs(self) -> None:
@@ -1438,9 +1534,9 @@ class PayloadTests(unittest.TestCase):
             directory = Path(private)
             legacy = directory / "tg115.log"
             legacy.write_text("retained old log", encoding="utf-8")
-            with patch("tg2cloud.transfer.service.logging.getLogger"), patch("tg2cloud.logging_setup.RotatingFileHandler") as handler:
+            with patch("tgcloud.transfer.service.logging.getLogger"), patch("tgcloud.logging_setup.RotatingFileHandler") as handler:
                 setup_logging(SimpleNamespace(log_dir=directory))
-            self.assertEqual(handler.call_args.args[0], directory / "tg2cloud.log")
+            self.assertEqual(handler.call_args.args[0], directory / "tgcloud.log")
             self.assertEqual(legacy.read_text(encoding="utf-8"), "retained old log")
 
     def test_script_and_server_versions_match(self) -> None:
@@ -1457,15 +1553,15 @@ class PayloadTests(unittest.TestCase):
             "manage.sh",
             "backup_retention.sh",
             "app/main.py",
-            "app/tg2cloud/telegram/commands.py",
-            "app/tg2cloud/transfer/ports.py",
-            "app/tg2cloud/domain/states.py",
+            "app/tgcloud/telegram/commands.py",
+            "app/tgcloud/transfer/ports.py",
+            "app/tgcloud/domain/states.py",
             "app/deployment_check.py",
             "app/backup_database.py",
-            "app/tg2cloud/persistence/sqlite.py",
-            "app/tg2cloud/domain/naming.py",
-            "app/tg2cloud/monitoring/resources.py",
-            "app/tg2cloud/storage/rclone.py",
+            "app/tgcloud/persistence/sqlite.py",
+            "app/tgcloud/domain/naming.py",
+            "app/tgcloud/monitoring/resources.py",
+            "app/tgcloud/storage/rclone.py",
             "app/verify_destination.py",
         ):
             self.assertTrue((PAYLOAD / relative).is_file(), relative)
@@ -1516,13 +1612,13 @@ class PayloadTests(unittest.TestCase):
         self.assertIn("for url_key in WEBDAV_URL_B64 CD2_WEBDAV_URL_B64", repair)
         self.assertIn('CD2_ENDPOINT_HOST="127.0.0.1"', repair)
         self.assertIn("recover_webdav_credentials", repair)
-        self.assertIn("/opt/tg2cloud-clouddrive2-backups", repair)
+        self.assertIn("/opt/tgcloud-clouddrive2-backups", repair)
         self.assertIn("保留当前根目录设置", repair)
         self.assertIn('docker network connect --alias "$CD2_MANAGED_CONTAINER"', repair)
         self.assertNotIn("docker network connect --alias clouddrive2 tg115", repair)
         self.assertIn("socket.create_connection((h,19798),5)", repair)
         self.assertIn("python -m app.verify_destination", repair)
-        self.assertIn("TG2CLOUD_REPAIR=SUCCESS", repair)
+        self.assertIn("TGCLOUD_REPAIR=SUCCESS", repair)
         self.assertIn("remove_program_files", remote_install)
 
     def test_bot_container_is_non_root_and_restricted(self) -> None:
@@ -1536,7 +1632,7 @@ class PayloadTests(unittest.TestCase):
         self.assertIn("USER 10001:10001", dockerfile)
         self.assertIn("chown -R 10001:10001", remote_install)
         self.assertIn("umask 077", remote_install)
-        self.assertIn('BACKUP_DIR="/opt/tg2cloud-clouddrive2-backups"', remote_install)
+        self.assertIn('BACKUP_DIR="/opt/tgcloud-clouddrive2-backups"', remote_install)
         self.assertIn('install -d -m 700 "$BACKUP_DIR"', remote_install)
 
     def test_legacy_tg115_runtime_is_detected_without_destructive_migration(self) -> None:

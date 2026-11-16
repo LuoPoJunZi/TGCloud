@@ -15,13 +15,13 @@ from test_listening import event, message
 from test_scenarios import make_service, make_settings
 from test_telethon_compat import callback_data
 
-from tg2cloud.domain.actors import user_scope
-from tg2cloud.domain.planning import PlanningError
-from tg2cloud.listening import account, management, rules
-from tg2cloud.listening.service import Listener
-from tg2cloud.persistence.plans import Plans
-from tg2cloud.persistence.sqlite import TaskDB
-from tg2cloud.telegram import listening_tools, planning
+from tgcloud.domain.actors import user_scope
+from tgcloud.domain.planning import PlanningError
+from tgcloud.listening import account, management, rules
+from tgcloud.listening.service import Listener
+from tgcloud.persistence.plans import Plans
+from tgcloud.persistence.sqlite import TaskDB
+from tgcloud.telegram import listening_tools, planning
 
 
 class ExplanationTests(unittest.TestCase):
@@ -61,7 +61,7 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.settings = make_settings(Path(self.temp.name))
-        self.db = TaskDB(self.settings.data_dir / "tg2cloud.db")
+        self.db = TaskDB(self.settings.data_dir / "tgcloud.db")
         self.addCleanup(self.db.close)
         self.owner = make_service(self.settings, self.db)
         self.admin = self.settings.allowed_user_id
@@ -78,7 +78,7 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         self.scope = user_scope(self.admin)
         self.scope.__enter__()
         self.addCleanup(self.scope.__exit__, None, None, None)
-        patched = patch("tg2cloud.listening.management.verified_chat", new=AsyncMock())
+        patched = patch("tgcloud.listening.management.verified_chat", new=AsyncMock())
         patched.start()
         self.addCleanup(patched.stop)
         self.rows = []
@@ -189,7 +189,7 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
         self.capture(e)
         await self.click(f"预览恢复 #{task['id']}")
         self.assertEqual(self.db.get(task["id"])["state"], "download_failed")
-        with patch("tg2cloud.listening.service.verified_chat", new=AsyncMock()):
+        with patch("tgcloud.listening.service.verified_chat", new=AsyncMock()):
             await self.click("确认小批恢复")
         self.assertEqual(self.db.get(task["id"])["state"], "queued")
         self.assertIn("1/1", self.text)
@@ -294,7 +294,7 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
                         source = self.repo.source(self.admin, self.source["id"])
                         self.repo.change_source(self.admin, source["id"], source["revision"],
                                                 config=source["config"] | {"rules": rules.defaults()})
-                with patch("tg2cloud.listening.management.verified_chat", new=mutate), self.assertRaises(PlanningError):
+                with patch("tgcloud.listening.management.verified_chat", new=mutate), self.assertRaises(PlanningError):
                     await management.history_preview(self.owner, self.admin, self.source["id"], 1)
                 self.listener.client = original_client
                 self.assertEqual(self.repo.pending(self.admin), [])
@@ -323,7 +323,7 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
     async def test_recovery_revalidates_original_task_and_cas_rejects_duplicate_click(self):
         task = self.failed_task()
         snapshots = [(task["id"], task["updated_at"])]
-        with patch("tg2cloud.listening.service.verified_chat", new=AsyncMock()):
+        with patch("tgcloud.listening.service.verified_chat", new=AsyncMock()):
             count = await management.retry_confirmed(self.owner, self.admin, self.source["id"], self.source["revision"], snapshots)
         self.assertEqual(count, 1)
         self.assertEqual(self.db.get(task["id"])["state"], "queued")
@@ -343,7 +343,7 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
     async def test_recovery_permission_failure_preserves_task_and_stops_batch(self):
         from telethon.errors import ChannelPrivateError
         task = self.failed_task()
-        with patch("tg2cloud.listening.service.verified_chat", new=AsyncMock(side_effect=ChannelPrivateError(request=None))):
+        with patch("tgcloud.listening.service.verified_chat", new=AsyncMock(side_effect=ChannelPrivateError(request=None))):
             count = await management.retry_confirmed(self.owner, self.admin, self.source["id"], self.source["revision"], [(task["id"], task["updated_at"])])
         self.assertEqual(count, 0)
         self.assertEqual(self.db.get(task["id"])["state"], "download_failed")
@@ -351,7 +351,7 @@ class ManagementTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_wait_records_are_bounded_throttled_and_readable(self):
         task = {"id": 1, "source_id": self.source["id"]}
-        with patch("tg2cloud.listening.service.time.monotonic", return_value=100):
+        with patch("tgcloud.listening.service.time.monotonic", return_value=100):
             self.assertTrue(self.listener.record_wait(task, 3))
             self.assertFalse(self.listener.record_wait(task, 3))
             self.assertIn("2 次、累计约 6 秒", self.listener.wait_summary(task_id=1))

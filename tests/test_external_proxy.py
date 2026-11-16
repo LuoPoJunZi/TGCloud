@@ -10,10 +10,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tg2cloud.cli.proxy import main, parser, select_entry
-from tg2cloud.deployment.profiles import CLOUDDRIVE2_PRODUCT, OPENLIST_PRODUCT
-from tg2cloud.deployment.proxy.docker_nginx import DockerNginx
-from tg2cloud.deployment.proxy.external_config import (
+from tgcloud.cli.proxy import main, parser, select_entry
+from tgcloud.deployment.profiles import CLOUDDRIVE2_PRODUCT
+from tgcloud.deployment.proxy.docker_nginx import DockerNginx
+from tgcloud.deployment.proxy.external_config import (
     OWNER,
     checksum,
     compose_network,
@@ -25,13 +25,13 @@ from tg2cloud.deployment.proxy.external_config import (
     render_route,
     validate_entry,
 )
-from tg2cloud.deployment.proxy.external_entry import (
+from tgcloud.deployment.proxy.external_entry import (
     CRON_CONTENT,
     ExternalEntry,
     retained_network,
 )
-from tg2cloud.deployment.proxy.external_transaction import SiteTransaction, atomic, read
-from tg2cloud.deployment.proxy.state import (
+from tgcloud.deployment.proxy.external_transaction import SiteTransaction, atomic, read
+from tgcloud.deployment.proxy.state import (
     DomainRoute,
     ProxyEnvironment,
     certificate_domains,
@@ -53,7 +53,7 @@ def entry():
 
 
 def state():
-    return {"version": 3, "domains": {}, "external_webdav": {}, "entry": entry()}
+    return {"version": 3, "project": "tgcloud", "domains": {}, "external_webdav": {}, "entry": entry()}
 
 
 def content(text):
@@ -62,21 +62,26 @@ def content(text):
 
 class ConfigurationTests(unittest.TestCase):
     def test_schema_round_trip_and_old_states(self):
-        for value in ({"version": 1, "domains": {}}, {"version": 2, "domains": {}, "external_webdav": {}}, state()):
+        for value in ({"version": 1, "project": "tgcloud", "domains": {}}, {"version": 2, "project": "tgcloud", "domains": {}, "external_webdav": {}}, state()):
             self.assertEqual(normalize_state(json.dumps(value)), value)
+        for value in ({"version": 1, "domains": {}}, {"version": 2, "domains": {}, "external_webdav": {}}):
+            with self.assertRaises(ValueError):
+                normalize_state(json.dumps(value))
 
     def test_unknown_schema_and_fields_rejected(self):
         for value in (dict(state(), version=99), dict(state(), unknown=True), dict(state(), entry=dict(entry(), unsafe=True))):
             with self.assertRaises(ValueError):
                 normalize_state(json.dumps(value))
 
-    def test_two_editions_share_entry_without_downgrade(self):
+    def test_current_gateway_retains_external_entry_and_rejects_retired_route(self):
+        from dataclasses import replace
         value = state_with_route(state(), CLOUDDRIVE2_PRODUCT, "cd.example.com")
-        value = state_with_route(value, OPENLIST_PRODUCT, "ol.example.com")
-        self.assertEqual(certificate_domains(value), ("cd.example.com", "ol.example.com"))
+        with self.assertRaises(ValueError):
+            state_with_route(value, replace(CLOUDDRIVE2_PRODUCT, key="openlist"), "ol.example.com")
+        self.assertEqual(certificate_domains(value), ("cd.example.com",))
         remaining = state_without_route(value, "clouddrive2")
         self.assertEqual(remaining["entry"], value["entry"])
-        self.assertEqual(set(remaining["domains"]), {"openlist"})
+        self.assertEqual(remaining["domains"], {})
 
     def test_unsafe_identity_and_paths_rejected(self):
         for field, replacement in (("name", "nginx;id"), ("container_id", "unknown"), ("image", "x$(id)")):
@@ -115,16 +120,16 @@ class ConfigurationTests(unittest.TestCase):
             self.assertFalse(conflicting_names(files, "new.example.com", set(files)))
 
     def test_same_basename_elsewhere_not_trusted(self):
-        files = {"/a/tg2cloud-openlist.conf": "own", "/b/tg2cloud-openlist.conf": "foreign"}
-        digest = global_digest(files, {"/a/tg2cloud-openlist.conf"})
-        files["/b/tg2cloud-openlist.conf"] = "changed"
-        self.assertNotEqual(digest, global_digest(files, {"/a/tg2cloud-openlist.conf"}))
+        files = {"/a/tgcloud-openlist.conf": "own", "/b/tgcloud-openlist.conf": "foreign"}
+        digest = global_digest(files, {"/a/tgcloud-openlist.conf"})
+        files["/b/tgcloud-openlist.conf"] = "changed"
+        self.assertNotEqual(digest, global_digest(files, {"/a/tgcloud-openlist.conf"}))
 
     def test_both_gateway_networks_persist_bot_unchanged(self):
-        for edition in ("clouddrive2", "openlist"):
+        for edition in ("clouddrive2",):
             source = Path("packaging/compose/docker-compose." + edition + ".yml").read_text()
             result = compose_network(source, edition, "edge_net")
-            self.assertEqual(result.count("      - tg2cloud-external-entry\n"), 1)
+            self.assertEqual(result.count("      - tgcloud-external-entry\n"), 1)
             self.assertIn("    external: true\n    name: edge_net", result)
             self.assertIn("127.0.0.1:", result)
             with self.assertRaises(ValueError):
@@ -145,15 +150,15 @@ class ConfigurationTests(unittest.TestCase):
     def test_bridge_dynamic_dns_and_dav_policy(self):
         value = entry()
         value["network"].update(mode="bridge", name="edge_net", id="c" * 64)
-        value["certificates"]["dav.example.com"] = ExternalEntry.new_certificate("dav.example.com", "tg2cloud", "/cert/fullchain.pem", "/cert/key.pem")
-        route = {"edition": "openlist", "domain": "dav.example.com", "backend_port": 5244,
-                 "auth_file": "external-auth/openlist.htpasswd", "enabled": True}
+        value["certificates"]["dav.example.com"] = ExternalEntry.new_certificate("dav.example.com", "tgcloud", "/cert/fullchain.pem", "/cert/key.pem")
+        route = {"edition": "clouddrive2", "domain": "dav.example.com", "backend_port": 19798,
+                 "auth_file": "external-auth/clouddrive2.htpasswd", "enabled": True}
         rendered = render_route(route, value)
         self.assertIn("resolver 127.0.0.11 valid=10s", rendered)
-        self.assertIn("set $tg2cloud_openlist_backend tg2cloud-openlist:5244", rendered)
-        self.assertNotIn("127.0.0.1:5244", rendered)
-        self.assertIn("$tg2cloud_openlist_backend$request_uri", rendered)
-        self.assertIn("auth_basic_user_file /etc/nginx/conf.d/tg2cloud-assets/auth/openlist.htpasswd", rendered)
+        self.assertIn("set $tgcloud_clouddrive2_backend tgcloud-clouddrive2:19798", rendered)
+        self.assertNotIn("127.0.0.1:19798", rendered)
+        self.assertIn("$tgcloud_clouddrive2_backend$request_uri", rendered)
+        self.assertIn("auth_basic_user_file /etc/nginx/conf.d/tgcloud-assets/auth/clouddrive2.htpasswd", rendered)
         self.assertIn("GET|HEAD|OPTIONS|PROPFIND", rendered)
         self.assertIn("proxy_set_header Range $http_range", rendered)
         self.assertIn("location / { return 404; }", rendered)
@@ -167,7 +172,7 @@ class TransactionTests(unittest.TestCase):
         self.directory = self.root / "sites"
         self.directory.mkdir()
         self.journal = self.root / "private/transaction.json"
-        self.name = "tg2cloud-clouddrive2.conf"
+        self.name = "tgcloud-clouddrive2.conf"
         self.path = self.directory / self.name
 
     def test_success_and_rollback_leave_other_sites(self):
@@ -240,14 +245,14 @@ class LifecycleTests(unittest.TestCase):
         self.adapter.root = self.root / "private"
         self.adapter.directory = self.root / "sites"
         self.adapter.directory.mkdir()
-        self.adapter.assets = self.adapter.directory / "tg2cloud-assets"
+        self.adapter.assets = self.adapter.directory / "tgcloud-assets"
         self.adapter.journal = self.adapter.root / "state/transaction.json"
         for name in ("preflight", "setup_assets", "backup", "verify", "install_schedule", "verify_webroot"):
             setattr(self.adapter, name, Mock())
         self.adapter.context = Mock(return_value={"id": "a" * 64})
         self.adapter.canaries = Mock(return_value={})
         self.adapter.docker = Mock()
-        self.adapter.certificate_record = Mock(side_effect=lambda domain: ExternalEntry.new_certificate(domain, "tg2cloud", "/cert/chain.pem", "/cert/key.pem"))
+        self.adapter.certificate_record = Mock(side_effect=lambda domain: ExternalEntry.new_certificate(domain, "tgcloud", "/cert/chain.pem", "/cert/key.pem"))
         self.adapter.certificate_valid = Mock(return_value=True)
         self.adapter.obtain = Mock()
 
@@ -260,9 +265,9 @@ class LifecycleTests(unittest.TestCase):
     def test_install_and_repeat_no_external_start_stop_or_recreate(self):
         self.adapter.transaction(self.target(), domain="cd.example.com")
         self.assertEqual(self.current["version"], 3)
-        first = read(self.adapter.directory / "tg2cloud-clouddrive2.conf")
+        first = read(self.adapter.directory / "tgcloud-clouddrive2.conf")
         self.adapter.transaction(self.target(), domain="cd.example.com")
-        self.assertEqual(first, read(self.adapter.directory / "tg2cloud-clouddrive2.conf"))
+        self.assertEqual(first, read(self.adapter.directory / "tgcloud-clouddrive2.conf"))
         self.assertFalse(self.adapter.journal.exists())
         self.assertFalse(self.adapter.docker.command.called)
         self.assertTrue(self.adapter.docker.reload.called)
@@ -274,7 +279,7 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ACME"):
             self.adapter.transaction(self.target(), domain="cd.example.com")
         self.assertEqual(self.current, before)
-        self.assertFalse((self.adapter.directory / "tg2cloud-clouddrive2.conf").exists())
+        self.assertFalse((self.adapter.directory / "tgcloud-clouddrive2.conf").exists())
 
     def test_ordinary_interrupt_rollback(self):
         self.adapter.verify.side_effect = KeyboardInterrupt
@@ -295,7 +300,7 @@ class LifecycleTests(unittest.TestCase):
         self.adapter.remove_locked()
         self.assertFalse(self.current["domains"])
         self.assertEqual(self.current["version"], 3)
-        self.assertFalse((self.adapter.directory / "tg2cloud-clouddrive2.conf").exists())
+        self.assertFalse((self.adapter.directory / "tgcloud-clouddrive2.conf").exists())
         self.assertFalse(self.adapter.docker.command.called)
 
     def test_certificate_reuse_does_not_call_certbot(self):
@@ -306,32 +311,32 @@ class LifecycleTests(unittest.TestCase):
 
     def test_dav_bootstrap_never_replaces_same_edition_management(self):
         value = self.target()
-        value["external_webdav"]["clouddrive2"] = {"kind": "external_webdav", "owner": "tg2cloud.external_webdav",
-            "edition": "clouddrive2", "instance_dir": "/opt/tg2cloud-clouddrive2", "domain": "dav.example.com", "enabled": True,
+        value["external_webdav"]["clouddrive2"] = {"kind": "external_webdav", "owner": "tgcloud.external_webdav",
+            "edition": "clouddrive2", "instance_dir": "/opt/tgcloud-clouddrive2", "domain": "dav.example.com", "enabled": True,
             "backend_port": 19798, "auth_file": "external-auth/clouddrive2.htpasswd"}
         for domain in ("cd.example.com", "dav.example.com"):
             self.adapter.entry["certificates"][domain] = self.adapter.certificate_record(domain)
         final = self.adapter.files(value)
         bootstrap = self.adapter.files(value, bootstrap="dav.example.com")
         self.assertEqual(set(final), set(bootstrap))
-        self.assertEqual(final["tg2cloud-clouddrive2.conf"], bootstrap["tg2cloud-clouddrive2.conf"])
-        self.assertNotIn(b"listen 443", bootstrap["tg2cloud-webdav-clouddrive2.conf"])
+        self.assertEqual(final["tgcloud-clouddrive2.conf"], bootstrap["tgcloud-clouddrive2.conf"])
+        self.assertNotIn(b"listen 443", bootstrap["tgcloud-webdav-clouddrive2.conf"])
 
     def test_removing_management_preserves_dav_route_files_and_certificate_domain(self):
         # This test isolates route/renewal ownership; actual hash replacement
         # has its own file and opt-in Docker regressions.
         self.adapter.copy_auth = Mock()
         value = self.target()
-        value["external_webdav"]["clouddrive2"] = {"kind": "external_webdav", "owner": "tg2cloud.external_webdav",
-            "edition": "clouddrive2", "instance_dir": "/opt/tg2cloud-clouddrive2", "domain": "dav.example.com", "enabled": True,
+        value["external_webdav"]["clouddrive2"] = {"kind": "external_webdav", "owner": "tgcloud.external_webdav",
+            "edition": "clouddrive2", "instance_dir": "/opt/tgcloud-clouddrive2", "domain": "dav.example.com", "enabled": True,
             "backend_port": 19798, "auth_file": "external-auth/clouddrive2.htpasswd"}
         for domain in ("cd.example.com", "dav.example.com"):
             self.adapter.entry["certificates"][domain] = self.adapter.certificate_record(domain)
         self.adapter.transaction(value)
-        previous = read(self.adapter.directory / "tg2cloud-webdav-clouddrive2.conf")
+        previous = read(self.adapter.directory / "tgcloud-webdav-clouddrive2.conf")
         self.adapter.remove_locked()
         self.assertFalse(self.current["domains"])
-        self.assertEqual(read(self.adapter.directory / "tg2cloud-webdav-clouddrive2.conf"), previous)
+        self.assertEqual(read(self.adapter.directory / "tgcloud-webdav-clouddrive2.conf"), previous)
         self.assertIn("dav.example.com", certificate_domains(self.current))
         self.assertNotIn("cd.example.com", certificate_domains(self.current))
         self.assertFalse(self.adapter.docker.command.called)
@@ -350,14 +355,14 @@ class LifecycleTests(unittest.TestCase):
         target = self.adapter.assets / "auth/clouddrive2.htpasswd"
         atomic(target, b"old:hash\n")
         self.adapter.context.side_effect = ValueError("external drift")
-        with patch("tg2cloud.deployment.proxy.external_transaction.os.chown", create=True), self.assertRaisesRegex(ValueError, "drift"):
+        with patch("tgcloud.deployment.proxy.external_transaction.os.chown", create=True), self.assertRaisesRegex(ValueError, "drift"):
             self.adapter.revoke_auth("clouddrive2")
         self.assertEqual(read(target), b"disabled:!\n")
 
     def test_renewed_but_reload_failed_stays_pending(self):
         domain = "cd.example.com"
         self.current = self.target()
-        self.adapter.entry["certificates"][domain] = ExternalEntry.new_certificate(domain, "tg2cloud", "/cert/chain.pem", "/cert/key.pem")
+        self.adapter.entry["certificates"][domain] = ExternalEntry.new_certificate(domain, "tgcloud", "/cert/chain.pem", "/cert/key.pem")
         self.adapter.entry["certificates"][domain]["loaded"] = "d" * 64
         self.adapter.disk_fingerprint = Mock(side_effect=["d" * 64, "e" * 64])
         self.adapter.certbot = Mock()
@@ -371,7 +376,7 @@ class LifecycleTests(unittest.TestCase):
     def test_dry_run_does_not_claim_certificate_changed(self):
         domain = "cd.example.com"
         self.current = self.target()
-        self.adapter.entry["certificates"][domain] = ExternalEntry.new_certificate(domain, "tg2cloud", "/cert/chain.pem", "/cert/key.pem")
+        self.adapter.entry["certificates"][domain] = ExternalEntry.new_certificate(domain, "tgcloud", "/cert/chain.pem", "/cert/key.pem")
         self.adapter.entry["certificates"][domain]["loaded"] = "d" * 64
         self.adapter.disk_fingerprint = Mock(return_value="d" * 64)
         self.adapter.certbot = Mock()
@@ -389,14 +394,14 @@ class LifecycleTests(unittest.TestCase):
         atomic(pending, json.dumps(record).encode())
         # Exercise plan identity with an ordinary Runner-owned fixture; root-only
         # production file checks are covered independently below, never disabled.
-        with patch("tg2cloud.deployment.configuration.regular_private", side_effect=lambda path: path.read_bytes()) as read:
+        with patch("tgcloud.deployment.configuration.regular_private", side_effect=lambda path: path.read_bytes()) as read:
             self.assertEqual(retained_network(product, Path(product.install_dir), {}, self.root), "edge_net")
             with self.assertRaisesRegex(ValueError, "归属"):
                 retained_network(product, Path("/opt/not-the-instance"), {}, self.root)
             self.assertEqual([call.args[0] for call in read.call_args_list], [pending, pending])
 
     def test_pending_plan_reader_rejects_nonroot_and_readable_files_before_read(self):
-        from tg2cloud.deployment.configuration import regular_private
+        from tgcloud.deployment.configuration import regular_private
         for uid, mode in ((1000, 0o100600), (0, 0o100640), (0, 0o100604)):
             with self.subTest(uid=uid, mode=mode):
                 path = Mock(spec=Path)
@@ -407,7 +412,7 @@ class LifecycleTests(unittest.TestCase):
                 path.stat.return_value = SimpleNamespace(st_size=100, st_uid=uid, st_mode=mode)
                 # Replace only this module's OS facade, not global os.name or
                 # pathlib's platform selection, so the same contract runs on NT.
-                with patch("tg2cloud.deployment.configuration.os", SimpleNamespace(name="posix")), self.assertRaisesRegex(ValueError, "root"):
+                with patch("tgcloud.deployment.configuration.os", SimpleNamespace(name="posix")), self.assertRaisesRegex(ValueError, "root"):
                     regular_private(path)
                 path.read_bytes.assert_not_called()
 
@@ -474,7 +479,7 @@ class DetectionAndAuthorizationTests(unittest.TestCase):
             item = {"mounts": [{"Source": directory.as_posix(), "Destination": "/etc/nginx/conf.d", "Type": "volume", "Name": "edge_conf"}]}
             # Path policy is Linux-only; the fixture supplies an explicit safe
             # mapping so this parser contract also runs on a Windows dev host.
-            with patch("tg2cloud.deployment.proxy.docker_nginx.absolute_path", side_effect=lambda value: value), patch("tg2cloud.deployment.proxy.docker_nginx.safe_host_path"):
+            with patch("tgcloud.deployment.proxy.docker_nginx.absolute_path", side_effect=lambda value: value), patch("tgcloud.deployment.proxy.docker_nginx.safe_host_path"):
                 volume = docker.choose_mount(item, {"/etc/nginx/nginx.conf": "user nginx; http{include /etc/nginx/conf.d/*.conf;}"})
             self.assertEqual(volume["type"], "volume")
             self.assertEqual(volume["host_dir"], str(directory))
@@ -558,12 +563,12 @@ class DetectionAndAuthorizationTests(unittest.TestCase):
         scan.assert_not_called()
 
     def test_help_does_not_touch_docker(self):
-        with (patch("tg2cloud.cli.proxy.preflight.validate_host") as host, patch("sys.stdout"),
+        with (patch("tgcloud.cli.proxy.preflight.validate_host") as host, patch("sys.stdout"),
               self.assertRaises(SystemExit) as exc):
             main(["--help"])
         self.assertEqual(exc.exception.code, 0)
         host.assert_not_called()
-        with (patch("tg2cloud.cli.proxy.preflight.validate_host") as host, patch("sys.stderr"),
+        with (patch("tgcloud.cli.proxy.preflight.validate_host") as host, patch("sys.stderr"),
               self.assertRaises(SystemExit) as invalid):
             main(["configure", "--dry-run", "--yes", "--authorize-proxy"])
         self.assertEqual(invalid.exception.code, 2)
@@ -585,12 +590,11 @@ class DetectionAndAuthorizationTests(unittest.TestCase):
         self.assertTrue(commands[1].endswith("nginx -s reload"))
         self.assertFalse(any(word in " ".join(commands) for word in (" stop ", " restart ", " down ", " network connect ")))
 
-    def test_two_edition_uninstall_never_takes_managed_stop_branch(self):
-        from tg2cloud.deployment import uninstall
-        from tg2cloud.deployment.proxy.state import ProxyReport
+    def test_current_edition_uninstall_never_takes_managed_stop_branch(self):
+        from tgcloud.deployment import uninstall
+        from tgcloud.deployment.proxy.state import ProxyReport
         value = state_with_route(state(), CLOUDDRIVE2_PRODUCT, "cd.example.com")
-        value = state_with_route(value, OPENLIST_PRODUCT, "ol.example.com")
-        plan = SimpleNamespace(editions=("clouddrive2", "openlist"), state=value, containers={}, networks={},
+        plan = SimpleNamespace(editions=("clouddrive2",), state=value, containers={}, networks={},
                                purge_data=False, purge_backups=False, remove_proxy=False)
         session, manager = Mock(), Mock()
         session.hold_lock.return_value = nullcontext()
@@ -601,7 +605,7 @@ class DetectionAndAuthorizationTests(unittest.TestCase):
               patch.object(uninstall, "docker_snapshot", return_value=({}, {})),
               patch.object(uninstall, "read_state", return_value=state())):
             uninstall.execute(plan, session, Mock())
-        self.assertEqual(manager._remove_locked.call_count, 2)
+        self.assertEqual(manager._remove_locked.call_count, 1)
         manager._install_config.assert_not_called()
         manager._compose.assert_not_called()
         session.run.assert_not_called()

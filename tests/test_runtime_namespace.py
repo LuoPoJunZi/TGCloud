@@ -10,9 +10,9 @@ import unittest
 import uuid
 from pathlib import Path
 
-import tg2cloud.deployment.configuration as tgdep_configuration
-import tg2cloud.deployment.payload as tgdep_payload
-from tg2cloud.deployment.profiles import PRODUCTS
+import tgcloud.deployment.configuration as tgdep_configuration
+import tgcloud.deployment.payload as tgdep_payload
+from tgcloud.deployment.profiles import PRODUCTS
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTAINER_CHECK = """
@@ -22,17 +22,17 @@ import platform
 import subprocess
 import sys
 from pathlib import Path
-from tg2cloud.app import TransferService
-from tg2cloud.deployment.check import code_fingerprint, main
+from tgcloud.app import TransferService
+from tgcloud.deployment.check import code_fingerprint, main
 import cryptg
 import psutil
 import telethon
 
 assert os.getuid() == 10001 and os.getgid() == 10001
-assert pwd.getpwuid(os.getuid()).pw_name == 'tg2cloud'
+assert pwd.getpwuid(os.getuid()).pw_name == 'tgcloud'
 assert pwd.getpwuid(os.getuid()).pw_dir == '/nonexistent'
-assert Path.cwd() == Path('/opt/tg2cloud')
-assert os.environ['PYTHONPATH'] == '/opt/tg2cloud:/opt/tg2cloud/app'
+assert Path.cwd() == Path('/opt/tgcloud')
+assert os.environ['PYTHONPATH'] == '/opt/tgcloud:/opt/tgcloud/app'
 for path in Path('app').rglob('*'):
     assert path.stat().st_uid == 0, str(path)
     assert os.access(path, os.R_OK), str(path)
@@ -41,7 +41,7 @@ for path in Path('app').rglob('*'):
         assert os.access(path, os.X_OK), str(path)
 assert not Path('config.env').exists()
 assert not Path('.env').exists()
-assert code_fingerprint().startswith('tg2cloud-code-v2:sha256:') and len(code_fingerprint().rsplit(':',1)[1]) == 64
+assert code_fingerprint().startswith('tgcloud-code-v2:sha256:') and len(code_fingerprint().rsplit(':',1)[1]) == 64
 assert TransferService is not None
 assert platform.machine().lower() in ('x86_64', 'amd64', 'aarch64', 'arm64')
 # Exercise native extensions, not just package metadata or wheel names.
@@ -54,9 +54,9 @@ assert telethon.TelegramClient is not None
 # No socket, real Session or production volume is used (--network none).
 import tempfile
 from types import SimpleNamespace
-from tg2cloud.listening.account import state, session_lock
-from tg2cloud.persistence.sqlite import TaskDB
-from tg2cloud.persistence.plans import Plans
+from tgcloud.listening.account import state, session_lock
+from tgcloud.persistence.sqlite import TaskDB
+from tgcloud.persistence.plans import Plans
 with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
     db = TaskDB(root / 'tg115.db')
@@ -74,11 +74,11 @@ with tempfile.TemporaryDirectory() as temporary:
 assert subprocess.run(['rclone', 'version'], check=True, capture_output=True).stdout.startswith(b'rclone ')
 sys.argv = ['deployment_check', '--validate-only']
 assert main() == 0
-print('TG2CLOUD_CONTAINER_RUNTIME=OK')
+print('TGCLOUD_CONTAINER_RUNTIME=OK')
 """
 
 
-@unittest.skipUnless(os.getenv("TG2CLOUD_TEST_DOCKER") == "1", "real Docker test requires explicit opt-in")
+@unittest.skipUnless(os.getenv("TGCLOUD_TEST_DOCKER") == "1", "real Docker test requires explicit opt-in")
 class RuntimeImageTests(unittest.TestCase):
     def run_docker(self, *arguments: str, timeout: int = 180) -> str:
         result = subprocess.run(
@@ -95,7 +95,7 @@ class RuntimeImageTests(unittest.TestCase):
         values = {
             "api_id": "123456", "user_id": "123456789", "api_hash": "a" * 32,
             "bot_token": "123456789:FAKE_DOCKER_TEST_NOT_A_REAL_TOKEN",
-            "webdav_user": "tg2cloud", "webdav_password": "FAKE_DOCKER_TEST_PASSWORD",
+            "webdav_user": "tgcloud", "webdav_password": "FAKE_DOCKER_TEST_PASSWORD",
             "target": "", "budget": "20", "reserve": "8", "timezone": "Asia/Shanghai",
             "admin_password": "FAKE_DOCKER_TEST_ADMIN_PASSWORD",
         }
@@ -115,8 +115,8 @@ class RuntimeImageTests(unittest.TestCase):
                     candidate.write_text("".join(f"{key}={value}\n" for key, value in config.items()), encoding="utf-8")
                     candidate.chmod(0o600)
                     identifier = uuid.uuid4().hex
-                    image = "tg2cloud-runtime-check:" + identifier
-                    container = "tg2cloud-runtime-check-" + identifier
+                    image = "tgcloud-runtime-check:" + identifier
+                    container = "tgcloud-runtime-check-" + identifier
                     try:
                         self.run_docker("build", "--quiet", "--tag", image, str(context), timeout=900)
                         # This is the candidate's restricted validation boundary,
@@ -126,9 +126,9 @@ class RuntimeImageTests(unittest.TestCase):
                             "--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                             "--env-file", str(candidate), image, "python", "-c", CONTAINER_CHECK,
                         )
-                        self.assertIn("TG2CLOUD_CONFIG=OK", output)
-                        self.assertIn("TG2CLOUD_VERSION=" + product.app_version, output)
-                        self.assertIn("TG2CLOUD_CONTAINER_RUNTIME=OK", output)
+                        self.assertIn("TGCLOUD_CONFIG=OK", output)
+                        self.assertIn("TGCLOUD_VERSION=" + product.app_version, output)
+                        self.assertIn("TGCLOUD_CONTAINER_RUNTIME=OK", output)
                         self.assertEqual(candidate.stat().st_mode & 0o777, 0o600)
                         self.assertEqual(context.stat().st_mode & 0o777, 0o700)
                     finally:

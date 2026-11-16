@@ -9,11 +9,11 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, patch
 
-from tg2cloud.listening import account
-from tg2cloud.persistence.migrations import migrate
-from tg2cloud.persistence.plans import create_schema
-from tg2cloud.persistence.sqlite import TaskDB
-from tg2cloud.telegram.planning import output
+from tgcloud.listening import account
+from tgcloud.persistence.migrations import migrate
+from tgcloud.persistence.plans import create_schema
+from tgcloud.persistence.sqlite import TaskDB
+from tgcloud.telegram.planning import output
 
 
 class ReleaseAuditTests(unittest.IsolatedAsyncioTestCase):
@@ -74,7 +74,7 @@ class ReleaseAuditTests(unittest.IsolatedAsyncioTestCase):
                 def interrupt_after_schema(connection):
                     create_schema(connection)
                     raise KeyboardInterrupt
-                with patch("tg2cloud.persistence.plans.create_schema", side_effect=interrupt_after_schema), self.assertRaises(KeyboardInterrupt):
+                with patch("tgcloud.persistence.plans.create_schema", side_effect=interrupt_after_schema), self.assertRaises(KeyboardInterrupt):
                     migrate(c, columns)
                 self.assertFalse(c.in_transaction)
                 self.assertEqual(c.execute("PRAGMA user_version").fetchone()[0], 2)

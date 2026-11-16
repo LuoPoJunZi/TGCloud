@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
-from tg2cloud.persistence.sqlite import TaskDB
+from tgcloud.persistence.sqlite import TaskDB
 
 
 class DatabaseHotpathTests(unittest.TestCase):
@@ -44,7 +44,7 @@ class DatabaseHotpathTests(unittest.TestCase):
         self.assertEqual(self.db.count_states(("queued",)), 2)
 
     def test_filtered_counts_keep_owner_scope_and_retained_budget(self):
-        from tg2cloud.domain.states import SCHEDULING_STATES
+        from tgcloud.domain.states import SCHEDULING_STATES
 
         queued = self.task(owner=9)
         other = self.task(owner=10)
@@ -98,10 +98,10 @@ class DatabaseHotpathTests(unittest.TestCase):
 
     def test_unchanged_wait_does_not_write_or_invalidate_revision(self):
         task = self.task()
-        with patch("tg2cloud.persistence.sqlite.time.time", return_value=123):
+        with patch("tgcloud.persistence.sqlite.time.time", return_value=123):
             self.assertTrue(self.db.set_wait_reason(task["id"], "等待空间", states=("queued",)))
         changes = self.db._conn.total_changes
-        with patch("tg2cloud.persistence.sqlite.time.time", return_value=456):
+        with patch("tgcloud.persistence.sqlite.time.time", return_value=456):
             for _ in range(100):
                 self.assertFalse(self.db.set_wait_reason(task["id"], "等待空间", states=("queued",)))
         self.assertEqual(self.db._conn.total_changes, changes)

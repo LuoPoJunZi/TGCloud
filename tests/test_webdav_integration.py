@@ -14,8 +14,8 @@ SOURCE = Path(__file__).resolve().parents[1]
 
 from test_scenarios import make_settings
 
-from tg2cloud.storage.rclone import RcloneClient, RcloneError
-from tg2cloud.storage.verify_destination import verify_destination
+from tgcloud.storage.rclone import RcloneClient, RcloneError
+from tgcloud.storage.verify_destination import verify_destination
 
 
 @unittest.skipUnless(shutil.which("rclone"), "需要本机 rclone；Linux CI 必须安装后运行")
@@ -62,17 +62,6 @@ class RealWebDAVTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.client.healthy())
         self.assertFalse((self.remote_root / "new-target").exists())
         await verify_destination(self.settings, self.client)
-        self.assertEqual(list((self.remote_root / "new-target").iterdir()), [])
-
-    async def test_openlist_move_command_works_against_local_webdav(self) -> None:
-        settings = replace(
-            self.settings,
-            storage_backend="openlist",
-            rclone_remote_name="openlist",
-            rclone_config_path=self.settings.data_dir / "openlist-rclone.conf",
-        )
-        client = RcloneClient(settings)
-        await verify_destination(settings, client)
         self.assertEqual(list((self.remote_root / "new-target").iterdir()), [])
 
     async def test_real_stream_upload_and_size_verification(self) -> None:

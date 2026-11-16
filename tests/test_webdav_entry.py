@@ -15,25 +15,29 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tg2cloud.addons.external_webdav import entry, releases
-from tg2cloud.deployment import configuration, runtime
-from tg2cloud.deployment.instances import Instance
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.version import VERSION
+from local_project_fixture import host_source
+from local_project_fixture import source as project_source
+
+from tgcloud.addons.external_webdav import entry, releases
+from tgcloud.deployment import configuration, runtime
+from tgcloud.deployment.instances import Instance
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.version import VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class EntryTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="tg2cloud-webdav-entry-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="tgcloud-webdav-entry-")
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name).resolve()
         self.directory.chmod(0o700)
         self.root = self.directory / "addon state"
-        self.command = self.directory / "tg2cloud-webdav"
+        self.command = self.directory / "tgcloud-webdav"
         self.instance = Instance(PRODUCTS["clouddrive2"], self.directory / "custom-instance", True)
         self.instance.directory.mkdir(mode=0o700)
+        self.instance.source_digest = project_source().digest
         self.ui, self.messages = Mock(), []
         self.ui.confirm.return_value = True
         # CI fixtures belong to the test user, not root. Simulate only that
@@ -56,45 +60,27 @@ class EntryTests(unittest.TestCase):
 
     def source(self, destination=None, *, legacy=False):
         root = destination or self.directory / "source"
-        files = {
-            "scripts/run_source.py": b"# entry\n",
-            "src/tg2cloud/__init__.py": b"",
-            "src/tg2cloud/version.py": ('VERSION = "' + ("1.4.6" if legacy else VERSION) + '"\n').encode(),
-            "src/tg2cloud/config.py": b"# stdlib\n",
-            "src/tg2cloud/cli/__init__.py": b"",
-            "src/tg2cloud/cli/commands.py": b"# lazy dispatch\n",
-            "src/tg2cloud/deployment/__init__.py": b"",
-            "src/tg2cloud/addons/external_webdav/cli.py": b"# historical CLI without entry.py\n",
-            releases.FEATURE: json.dumps(releases.LEGACY_CONTRACT if legacy else releases.CONTRACT).encode(),
-        }
+        host_source(root)
         if legacy:
-            files["install-webdav.sh"] = b"#!/bin/bash\n"
-        else:
-            files.update({name: b"# unified host source\n" for name in (
-                "src/tg2cloud/cli/management.py", "src/tg2cloud/deployment/uninstall.py",
-                "src/tg2cloud/addons/external_webdav/entry.py", "src/tg2cloud/addons/external_webdav/service.py")})
-        for relative, body in files.items():
-            target = root / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(body)
-            target.chmod(0o600)
-        for path in (root, *root.rglob("*")):
-            if path.is_dir():
-                path.chmod(0o700)
+            (root / releases.FEATURE).write_text(json.dumps({"api": 1, "proxy_schema": 2, "owner": releases.OWNER}))
+            (root / "install-webdav.sh").write_bytes(b"#!/bin/sh\n")
         return root
 
-    def bundle(self, *, legacy=True):
+    def bundle(self, *, legacy=False):
         source = self.source(legacy=legacy)
         checksum = hashlib.sha256()
-        for relative in releases.host_files(source):
+        for relative in runtime.files(source):
             checksum.update(relative.encode() + b"\0" + (source / relative).read_bytes())
         digest = checksum.hexdigest()
         bundle = self.root / "runtime" / digest
-        bundle.parent.mkdir(parents=True, mode=0o700)
+        bundle.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
         self.root.chmod(0o700)
         shutil.move(str(source), bundle)
-        # This historical marker deliberately has no new schema/owner field.
-        (bundle / "installation.json").write_text(json.dumps({"source": "local-reviewed-source", "version": "1.4.6", "code_sha256": digest}))
+        identity = {"schema": 1, "owner": releases.OWNER, "project": "tgcloud", "version": VERSION,
+                    "origin": project_source().origin, "code_sha256": digest}
+        if legacy:
+            identity = {"source": "old-project", "version": "1.4.6", "code_sha256": digest}
+        (bundle / "installation.json").write_text(json.dumps(identity))
         (bundle / "installation.json").chmod(0o600)
         self.command.write_text(entry.HEADER + "exec python3 -B " + shlex.quote(str(bundle / "scripts/run_source.py")) + ' webdav "$@"\n')
         self.command.chmod(0o700)
@@ -103,15 +89,16 @@ class EntryTests(unittest.TestCase):
     def verify(self):
         return entry.installed(launcher=self.command, root=self.root)
 
-    def test_historical_bundle_uses_its_actual_files_and_needs_no_new_entry(self):
-        bundle = self.bundle()
-        self.assertFalse((bundle / "src/tg2cloud/addons/external_webdav/entry.py").exists())
-        self.assertEqual(self.verify(), bundle)
+    def test_historical_bundle_is_rejected_without_executing_old_code(self):
+        self.bundle(legacy=True)
+        with patch.object(entry.subprocess, "Popen") as execute, self.assertRaisesRegex(ValueError, "不属于此独立项目"):
+            self.verify()
+        execute.assert_not_called()
 
-    def test_legacy_bundle_cannot_drop_its_declared_shell_input(self):
-        bundle = self.bundle()
+    def test_original_bundle_cannot_be_adopted_by_removing_old_shell_input(self):
+        bundle = self.bundle(legacy=True)
         (bundle / "install-webdav.sh").unlink()
-        with self.assertRaisesRegex(ValueError, "源码缺失"):
+        with self.assertRaisesRegex(ValueError, "不属于此独立项目"):
             self.verify()
 
     def test_missing_launcher_returns_uninstalled(self):
@@ -119,20 +106,20 @@ class EntryTests(unittest.TestCase):
 
     def test_changed_nested_code_is_rejected(self):
         bundle = self.bundle()
-        (bundle / "src/tg2cloud/addons/external_webdav/cli.py").write_bytes(b"# replaced\n")
-        with self.assertRaisesRegex(ValueError, "摘要不匹配"):
+        (bundle / "src/tgcloud/addons/external_webdav/cli.py").write_bytes(b"# replaced\n")
+        with self.assertRaisesRegex(ValueError, "来源清单不一致"):
             self.verify()
 
     def test_added_or_removed_code_changes_digest(self):
         bundle = self.bundle()
-        path = bundle / "src/tg2cloud/addons/external_webdav/extra.py"
+        path = bundle / "src/tgcloud/addons/external_webdav/extra.py"
         path.write_bytes(b"# unexpected\n")
         path.chmod(0o600)
-        with self.assertRaisesRegex(ValueError, "摘要不匹配"):
+        with self.assertRaisesRegex(ValueError, "来源清单不一致"):
             self.verify()
         path.unlink()
-        (bundle / "src/tg2cloud/addons/external_webdav/cli.py").unlink()
-        with self.assertRaisesRegex(ValueError, "摘要不匹配|未知资源"):
+        (bundle / "src/tgcloud/addons/external_webdav/cli.py").unlink()
+        with self.assertRaisesRegex(ValueError, "来源清单不一致|缺失|未知资源"):
             self.verify()
 
     def test_unknown_file_or_empty_directory_is_rejected(self):
@@ -177,19 +164,18 @@ class EntryTests(unittest.TestCase):
         installed = entry.installed
         process = Mock()
         process.wait.return_value = 0
-        self.instance.product = PRODUCTS["openlist"]
         with patch.object(entry, "installed", side_effect=lambda: installed(launcher=self.command, root=self.root)), \
                 patch.object(entry.releases, "download") as download, \
                 patch.object(entry.subprocess, "Popen", return_value=process) as execute, \
-                patch.dict(os.environ, {"TG2CLOUD_SOURCE_ROOT": "not-the-independent-code"}):
+                patch.dict(os.environ, {"TGCLOUD_SOURCE_ROOT": "not-the-independent-code"}):
             entry.open_menu(self.instance, self.ui, self.messages.append)
         download.assert_not_called()
         self.ui.confirm.assert_not_called()
         arguments = execute.call_args.args[0]
         self.assertEqual(arguments, [sys.executable, "-B", str(bundle / "scripts/run_source.py"), "webdav",
-                                     "--edition", "openlist", "--install-dir", str(self.instance.directory)])
-        self.assertEqual(execute.call_args.kwargs["env"]["TG2CLOUD_MANAGER_MENU"], "1")
-        self.assertNotIn("TG2CLOUD_SOURCE_ROOT", execute.call_args.kwargs["env"])
+                                     "--edition", "clouddrive2", "--install-dir", str(self.instance.directory)])
+        self.assertEqual(execute.call_args.kwargs["env"]["TGCLOUD_MANAGER_MENU"], "1")
+        self.assertNotIn("TGCLOUD_SOURCE_ROOT", execute.call_args.kwargs["env"])
         self.assertNotIn("start_new_session", execute.call_args.kwargs)
 
     def test_declined_first_download_has_no_side_effect(self):
@@ -201,51 +187,31 @@ class EntryTests(unittest.TestCase):
         execute.assert_not_called()
         self.assertIn("不会自动启用", "\n".join(self.messages))
 
-    def test_first_download_uses_source_marker_and_complete_interactive_menu(self):
-        directories = []
-        identity = {"tag": "v1.4.6", "commit": "a" * 40, "source": "stable-release", "archive_sha256": "b" * 64}
-
-        def download(directory):
-            directories.append(directory)
-            if os.name == "posix":
-                self.assertFalse(directory.stat().st_mode & 0o077)
-            return self.source(directory / "source"), identity
-
-        def execute(arguments, *, env):
-            marker = Path(arguments[2]).parent.parent / ".external-webdav-source.json"
-            self.assertEqual(json.loads(marker.read_text()), identity)
-            self.assertNotIn("install", arguments)
-            self.assertEqual(arguments[3:], ["webdav", "--edition", "clouddrive2", "--install-dir", str(self.instance.directory)])
-            process = Mock()
-            process.wait.return_value = 0
-            return process
-
-        # config.atomic's strict path check is covered elsewhere. This fixture
-        # has test-user ownership on non-root CI, preserving the real writer.
-        with patch.object(entry, "installed", return_value=None), patch.object(entry.releases, "download", side_effect=download), \
-                patch.object(entry.subprocess, "Popen", side_effect=execute), patch.object(entry.config, "canonical"):
+    def test_first_open_copies_complete_same_source_without_network(self):
+        from tgcloud.addons.external_webdav.service import Service
+        installed = entry.installed
+        service = Service(self.instance.product, Mock(), self.messages.append, self.ui, root=self.root)
+        service.locked = lambda: nullcontext()
+        service.record = Mock(return_value=None)
+        service.preflight = Mock(return_value=(self.instance, {}))
+        original = service.install_runtime
+        service.install_runtime = lambda source, identity: original(source, identity, launcher=self.command)
+        with patch.object(entry, "installed", side_effect=lambda: installed(launcher=self.command, root=self.root)), patch("tgcloud.addons.external_webdav.service.Service", return_value=service), patch.object(entry.config, "canonical"), patch.object(entry, "_run") as execute, patch.object(entry.releases, "download") as download:
             entry.open_menu(self.instance, self.ui, self.messages.append)
-        self.assertEqual(len(directories), 1)
-        self.assertFalse(directories[0].exists())
+        bundle = self.verify()
+        self.assertIsNotNone(bundle)
+        self.assertEqual(json.loads((bundle / "installation.json").read_text())["origin"], project_source().origin)
+        execute.assert_called_once_with(bundle, self.instance, self.messages.append)
+        download.assert_not_called()
+        service.session.run.assert_not_called()
 
-    def test_partial_main_bundle_never_becomes_addon_configuration_source(self):
+    def test_untrusted_source_environment_cannot_replace_the_verified_source(self):
         helper = self.directory / "partial-main"
-        for relative, body in runtime.files(ROOT).items():
-            target = helper / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(body)
-        self.assertFalse((helper / releases.FEATURE).exists())
-        self.assertFalse((helper / "install-webdav.sh").exists())
-        with patch.dict(os.environ, {"TG2CLOUD_SOURCE_ROOT": str(helper)}), \
-                patch.object(entry, "installed", return_value=None), \
-                patch.object(entry.releases, "download", side_effect=ValueError("stable source unavailable")) as download, \
-                patch.object(entry, "_run") as execute, \
-                patch("tg2cloud.addons.external_webdav.service.Service.configure") as configure, \
-                self.assertRaisesRegex(ValueError, "stable source unavailable"):
+        helper.mkdir()
+        with patch.dict(os.environ, {"TGCLOUD_SOURCE_ROOT": str(helper)}), patch.object(entry, "installed", return_value=None), patch.object(entry.releases, "download") as download, patch.object(entry, "_run") as execute:
+            self.ui.confirm.return_value = False
             entry.open_menu(self.instance, self.ui, self.messages.append)
-        download.assert_called_once()
-        self.assertFalse(download.call_args.args[0].exists())
-        configure.assert_not_called()
+        download.assert_not_called()
         execute.assert_not_called()
         self.assertFalse(self.command.exists())
 
@@ -258,108 +224,72 @@ class EntryTests(unittest.TestCase):
         download.assert_not_called()
         execute.assert_not_called()
 
-    def test_uninstall_or_upgrade_child_exit_returns_without_reopening(self):
+    def test_child_exit_returns_without_reopening_the_old_runtime(self):
+        previous = self.bundle()
         process = Mock()
         process.wait.return_value = 0
-        with patch.object(entry, "installed", return_value=self.source(legacy=False)), \
-                patch.object(entry.releases, "contract", return_value=releases.CONTRACT), \
-                patch.object(entry.subprocess, "Popen", return_value=process) as execute:
-            self.assertIsNone(entry.open_menu(self.instance, self.ui, self.messages.append))
+        with patch.object(entry, "installed", return_value=previous), patch.object(entry.subprocess, "Popen", return_value=process) as execute:
+            entry.open_menu(self.instance, self.ui, self.messages.append)
         execute.assert_called_once()
         process.wait.assert_called_once_with()
 
-    def test_old_current_contract_can_update_without_gateway_authentication(self):
-        from tg2cloud.addons.external_webdav.service import Service
-        with patch(__name__ + ".VERSION", "1.4.7"):
-            previous = self.bundle(legacy=False)
-        installed = entry.installed
-        service = Service(self.instance.product, Mock(), self.messages.append, self.ui, root=self.root)
-        service.locked = lambda: nullcontext()
-        service.record = Mock(return_value=None)
-        service.preflight = Mock()
-        service.configure = Mock()
-        original = service.install_runtime
-        service.install_runtime = lambda source, identity: original(source, identity, launcher=self.command)
-        with (patch.object(entry, "installed", side_effect=lambda: installed(launcher=self.command, root=self.root)),
-              patch.object(entry.releases, "download", side_effect=lambda directory: (self.source(directory / "new"), {"version": VERSION})),
-              patch("tg2cloud.addons.external_webdav.service.Service", return_value=service),
-              patch.object(entry.config, "canonical"), patch.object(entry, "_run") as run):
-            entry.open_menu(self.instance, self.ui, self.messages.append)
-        self.assertNotEqual(self.verify(), previous)
-        self.assertTrue(previous.exists())
-        service.preflight.assert_called_once_with(str(self.instance.directory), require_running=False)
-        service.configure.assert_not_called()
-        run.assert_called_once()
-        self.assertIn("更新", self.ui.confirm.call_args.args[0])
-
-    def test_legacy_migration_can_be_declined_for_offline_access(self):
+    def test_same_version_different_source_still_requires_confirmation(self):
         previous = self.bundle()
+        marker = previous / "installation.json"
+        value = json.loads(marker.read_text())
+        value["origin"]["source_sha256"] = "b" * 64
+        marker.write_text(json.dumps(value))
         self.ui.confirm.return_value = False
-        with (patch.object(entry, "installed", return_value=previous),
-              patch.object(entry.releases, "download") as download, patch.object(entry, "_run") as execute):
+        with patch.object(entry, "installed", return_value=previous), patch.object(entry, "_run") as execute:
             entry.open_menu(self.instance, self.ui, self.messages.append)
-        download.assert_not_called()
-        execute.assert_called_once_with(previous, self.instance, self.messages.append)
+        self.ui.confirm.assert_called_once()
+        execute.assert_not_called()
+        self.assertEqual(json.loads(marker.read_text()), value)
 
-    def test_legacy_migration_uses_verified_complete_source_and_preserves_feature_state(self):
-        from tg2cloud.addons.external_webdav.service import Service
-        previous = self.bundle()
+    def test_other_project_runtime_stops_before_prompt_or_execution(self):
+        self.bundle(legacy=True)
         installed = entry.installed
-        identity = {"source": "stable-release", "tag": "v1.4.6", "commit": "a" * 40}
-        service = Service(self.instance.product, Mock(), self.messages.append, self.ui, root=self.root)
-        service.locked = lambda: nullcontext()
-        service.record = Mock(return_value=None)
-        service.configure = Mock()
-        service.preflight = Mock()
-        original_install = service.install_runtime
-        service.install_runtime = lambda source, metadata: original_install(source, metadata, launcher=self.command)
-        with (patch.object(entry, "installed", side_effect=lambda: installed(launcher=self.command, root=self.root)),
-              patch.object(entry.releases, "download", side_effect=lambda directory: (self.source(directory / "source"), identity)),
-              patch("tg2cloud.addons.external_webdav.service.Service", return_value=service),
-              patch.object(entry.config, "canonical"),
-              patch.object(entry, "_run") as execute):
+        with patch.object(entry, "installed", side_effect=lambda: installed(launcher=self.command, root=self.root)), patch.object(entry, "_run") as execute, self.assertRaises(ValueError):
             entry.open_menu(self.instance, self.ui, self.messages.append)
-        migrated = self.verify()
-        self.assertNotEqual(migrated, previous)
-        self.assertTrue(previous.exists())
-        self.assertEqual(releases.contract(migrated), releases.CONTRACT)
-        self.assertFalse((migrated / "install-webdav.sh").exists())
-        self.assertEqual(json.loads((migrated / "installation.json").read_text())["commit"], identity["commit"])
-        execute.assert_called_once_with(migrated, self.instance, self.messages.append)
-        service.preflight.assert_called_once_with(str(self.instance.directory), require_running=False)
-        service.configure.assert_not_called()
-        service.session.run.assert_not_called()
-        self.assertFalse((self.root / self.instance.product.key / "config.json").exists())
+        self.ui.confirm.assert_not_called()
+        execute.assert_not_called()
 
-    def test_old_stable_source_does_not_fake_a_successful_migration(self):
-        previous = self.bundle()
-        before = self.command.read_bytes()
-        with (patch.object(entry, "installed", return_value=previous),
-              patch.object(entry.releases, "download", side_effect=lambda directory: (self.source(directory / "source", legacy=True), {})),
-              patch.object(entry, "_run") as execute,
-              self.assertRaisesRegex(ValueError, "尚未包含统一入口布局")):
+    def test_main_instance_source_mismatch_stops_before_install_or_credentials(self):
+        self.instance.source_digest = "b" * 64
+        with patch.object(entry, "installed", return_value=None), patch.object(entry, "_run") as execute, self.assertRaisesRegex(ValueError, "来源不同"):
             entry.open_menu(self.instance, self.ui, self.messages.append)
+        execute.assert_not_called()
+        self.ui.confirm.assert_not_called()
+
+    def test_unrecognized_old_marker_never_replaces_current_command(self):
+        previous = self.bundle(legacy=True)
+        before = self.command.read_bytes()
+        installed = entry.installed
+        with patch.object(entry, "installed", side_effect=lambda: installed(launcher=self.command, root=self.root)), patch.object(entry, "_run") as execute, self.assertRaisesRegex(ValueError, "不属于此独立项目"):
+            entry.open_menu(self.instance, self.ui, self.messages.append)
+        self.assertTrue(previous.exists())
         self.assertEqual(self.command.read_bytes(), before)
         execute.assert_not_called()
 
-    def test_failed_or_concurrent_migration_never_runs_or_replaces_old_command(self):
+    def test_failed_or_concurrent_update_never_replaces_current_command(self):
         previous = self.bundle()
         before = self.command.read_bytes()
+        # A recognized prior source can be updated after confirmation, never before.
+        value = json.loads((previous / "installation.json").read_text())
+        value["origin"]["source_sha256"] = "b" * 64
+        (previous / "installation.json").write_text(json.dumps(value))
         for changed in (False, True):
-            with self.subTest(changed=changed):
-                service = Mock()
-                service.locked.return_value = nullcontext()
-                service.record.return_value = None
-                service.install_runtime.side_effect = OSError("synthetic write failure")
-                with (patch.object(entry, "installed", side_effect=[previous, self.directory if changed else previous]),
-                      patch.object(entry.releases, "download", side_effect=lambda directory: (self.source(directory / "source"), {})),
-                      patch("tg2cloud.addons.external_webdav.service.Service", return_value=service),
-                      patch.object(entry, "_run") as execute, self.assertRaises((OSError, ValueError))):
-                    entry.open_menu(self.instance, self.ui, self.messages.append)
-                self.assertEqual(self.command.read_bytes(), before)
-                execute.assert_not_called()
-                if changed:
-                    service.install_runtime.assert_not_called()
+            service = Mock()
+            service.locked.return_value = nullcontext()
+            service.record.return_value = None
+            service.preflight.return_value = (self.instance, {})
+            service.install_runtime.side_effect = OSError("synthetic write failure")
+            with patch.object(entry, "installed", side_effect=[previous, self.directory if changed else previous]), patch("tgcloud.addons.external_webdav.service.Service", return_value=service), patch.object(entry, "_run") as execute, self.assertRaises((OSError, ValueError)):
+                entry.open_menu(self.instance, self.ui, self.messages.append)
+            self.assertEqual(self.command.read_bytes(), before)
+            execute.assert_not_called()
+            if changed:
+                service.install_runtime.assert_not_called()
 
     def test_interrupt_terminates_and_reaps_only_the_child(self):
         process = Mock()
@@ -409,7 +339,7 @@ class EntryTests(unittest.TestCase):
                                 cwd=self.directory, capture_output=True, text=True, encoding="utf-8", check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("外部 WebDAV", result.stdout)
-        self.assertFalse((source / "src/tg2cloud/telegram").exists())
+        self.assertFalse((source / "src/tgcloud/telegram").exists())
 
 
 class OwnershipPolicyTests(unittest.TestCase):

@@ -23,20 +23,20 @@ SOURCE = Path(__file__).resolve().parents[1]
 from test_scenarios import FakeRclone, make_service, make_settings
 from test_telethon_compat import callback_data
 
-from tg2cloud.deployment.check import code_fingerprint, mismatched_keys
-from tg2cloud.domain.states import LEGAL_TRANSITIONS, STATE_LABELS
-from tg2cloud.monitoring.healthcheck import healthy
-from tg2cloud.monitoring.resources import AdaptiveWindow, ResourceSnapshot
-from tg2cloud.persistence.sqlite import SCHEMA_VERSION, TaskDB
-from tg2cloud.storage.rclone import (
+from tgcloud.deployment.check import code_fingerprint, mismatched_keys
+from tgcloud.domain.states import LEGAL_TRANSITIONS, STATE_LABELS
+from tgcloud.monitoring.healthcheck import healthy
+from tgcloud.monitoring.resources import AdaptiveWindow, ResourceSnapshot
+from tgcloud.persistence.sqlite import SCHEMA_VERSION, TaskDB
+from tgcloud.storage.rclone import (
     MoveUncertainError,
     RcloneClient,
     RcloneError,
     _read_progress_tail,
     parse_progress,
 )
-from tg2cloud.telegram.views import BOT_MENU_COMMANDS, truncate_display
-from tg2cloud.transfer.ports import DestinationProbe
+from tgcloud.telegram.views import BOT_MENU_COMMANDS, truncate_display
+from tgcloud.transfer.ports import DestinationProbe
 
 
 class OptimizationTests(unittest.IsolatedAsyncioTestCase):
@@ -90,7 +90,7 @@ class OptimizationTests(unittest.IsolatedAsyncioTestCase):
         event = SimpleNamespace(reply=AsyncMock())
         await self.service._handle_command(event, "/help")
         text = event.reply.await_args.args[0]
-        self.assertIn("TG2Cloud 使用帮助", text)
+        self.assertIn("TGCloud 使用帮助", text)
         self.assertNotIn("/confirm", text)
         self.assertNotIn("人工确认", text)
 
@@ -105,12 +105,12 @@ class OptimizationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_start_opens_dashboard_with_three_emoji_buttons(self) -> None:
         event = SimpleNamespace(reply=AsyncMock())
-        with patch("tg2cloud.telegram.views.time.strftime", return_value="21:35:08"):
+        with patch("tgcloud.telegram.views.time.strftime", return_value="21:35:08"):
             await self.service._handle_command(event, "/start")
 
         text = event.reply.await_args.args[0]
         buttons = event.reply.await_args.kwargs["buttons"]
-        self.assertIn("☁️ **TG2Cloud**", text)
+        self.assertIn("☁️ **TGCloud**", text)
         self.assertIn("🟢 正常运行 · CloudDrive2", text)
         self.assertIn("🕐 更新于 21:35:08", text)
         self.assertEqual([[button.text for button in row] for row in buttons], [["📋", "🖥", "🔄"], ["转存设置", "监听管理"]])
@@ -119,14 +119,8 @@ class OptimizationTests(unittest.IsolatedAsyncioTestCase):
             [[b"queue:1", b"vps_resources", b"refresh:home"], [b"menu:transfer", b"menu:listen"]],
         )
 
-    async def test_dashboard_uses_live_counts_rates_and_openlist_label(self) -> None:
+    async def test_dashboard_uses_live_counts_rates_and_cloud_drive_label(self) -> None:
         self.service.db.weekly_failed_count = Mock(return_value=2)
-        self.service.settings = replace(
-            self.settings,
-            storage_backend="openlist",
-            destination_label="OpenList",
-            rclone_remote_name="openlist",
-        )
         self.service.db.counts = Mock(
             return_value={
                 "queued": 1,
@@ -148,10 +142,10 @@ class OptimizationTests(unittest.IsolatedAsyncioTestCase):
             sampled_at=time.time(),
         )
 
-        with patch("tg2cloud.telegram.views.time.strftime", return_value="21:35:08"):
+        with patch("tgcloud.telegram.views.time.strftime", return_value="21:35:08"):
             text = self.service._format_status()
 
-        self.assertIn("🟢 正常运行 · OpenList", text)
+        self.assertIn("🟢 正常运行 · CloudDrive2", text)
         self.assertIn("⏳ 1　⬇️ 1　⬆️ 1　❌ 2", text)
         self.assertIn("⬇️ 8.25 MB/s", text)
         self.assertIn("⬆️ 3.60 MB/s", text)
@@ -204,7 +198,7 @@ class OptimizationTests(unittest.IsolatedAsyncioTestCase):
         home.answer.assert_awaited_once_with()
         self.service._probe_destination_once.assert_awaited_once_with()
         home.edit.assert_awaited_once()
-        self.assertIn("TG2Cloud", home.edit.await_args.args[0])
+        self.assertIn("TGCloud", home.edit.await_args.args[0])
         self.assertEqual(
             [button.text for button in home.edit.await_args.kwargs["buttons"][0]],
             ["📋", "🖥", "🔄"],
@@ -291,7 +285,7 @@ class OptimizationTests(unittest.IsolatedAsyncioTestCase):
         await self.service._handle_callback(event)
 
         self.service._probe_destination_once.assert_awaited_once_with()
-        self.assertIn("☁️ **TG2Cloud**", event.edit.await_args.args[0])
+        self.assertIn("☁️ **TGCloud**", event.edit.await_args.args[0])
 
     async def test_unchanged_dashboard_edit_is_not_user_visible_error(self) -> None:
         event = SimpleNamespace(
@@ -577,51 +571,7 @@ class OptimizationTests(unittest.IsolatedAsyncioTestCase):
         self.service.rclone.upload.assert_not_awaited()
         self.assertEqual(self.service.rclone.files, {"sample.bin": b"data"})
 
-    async def test_openlist_local_upload_writes_final_name_without_move(self) -> None:
-        task = self.task(local=True)
-        self.service.settings = replace(self.settings, storage_backend="openlist")
-        self.service.rclone.move = AsyncMock(
-            side_effect=AssertionError("OpenList 不应调用 MOVE")
-        )
-
-        await self.service._upload_one(task["id"])
-
-        recorded = self.db.get(task["id"])
-        self.assertEqual(recorded["state"], "completed")
-        self.assertEqual(recorded["remote_path"], "sample.bin")
-        self.assertEqual(recorded["remote_final_path"], "sample.bin")
-        self.assertIsNone(recorded["remote_temp_path"])
-        self.assertEqual(self.service.rclone.files, {"sample.bin": b"data"})
-        self.service.rclone.move.assert_not_awaited()
-
-    async def test_openlist_stream_writes_final_name_without_move(self) -> None:
-        task = self.task()
-        self.db.transition(task["id"], "reserved")
-        self.service.settings = replace(self.settings, storage_backend="openlist")
-
-        async def download(_message, *, file, progress_callback) -> None:
-            await file.write(b"data")
-            progress_callback(4, 4)
-
-        self.service._source = SimpleNamespace(
-            get_messages=AsyncMock(return_value=SimpleNamespace(media=True)),
-            download_media=download,
-        )
-        self.service.rclone.move = AsyncMock(
-            side_effect=AssertionError("OpenList 不应调用 MOVE")
-        )
-
-        await self.service._stream_one(task["id"])
-
-        recorded = self.db.get(task["id"])
-        self.assertEqual(recorded["state"], "completed")
-        self.assertEqual(recorded["remote_path"], "sample.bin")
-        self.assertEqual(recorded["remote_final_path"], "sample.bin")
-        self.assertIsNone(recorded["remote_temp_path"])
-        self.assertEqual(self.service.rclone.files, {"sample.bin": b"data"})
-        self.service.rclone.move.assert_not_awaited()
-
-    async def test_openlist_unknown_move_stops_upload_and_survives_restart(self) -> None:
+    async def test_unknown_move_stops_upload_and_survives_restart(self) -> None:
         task = self.task(local=True)
         self.service.rclone.move = AsyncMock(
             side_effect=MoveUncertainError("MOVE_UNCERTAIN: test")
@@ -638,28 +588,7 @@ class OptimizationTests(unittest.IsolatedAsyncioTestCase):
         await self.service._handle_command(event, "/retry all")
         self.assertEqual(self.db.get(task["id"])["state"], "upload_failed_retained")
 
-    async def test_openlist_direct_final_stat_failure_preserves_final_file(self) -> None:
-        task = self.task(local=True)
-        self.service.settings = replace(self.settings, storage_backend="openlist")
-        original_size = self.service.rclone.remote_size
-        self.service.rclone.move = AsyncMock(
-            side_effect=AssertionError("OpenList 不应调用 MOVE")
-        )
-
-        async def unstable_size(path: str) -> int:
-            if path == "sample.bin":
-                raise RcloneError("object not found")
-            return await original_size(path)
-
-        self.service.rclone.remote_size = unstable_size
-        with patch("tg2cloud.app.asyncio.sleep", new_callable=AsyncMock):
-            await self.service._upload_one(task["id"])
-        self.assertEqual(self.db.get(task["id"])["state"], "upload_failed_retained")
-        self.assertIn("sample.bin", self.service.rclone.files)
-        self.assertEqual(self.service.rclone.removed, [])
-        self.service.rclone.move.assert_not_awaited()
-
-    async def test_openlist_unknown_move_stops_stream_without_remote_cleanup(self) -> None:
+    async def test_unknown_move_stops_stream_without_remote_cleanup(self) -> None:
         task = self.task()
         self.db.transition(task["id"], "reserved")
 
@@ -747,14 +676,14 @@ class OptimizationTests(unittest.IsolatedAsyncioTestCase):
         source = "\n".join(
             (SOURCE / relative).read_text(encoding="utf-8")
             for relative in (
-                "src/tg2cloud/transfer/service.py",
-                "src/tg2cloud/transfer/scheduler.py",
-                "src/tg2cloud/transfer/download.py",
-                "src/tg2cloud/transfer/upload.py",
-                "src/tg2cloud/transfer/streaming.py",
-                "src/tg2cloud/transfer/recovery.py",
-                "src/tg2cloud/transfer/actions.py",
-                "src/tg2cloud/telegram/commands.py",
+                "src/tgcloud/transfer/service.py",
+                "src/tgcloud/transfer/scheduler.py",
+                "src/tgcloud/transfer/download.py",
+                "src/tgcloud/transfer/upload.py",
+                "src/tgcloud/transfer/streaming.py",
+                "src/tgcloud/transfer/recovery.py",
+                "src/tgcloud/transfer/actions.py",
+                "src/tgcloud/telegram/commands.py",
             )
         )
         self.assertNotRegex(source, r"self\.db\.update\([\s\S]{0,80}?state=")
@@ -930,7 +859,7 @@ class OptimizationTests(unittest.IsolatedAsyncioTestCase):
         async def stop(_):
             self.service._stop.set()
 
-        with patch("tg2cloud.app.asyncio.sleep", side_effect=stop):
+        with patch("tgcloud.app.asyncio.sleep", side_effect=stop):
             await self.service._watch_loop()
         message.edit.assert_awaited_once()
         self.assertFalse(self.service._watch_messages)
@@ -963,11 +892,11 @@ class OptimizationTests(unittest.IsolatedAsyncioTestCase):
         window = self.service.download_window
         args = {"recent_errors": 0, "destination_healthy": True, "demand_present": True,
                 "throughput": 100, "active_count": 2}
-        with patch("tg2cloud.monitoring.resources.time.monotonic", return_value=0):
+        with patch("tgcloud.monitoring.resources.time.monotonic", return_value=0):
             self.assertEqual(window.update(self.service.snapshot, **args), 2)
-        with patch("tg2cloud.monitoring.resources.time.monotonic", return_value=5):
+        with patch("tgcloud.monitoring.resources.time.monotonic", return_value=5):
             self.assertEqual(window.update(self.service.snapshot, **args), 2)
-        with patch("tg2cloud.monitoring.resources.time.monotonic", return_value=11):
+        with patch("tgcloud.monitoring.resources.time.monotonic", return_value=11):
             self.assertEqual(window.update(self.service.snapshot, **args), 1)
 
     async def test_upload_backlog_prevents_download_window_growth(self) -> None:
@@ -1033,7 +962,7 @@ class OptimizationTests(unittest.IsolatedAsyncioTestCase):
         ]).encode())
         stream.feed_eof()
         process = SimpleNamespace(stdout=stream, stderr=None, returncode=0, wait=AsyncMock(return_value=0))
-        with patch("tg2cloud.storage.rclone.asyncio.create_subprocess_exec", new=AsyncMock(return_value=process)):
+        with patch("tgcloud.storage.rclone.asyncio.create_subprocess_exec", new=AsyncMock(return_value=process)):
             scan = await client.list_staging_objects()
         self.assertTrue(scan.complete)
         self.assertEqual(scan.checked, 5)
@@ -1053,7 +982,7 @@ class OptimizationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_configuration_comparison_outputs_only_field_names(self) -> None:
         self.assertEqual(mismatched_keys({"TEST_SECRET": "new"}, {"TEST_SECRET": "old"}), ["TEST_SECRET"])
-        self.assertRegex(code_fingerprint(), r"^tg2cloud-code-v2:sha256:[0-9a-f]{64}$")
+        self.assertRegex(code_fingerprint(), r"^tgcloud-code-v2:sha256:[0-9a-f]{64}$")
 
     async def test_subprocess_timeout_terminates_child(self) -> None:
         client = RcloneClient(self.settings)
@@ -1066,7 +995,7 @@ class OptimizationTests(unittest.IsolatedAsyncioTestCase):
             return child
 
         with (
-            patch("tg2cloud.storage.rclone.asyncio.create_subprocess_exec", side_effect=launch),
+            patch("tgcloud.storage.rclone.asyncio.create_subprocess_exec", side_effect=launch),
             self.assertRaises(RcloneError),
         ):
             await client._run("version", timeout=0.05, progress=lambda *_: None)
@@ -1084,7 +1013,7 @@ class OptimizationTests(unittest.IsolatedAsyncioTestCase):
             started.set()
             return child
 
-        with patch("tg2cloud.storage.rclone.asyncio.create_subprocess_exec", side_effect=launch):
+        with patch("tgcloud.storage.rclone.asyncio.create_subprocess_exec", side_effect=launch):
             running = asyncio.create_task(client._run("copyto", progress=lambda *_: None))
             try:
                 await asyncio.wait_for(started.wait(), 2)

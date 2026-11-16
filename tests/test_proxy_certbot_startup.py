@@ -13,10 +13,10 @@ from unittest.mock import Mock, patch
 
 from test_uninstaller import proxy_container
 
-from tg2cloud.deployment import uninstall
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.deployment.proxy import manager as proxy
-from tg2cloud.deployment.proxy.manager import (
+from tgcloud.deployment import uninstall
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.proxy import manager as proxy
+from tgcloud.deployment.proxy.manager import (
     PROXY_ROOT,
     DomainProxyManager,
     empty_state,
@@ -36,7 +36,7 @@ class CertbotStartupTests(unittest.TestCase):
         self.disk_hash = self.expected
         self.force_code, self.inspect_code = 0, 0
         self.repair_works = True
-        architecture = patch("tg2cloud.deployment.architecture.check_container")
+        architecture = patch("tgcloud.deployment.architecture.check_container")
         self.architecture = architecture.start()
         self.addCleanup(architecture.stop)
 
@@ -59,8 +59,8 @@ class CertbotStartupTests(unittest.TestCase):
         return [c for c in self.commands if "--force-recreate certbot" in c]
 
     def test_config_install_records_only_successfully_installed_compose(self):
-        self.manager._upload_files = Mock(return_value="/tmp/tg2cloud-proxy-" + "a" * 32)
-        with patch("tg2cloud.deployment.architecture.check_docker"), patch("tg2cloud.deployment.architecture.ensure_image"):
+        self.manager._upload_files = Mock(return_value="/tmp/tgcloud-proxy-" + "a" * 32)
+        with patch("tgcloud.deployment.architecture.check_docker"), patch("tgcloud.deployment.architecture.ensure_image"):
             self.manager._install_config(empty_state())
         self.assertEqual(self.manager._expected_compose_sha256, self.expected)
         self.assertTrue(any(c.startswith("bash -c ") for c in self.commands))
@@ -72,10 +72,10 @@ class CertbotStartupTests(unittest.TestCase):
 
     def test_failed_config_install_clears_any_previous_recreation_authority(self):
         self.manager._expected_compose_sha256 = self.expected
-        self.manager._upload_files = Mock(return_value="/tmp/tg2cloud-proxy-" + "a" * 32)
+        self.manager._upload_files = Mock(return_value="/tmp/tgcloud-proxy-" + "a" * 32)
         self.manager._run = Mock(return_value=(1, "PRIVATE_FIXTURE_ERROR"))
-        with (patch("tg2cloud.deployment.architecture.check_docker"),
-              patch("tg2cloud.deployment.architecture.ensure_image"),
+        with (patch("tgcloud.deployment.architecture.check_docker"),
+              patch("tgcloud.deployment.architecture.ensure_image"),
               self.assertRaisesRegex(RuntimeError, "无法安装共享代理配置")):
             self.manager._install_config(empty_state())
         self.assertIsNone(self.manager._expected_compose_sha256)

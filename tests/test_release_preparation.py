@@ -30,7 +30,7 @@ class PlanningTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
-        for name in ("src/tg2cloud/version.py", "install.sh", "website/package.json",
+        for name in ("src/tgcloud/version.py", "install.sh", "website/package.json",
                      "website/package-lock.json", "website/site.config.json"):
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -49,7 +49,8 @@ class PlanningTests(unittest.TestCase):
         report, diff = planning.prepare(self.root, self.next)
         self.assertEqual(before, self.digest())
         self.assertFalse(report["source_modified"])
-        self.assertIn('installer_version = "' + self.next + '"', diff)
+        self.assertIn('+VERSION = "' + self.next + '"', diff)
+        self.assertNotIn('install.sh', report["mechanical_files"])
         self.assertNotIn('+installer_commit', diff)
         self.assertIn('"releaseStatus": "unreleased"', diff)
         self.assertNotIn('+' + '  "publishedVersion": "' + self.next, diff)
@@ -112,7 +113,7 @@ class ValidationTests(unittest.TestCase):
             for stage in ('shell', 'test', 'quality'):
                 self.assertIn('.github/scripts/linux_validation.py ' + stage, text)
         release = (ROOT / '.github/workflows/release.yml').read_text(encoding='utf-8')
-        self.assertIn('elif [[ -f src/tg2cloud/version.py ]]', release)
+        self.assertIn('elif [[ -f src/tgcloud/version.py ]]', release)
         self.assertIn('payload_clouddrive2/requirements.txt', release)
         cli = (ROOT / '.github/workflows/vps-installer.yml').read_text(encoding='utf-8')
         for name in ('.github/scripts/prepare_release.py', '.github/scripts/linux_validation.py',

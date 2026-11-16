@@ -18,70 +18,39 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from test_domain_proxy import TransactionManager
+from test_domain_proxy import TransactionManager, external_state
 
-from tg2cloud.app import TransferService
-from tg2cloud.deployment.profiles import CLOUDDRIVE2_PRODUCT, OPENLIST_PRODUCT
-from tg2cloud.deployment.proxy.manager import (
+from tgcloud.app import TransferService
+from tgcloud.deployment.profiles import CLOUDDRIVE2_PRODUCT
+from tgcloud.deployment.proxy.manager import (
     DomainProxyManager,
     ProxyReport,
     empty_state,
     proxy_lock_command,
     state_with_route,
 )
-from tg2cloud.storage.rclone import RcloneClient, RcloneError
-from tg2cloud.transfer.ports import DestinationProbe
+from tgcloud.storage.rclone import RcloneClient
+from tgcloud.transfer.ports import DestinationProbe
 
 
-class OpenListReviewTests(unittest.IsolatedAsyncioTestCase):
+class DestinationReviewTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
-    def client(backend="openlist"):
+    def client():
         client = RcloneClient(SimpleNamespace(
-            storage_backend=backend, cd2_target="", rclone_remote_name="openlist",
+            storage_backend="clouddrive2", cd2_target="", rclone_remote_name="cd2",
         ))
         client.ensure_config = AsyncMock()
         return client
 
-    async def test_existing_name_after_ten_thousand_files_is_not_reused(self):
-        client = self.client()
-        listing = [{"Name": f"file-{n}", "Size": 1} for n in range(10000)]
-        listing.append({"Name": "existing.bin", "Size": 256})
-
-        async def run(*args, **kwargs):
-            if "--stat" in args:
-                return 4, "", "object not found"
-            return 0, json.dumps(listing), ""
-
-        client._run = AsyncMock(side_effect=run)
-        self.assertTrue(await client.exists("existing.bin"))
-        service = TransferService.__new__(TransferService)
-        service.rclone = client
-        service.db = SimpleNamespace(remote_claimed=lambda *_: False, get=lambda _: {"target_directory": ""})
-        service.settings = SimpleNamespace(cd2_target="")
-        self.assertEqual(
-            await service._choose_remote_final("existing.bin", 7),
-            "existing (task-7).bin",
-        )
-        self.assertEqual(await client._listed_file_sizes("existing.bin"), {"existing.bin": 256})
-
-    async def test_malformed_listing_stops_name_selection(self):
-        client = self.client()
-        client._run = AsyncMock(side_effect=[(4, "", "not found"), (0, "not json", "")])
-        service = TransferService.__new__(TransferService)
-        service.rclone = client
-        service.db = SimpleNamespace(remote_claimed=lambda *_: False, get=lambda _: {"target_directory": ""})
-        service.settings = SimpleNamespace(cd2_target="")
-        with self.assertRaises(RcloneError):
-            await service._choose_remote_final("existing.bin", 7)
-
     async def test_cloud_drive_stat_does_not_gain_parent_listing(self):
-        client = self.client("clouddrive2")
+        client = self.client()
         client._run = AsyncMock(return_value=(4, "", "not found"))
         self.assertFalse(await client.exists("missing.bin"))
         self.assertEqual(client._run.await_count, 1)
 
-    async def test_probe_classifies_auth_and_rate_limit_without_echoing_output(self):
-        for output, expected in (("401 Unauthorized", "unauthorized"), ("429 Too Many Requests", "rate_limited")):
+    async def test_probe_classifies_auth_permission_and_rate_limit_without_echoing_output(self):
+        for output, expected in (("401 Unauthorized", "unauthorized"), ("403 Forbidden", "permission"),
+                                 ("429 Too Many Requests", "rate_limited")):
             with self.subTest(output=output):
                 client = self.client()
                 client._run = AsyncMock(return_value=(1, "", output + " secret-placeholder"))
@@ -89,9 +58,9 @@ class OpenListReviewTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(probe.accessible)
                 self.assertEqual(probe.failure_kind, expected)
                 self.assertNotIn("secret-placeholder", probe.detail)
-                args = client._run.await_args.args
-                self.assertIn("--low-level-retries", args)
-                self.assertEqual(args[args.index("--low-level-retries") + 1], "1")
+                client._run.assert_awaited_once_with(
+                    "lsd", "cd2:", "--max-depth", "1", timeout=20, check=False,
+                )
 
     async def test_root_fallback_preserves_rate_limit_reason(self):
         client = self.client()
@@ -101,49 +70,18 @@ class OpenListReviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((probe.scope, probe.failure_kind), ("root_fallback", "rate_limited"))
 
     async def test_cloud_drive_probe_command_is_unchanged(self):
-        client = self.client("clouddrive2")
+        client = self.client()
         client._run = AsyncMock(return_value=(0, "", ""))
         await client.probe()
         client._run.assert_awaited_once_with(
-            "lsd", "openlist:", "--max-depth", "1", timeout=20, check=False,
+            "lsd", "cd2:", "--max-depth", "1", timeout=20, check=False,
         )
 
-    @staticmethod
-    def service(probe, backend="openlist"):
-        service = TransferService.__new__(TransferService)
-        service.settings = SimpleNamespace(storage_backend=backend, remote_health_interval=30)
-        service.rclone = SimpleNamespace(probe=AsyncMock(return_value=probe))
-        service.log = Mock()
-        return service
-
-    async def test_concurrent_refreshes_share_one_successful_openlist_probe(self):
-        service = self.service(DestinationProbe(True, "root", "ok"))
-        await asyncio.gather(*(service._probe_destination_once() for _ in range(3)))
-        self.assertEqual(service.rclone.probe.await_count, 1)
-
-    async def test_rate_limit_cooldown_grows_and_refresh_cannot_bypass_it(self):
-        service = self.service(DestinationProbe(False, "root", "rate limited", "rate_limited"))
-        for seconds in (60, 120, 240, 480, 900, 900):
-            service._destination_next_probe_at = 0
-            await service._probe_destination_once()
-            remaining = service._destination_next_probe_at - time.monotonic()
-            self.assertAlmostEqual(remaining, seconds, delta=1)
-            calls = service.rclone.probe.await_count
-            await service._probe_destination_once()
-            self.assertEqual(service.rclone.probe.await_count, calls)
-        service.rclone.probe.return_value = DestinationProbe(True, "root", "ok")
-        service._destination_next_probe_at = 0
-        await service._probe_destination_once()
-        self.assertEqual(service._destination_rate_limit_failures, 0)
-        self.assertTrue(service.destination_healthy)
-
-    async def test_unauthorized_uses_longer_cooldown(self):
-        service = self.service(DestinationProbe(False, "root", "auth failed", "unauthorized"))
-        await service._probe_destination_once()
-        self.assertAlmostEqual(service._destination_next_probe_at - time.monotonic(), 300, delta=1)
-
     async def test_cloud_drive_refresh_behavior_is_unchanged(self):
-        service = self.service(DestinationProbe(True, "root", "ok"), "clouddrive2")
+        service = TransferService.__new__(TransferService)
+        service.settings = SimpleNamespace(storage_backend="clouddrive2", remote_health_interval=30)
+        service.rclone = SimpleNamespace(probe=AsyncMock(return_value=DestinationProbe(True, "root", "ok")))
+        service.log = Mock()
         await asyncio.gather(*(service._probe_destination_once() for _ in range(3)))
         self.assertEqual(service.rclone.probe.await_count, 3)
 
@@ -154,7 +92,7 @@ class RemoteLockTests(unittest.TestCase):
     @unittest.skipUnless(os.name != "nt" and shutil.which("flock"), "live flock test requires Linux")
     def test_real_flock_is_exclusive_and_released_on_ssh_eof(self):
         with tempfile.TemporaryDirectory() as temp:
-            with patch("tg2cloud.deployment.proxy.manager.PROXY_ROOT", temp):
+            with patch("tgcloud.deployment.proxy.manager.PROXY_ROOT", temp):
                 command = shlex.split(proxy_lock_command())[2]
             holder = subprocess.Popen(
                 ["bash", "-c", command], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -164,14 +102,14 @@ class RemoteLockTests(unittest.TestCase):
                 import select
 
                 self.assertTrue(select.select([holder.stdout], [], [], 5)[0])
-                self.assertEqual(holder.stdout.readline(), b"TG2CLOUD_REMOTE_LOCK=ACQUIRED\n")
+                self.assertEqual(holder.stdout.readline(), b"TGCLOUD_REMOTE_LOCK=ACQUIRED\n")
                 holder.stdin.write(b"unused-sudo-line\n")
                 holder.stdin.flush()
                 blocked = subprocess.run(["bash", "-c", command], input=b"", capture_output=True, timeout=5, check=False)
                 self.assertEqual(blocked.returncode, 75)
                 holder.stdin.close()
                 self.assertEqual(holder.wait(timeout=5), 0)
-                freed = subprocess.run(["bash", "-c", command], input=b"TG2CLOUD_REMOTE_LOCK_RELEASE\n", capture_output=True, timeout=5, check=False)
+                freed = subprocess.run(["bash", "-c", command], input=b"TGCLOUD_REMOTE_LOCK_RELEASE\n", capture_output=True, timeout=5, check=False)
                 self.assertEqual(freed.returncode, 0, freed.stderr)
             finally:
                 if holder.poll() is None:
@@ -185,7 +123,7 @@ class RemoteLockTests(unittest.TestCase):
 
 class ProxyReviewTests(unittest.TestCase):
     def test_concurrent_editions_preserve_both_routes(self):
-        shared = {"state": empty_state()}
+        shared = {"state": external_state("files.example.com")}
         lock = threading.Lock()
         start = threading.Barrier(2)
 
@@ -214,14 +152,15 @@ class ProxyReviewTests(unittest.TestCase):
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [pool.submit(configure, p, d) for p, d in (
-                (CLOUDDRIVE2_PRODUCT, "cd.example.com"), (OPENLIST_PRODUCT, "ol.example.com"),
+                (CLOUDDRIVE2_PRODUCT, "cd.example.com"), (CLOUDDRIVE2_PRODUCT, "cd.example.com"),
             )]
             self.assertTrue(all(f.result(timeout=10).state == "healthy" for f in futures))
-        self.assertEqual(set(shared["state"]["domains"]), {"clouddrive2", "openlist"})
+        self.assertEqual(set(shared["state"]["domains"]), {"clouddrive2"})
+        self.assertEqual(shared["state"]["external_webdav"]["clouddrive2"]["domain"], "files.example.com")
 
     @staticmethod
     def both_routes():
-        state = state_with_route(empty_state(), OPENLIST_PRODUCT, "ol.example.com")
+        state = external_state("ol.example.com")
         return state_with_route(state, CLOUDDRIVE2_PRODUCT, "cd.example.com")
 
     def test_remove_syncs_certbot_and_checks_retained_routes_before_commit(self):
@@ -231,7 +170,8 @@ class ProxyReviewTests(unittest.TestCase):
         manager.remove()
         self.assertIn("up -d certbot", manager.compose_calls)
         manager._verify_remaining_routes.assert_called_once()
-        self.assertEqual(set(manager.commits[-1]["domains"]), {"clouddrive2"})
+        self.assertEqual(manager.commits[-1]["domains"], {})
+        self.assertEqual(set(manager.commits[-1]["external_webdav"]), {"clouddrive2"})
 
     def test_remove_retained_check_failure_restores_both_routes(self):
         manager = TransactionManager()
@@ -267,7 +207,7 @@ class ProxyReviewTests(unittest.TestCase):
         self.assertFalse(manager.commits)
 
     def test_remaining_route_check_uses_its_own_product(self):
-        manager = DomainProxyManager(Mock(), OPENLIST_PRODUCT, {}, Mock())
+        manager = DomainProxyManager(Mock(), CLOUDDRIVE2_PRODUCT, {}, Mock())
         state = state_with_route(empty_state(), CLOUDDRIVE2_PRODUCT, "cd.example.com")
         checked = []
 
@@ -282,13 +222,13 @@ class ProxyReviewTests(unittest.TestCase):
     def test_state_commit_uses_same_directory_atomic_rename(self):
         session = Mock()
         session.run.return_value = (0, "")
-        manager = DomainProxyManager(session, OPENLIST_PRODUCT, {}, Mock())
-        manager._upload_files = Mock(return_value="/tmp/tg2cloud-proxy-" + "a" * 32)
+        manager = DomainProxyManager(session, CLOUDDRIVE2_PRODUCT, {}, Mock())
+        manager._upload_files = Mock(return_value="/tmp/tgcloud-proxy-" + "a" * 32)
         manager._commit_state(empty_state())
         command = session.run.call_args_list[0].args[0]
         self.assertIn("/state/.domains-", command)
         self.assertIn("mv -f --", command)
-        self.assertNotIn("install -m 600 " + manager._upload_files.return_value + "/domains.json /opt/tg2cloud-proxy/state/domains.json", command)
+        self.assertNotIn("install -m 600 " + manager._upload_files.return_value + "/domains.json /opt/tgcloud-proxy/state/domains.json", command)
 
     def test_committed_state_survives_cleanup_errors(self):
         for failure in (OSError("cleanup failed"), (1, "cleanup failed")):
@@ -296,8 +236,8 @@ class ProxyReviewTests(unittest.TestCase):
                 session = Mock()
                 session.run.side_effect = [(0, ""), failure, (0, "")]
                 log = Mock()
-                manager = DomainProxyManager(session, OPENLIST_PRODUCT, {}, log)
-                manager._upload_files = Mock(return_value="/tmp/tg2cloud-proxy-" + "a" * 32)
+                manager = DomainProxyManager(session, CLOUDDRIVE2_PRODUCT, {}, log)
+                manager._upload_files = Mock(return_value="/tmp/tgcloud-proxy-" + "a" * 32)
                 manager._commit_state(empty_state())
                 self.assertEqual(session.run.call_count, 3)
                 log.assert_called_once()

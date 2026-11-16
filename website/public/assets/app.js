@@ -13,12 +13,12 @@
   updateThemeLabel();
   themeButton?.addEventListener('click', () => {
     root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
-    try { localStorage.setItem('tg2cloud-theme', root.dataset.theme); } catch {}
+    try { localStorage.setItem('tgcloud-theme', root.dataset.theme); } catch {}
     updateThemeLabel();
   });
   const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
   systemTheme.addEventListener('change', (event) => {
-    let saved; try { saved = localStorage.getItem('tg2cloud-theme'); } catch {}
+    let saved; try { saved = localStorage.getItem('tgcloud-theme'); } catch {}
     if (!saved) { root.dataset.theme = event.matches ? 'dark' : 'light'; updateThemeLabel(); }
   });
 

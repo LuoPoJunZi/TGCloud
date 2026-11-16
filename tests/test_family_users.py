@@ -12,10 +12,10 @@ from unittest.mock import AsyncMock
 
 from test_scenarios import make_service, make_settings
 
-from tg2cloud.domain.actors import current_user, task_actor, user_scope
-from tg2cloud.persistence import users
-from tg2cloud.persistence.backup import backup_database
-from tg2cloud.persistence.sqlite import TaskDB
+from tgcloud.domain.actors import current_user, task_actor, user_scope
+from tgcloud.persistence import users
+from tgcloud.persistence.backup import backup_database
+from tgcloud.persistence.sqlite import TaskDB
 
 
 class FamilyTests(unittest.IsolatedAsyncioTestCase):
@@ -206,7 +206,7 @@ class FamilyTests(unittest.IsolatedAsyncioTestCase):
         async def once(_seconds):
             self.service._stop.set()
         from unittest.mock import patch
-        with patch("tg2cloud.telegram.handlers.asyncio.sleep", side_effect=once):
+        with patch("tgcloud.telegram.handlers.asyncio.sleep", side_effect=once):
             await self.service._watch_loop()
         self.assertEqual(self.service._watch_messages, {})
         message.edit.assert_not_called()

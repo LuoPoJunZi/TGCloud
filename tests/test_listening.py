@@ -19,19 +19,19 @@ from unittest.mock import AsyncMock, patch
 from test_scenarios import FakeRclone, make_service, make_settings
 from test_telethon_compat import callback_data
 
-from tg2cloud.domain.actors import user_scope
-from tg2cloud.domain.planning import fields, name_plan, profile
-from tg2cloud.listening import account, rules
-from tg2cloud.listening.service import (
+from tgcloud.domain.actors import user_scope
+from tgcloud.domain.planning import fields, name_plan, profile
+from tgcloud.listening import account, rules
+from tgcloud.listening.service import (
     CheckedSource,
     Listener,
     ListenerReadError,
     task_source,
     verified_chat,
 )
-from tg2cloud.persistence.plans import Plans
-from tg2cloud.persistence.sqlite import TaskDB
-from tg2cloud.telegram import planning
+from tgcloud.persistence.plans import Plans
+from tgcloud.persistence.sqlite import TaskDB
+from tgcloud.telegram import planning
 
 
 def message(
@@ -391,7 +391,7 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(c.execute("SELECT COUNT(*) FROM transfer_plans WHERE status='expired'").fetchone()[0], 200)
 
     def test_large_maintenance_is_bounded_and_eventually_finishes(self):
-        from tg2cloud.persistence.plans import MAINTENANCE_BATCH
+        from tgcloud.persistence.plans import MAINTENANCE_BATCH
         source = self.source()
         c = self.db._conn
         total = 10001
@@ -437,7 +437,7 @@ class StoreTests(unittest.TestCase):
         self.assertFalse(c.in_transaction)
 
     def test_batched_expiration_and_feedback_keep_retention_rules(self):
-        from tg2cloud.persistence.plans import MAINTENANCE_BATCH
+        from tgcloud.persistence.plans import MAINTENANCE_BATCH
         c = self.db._conn
         c.executemany(
             "INSERT INTO transfer_plans(owner,identity,chat,message,batch,payload,status,created,expires) "
@@ -634,7 +634,7 @@ class StoreTests(unittest.TestCase):
         self.assertTrue(self.repo.source(self.admin, s["id"])["deleted"])
 
     def test_classification_and_rule_snapshot_frozen_before_approval(self):
-        from tg2cloud.persistence import features
+        from tgcloud.persistence import features
 
         prefs = self.db.feature_settings()
         features.change(self.db._conn, prefs["revision"], {"classification": "type"})
@@ -694,7 +694,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         self.repo.change_source(self.admin, s["id"], s["revision"], enabled=True)
         self.source = self.repo.source(self.admin, s["id"])
         self.verify = patch(
-            "tg2cloud.listening.service.verified_chat",
+            "tgcloud.listening.service.verified_chat",
             new=AsyncMock(return_value=NS(title="合成来源")),
         )
         self.checked = self.verify.start()
@@ -741,7 +741,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("光学实验", result[2][3]["file_name"])
 
     async def test_first_notice_after_fresh_boot_keeps_later_throttle(self):
-        from tg2cloud.listening import service as module
+        from tgcloud.listening import service as module
         clock = [10.0]
         with patch.object(module, "time", NS(time=time.time, monotonic=lambda: clock[0])):
             await self.listener.receive(self.source, message(1))
@@ -853,7 +853,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
                                     config=current["config"] | {"confirmation": False})
 
         self.listener._verified_until.clear()
-        with patch("tg2cloud.listening.service.verified_chat", side_effect=change):
+        with patch("tgcloud.listening.service.verified_chat", side_effect=change):
             await self.listener.receive(self.source, message())
         self.assertEqual(self.repo.pending(self.admin), [])
         self.assertEqual(self.db.counts(), {})
@@ -957,7 +957,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         media = message()
         self.listener.client.get_messages.side_effect = [None, media]
         reader = CheckedSource(self.listener, task)
-        with patch("tg2cloud.listening.service.asyncio.sleep", new=AsyncMock()) as sleep:
+        with patch("tgcloud.listening.service.asyncio.sleep", new=AsyncMock()) as sleep:
             self.assertIs(await reader.get_messages(-1001, ids=1), media)
         sleep.assert_awaited_once_with(1)
         self.assertEqual(self.listener.client.get_messages.await_count, 2)
@@ -971,7 +971,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         async def revoke(_):
             account.write_state(self.db, enabled=False)
         reader = CheckedSource(self.listener, task)
-        with patch("tg2cloud.listening.service.asyncio.sleep", side_effect=revoke), self.assertRaises(ListenerReadError):
+        with patch("tgcloud.listening.service.asyncio.sleep", side_effect=revoke), self.assertRaises(ListenerReadError):
             await reader.get_messages(-1001, ids=1)
         self.listener.client.get_messages.assert_awaited_once()
         self.listener.client.download_media.assert_not_awaited()
@@ -994,7 +994,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         self.listener.client = None
         with (
             patch(
-                "tg2cloud.listening.account.session_lock",
+                "tgcloud.listening.account.session_lock",
                 side_effect=ValueError("synthetic invalid session"),
             ),
             self.assertRaises(ValueError),
@@ -1090,7 +1090,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_listener_download_uses_existing_backend_pipeline(self):
-        for backend in ("clouddrive2", "openlist"):
+        for backend in ("clouddrive2",):
             for stream in (False, True):
                 with self.subTest(backend=backend, stream=stream):
                     mid = (
@@ -1262,7 +1262,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_queue_limit_counts_active_states_and_ignores_history(self):
-        from tg2cloud.listening.service import ReceiveLimited
+        from tgcloud.listening.service import ReceiveLimited
 
         c = self.db._conn
         c.executemany(
@@ -1292,7 +1292,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         return self.repo.source(self.admin, source["id"])
 
     async def test_maintenance_runs_once_per_minute_and_after_restart(self):
-        from tg2cloud.listening import service as module
+        from tgcloud.listening import service as module
 
         with patch.object(module, "time", NS(monotonic=lambda: 100)), patch.object(self.repo, "expire", wraps=self.repo.expire) as cleanup:
             for _ in range(12):
@@ -1308,7 +1308,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(cleanup.call_count, 1)
 
     async def test_maintenance_failure_rolls_back_without_revoking_account(self):
-        from tg2cloud.listening import service as module
+        from tgcloud.listening import service as module
 
         await self.listener.receive(self.source, message())
         plan = self.repo.pending(self.admin)[0]
@@ -1331,7 +1331,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_poll_budget_rotates_sources_without_starving_later_ids(self):
         second, third = self.another_source(), self.another_source(-1003)
-        with patch.object(self.listener, "poll", new=AsyncMock()) as poll, patch("tg2cloud.listening.service.POLL_ROUND_BUDGET", 0):
+        with patch.object(self.listener, "poll", new=AsyncMock()) as poll, patch("tgcloud.listening.service.POLL_ROUND_BUDGET", 0):
             for _ in range(4):
                 await self.listener._poll_sources()
         self.assertEqual([call.args[0]["id"] for call in poll.await_args_list],
@@ -1350,7 +1350,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
                     cancelled.set()
             else:
                 self.assertTrue(cancelled.is_set())
-        with patch.object(self.listener, "poll", new=poll), patch("tg2cloud.listening.service.SOURCE_POLL_TIMEOUT", 0.02):
+        with patch.object(self.listener, "poll", new=poll), patch("tgcloud.listening.service.SOURCE_POLL_TIMEOUT", 0.02):
             await self.listener._poll_sources()
         self.assertEqual(seen, [self.source["id"], second["id"]])
         current = self.repo.source(self.admin, self.source["id"])
@@ -1369,7 +1369,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Event().wait()
         self.listener.client.iter_messages = history
         self.owner._notify.side_effect = stalled_notice
-        with patch("tg2cloud.listening.service.SOURCE_POLL_TIMEOUT", 0.02):
+        with patch("tgcloud.listening.service.SOURCE_POLL_TIMEOUT", 0.02):
             await self.listener._poll_sources()
         plans = self.repo.pending(self.admin)
         self.assertEqual(len(plans), 1)
@@ -1454,7 +1454,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.repo.source(self.admin, self.source["id"])["cursor"], 0)
 
     async def test_connection_backoff_recovers_without_revoking_authorization(self):
-        from tg2cloud.listening import service as module
+        from tgcloud.listening import service as module
         now = [1000.0]
         delays = []
         calls = 0
@@ -1493,7 +1493,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         self.owner._notify.assert_not_awaited()
 
     async def test_failed_connection_does_not_overwrite_changed_account(self):
-        from tg2cloud.listening.service import ListenerConnectionError
+        from tgcloud.listening.service import ListenerConnectionError
         for enabled, identity in ((False, 42), (True, 43)):
             self.owner._stop.clear()
             account.write_state(self.db, enabled=True, account=42)
@@ -1517,7 +1517,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
             with (
                 patch.object(self.listener, "connect", new=AsyncMock(side_effect=exc)),
                 patch.object(self.listener, "close", new=AsyncMock()),
-                patch("tg2cloud.listening.service.asyncio.sleep", side_effect=halt),
+                patch("tgcloud.listening.service.asyncio.sleep", side_effect=halt),
             ):
                 await self.listener.run()
             self.assertFalse(account.state(self.db)["enabled"])
@@ -1552,7 +1552,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
     async def test_real_telethon_retry_exhaustion_preserves_server_error(self):
         from telethon.errors import ServerError
 
-        from tg2cloud.listening.service import (
+        from tgcloud.listening.service import (
             ListenerConnectionError,
             connected_identity,
         )
@@ -1576,7 +1576,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
     async def test_connection_network_boundary_and_timeout(self):
         from telethon.errors import FloodWaitError, ServerError
 
-        from tg2cloud.listening import service as module
+        from tgcloud.listening import service as module
         client = NS(connect=AsyncMock(), get_me=AsyncMock())
         for exc in (OSError("PRIVATE_DETAIL"), ServerError(request=None, message="PRIVATE_DETAIL", code=500)):
             client.get_me.side_effect = exc
@@ -1633,7 +1633,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(self.listener, "connect", new=AsyncMock()) as connect,
             patch.object(self.listener, "close", new=AsyncMock()),
-            patch("tg2cloud.listening.service.asyncio.sleep", side_effect=halt),
+            patch("tgcloud.listening.service.asyncio.sleep", side_effect=halt),
         ):
             await self.listener.run()
         connect.assert_not_awaited()
@@ -1681,7 +1681,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.db._conn.in_transaction)
 
     async def test_maintenance_backlog_yields_until_next_round(self):
-        from tg2cloud.listening import service as module
+        from tgcloud.listening import service as module
         with patch.object(module, "time", NS(monotonic=lambda: 100)), patch.object(self.repo, "expire", return_value=True) as cleanup:
             self.listener._maintain_if_due()
             self.listener._maintain_if_due()
@@ -1700,7 +1700,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(self.listener, "connect", new=AsyncMock(return_value=True)),
             patch(
-                "tg2cloud.listening.service.asyncio.sleep",
+                "tgcloud.listening.service.asyncio.sleep",
                 new=AsyncMock(side_effect=halt),
             ),
         ):
@@ -1865,7 +1865,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         self.owner._download_one = AsyncMock()
         account.write_state(self.db, cooldown_until=time.time() + 60)
         with patch(
-            "tg2cloud.transfer.scheduler.shutil.disk_usage",
+            "tgcloud.transfer.scheduler.shutil.disk_usage",
             return_value=NS(free=100 * 1024**3),
         ):
             await self.owner._start_downloads()
@@ -1920,7 +1920,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         async def stop(*_args):
             account.write_state(self.db, enabled=False, status="已停用")
         self.listener._verified_until.clear()
-        with patch("tg2cloud.listening.service.verified_chat", side_effect=stop):
+        with patch("tgcloud.listening.service.verified_chat", side_effect=stop):
             await self.listener.receive(self.source, message(100))
         self.assertFalse(self.repo.pending(self.admin))
         self.assertEqual(self.db._conn.execute("SELECT count(*) FROM listener_events").fetchone()[0], 0)
@@ -1943,7 +1943,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
     async def test_premium_wait_is_classified_at_metadata_boundary_and_preserves_longer_cooldown(self):
         from telethon.errors import FloodPremiumWaitError
 
-        from tg2cloud.listening.service import source_error
+        from tgcloud.listening.service import source_error
         await self.listener.receive(self.source, message())
         plan = self.repo.pending(self.admin)[0]
         task, _ = self.repo.submit(self.admin, plan["id"], plan["revision"])
@@ -1958,9 +1958,9 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(account.state(self.db)["enabled"])
         self.assertTrue(self.repo.source(self.admin, self.source["id"])["enabled"])
 
-    async def test_premium_wait_fallback_stops_once_for_local_stream_and_both_gateways(self):
+    async def test_premium_wait_fallback_stops_once_for_local_stream_and_clouddrive2(self):
         from telethon.errors import FloodPremiumWaitError
-        for backend in ("clouddrive2", "openlist"):
+        for backend in ("clouddrive2",):
             for mode in ("local", "stream"):
                 with self.subTest(backend=backend, mode=mode):
                     self.owner.settings = replace(self.settings, storage_backend=backend)
@@ -1984,12 +1984,12 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(saved["download_retries"], 0)
                     self.assertTrue(self.repo.source(self.admin, self.source["id"])["enabled"])
 
-    async def test_short_premium_wait_keeps_one_transfer_for_both_gateways_and_modes(self):
+    async def test_short_premium_wait_keeps_one_transfer_for_clouddrive2_and_modes(self):
         from telethon import TelegramClient
         from telethon.errors import FloodPremiumWaitError
         from test_listening_transport import client, request
         self.owner.download_window = NS(value=8)
-        for backend in ("clouddrive2", "openlist"):
+        for backend in ("clouddrive2",):
             for mode in ("local", "stream"):
                 with self.subTest(backend=backend, mode=mode):
                     self.owner.settings = replace(self.settings, storage_backend=backend)
@@ -2017,8 +2017,8 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
                     self.owner.rclone = FakeRclone()
                     parent = AsyncMock(side_effect=[FloodPremiumWaitError(request=None, capture=3), object()])
                     with patch.object(TelegramClient, "_call", parent), patch(
-                            "tg2cloud.listening.transport.asyncio.sleep", new=AsyncMock()), patch(
-                            "tg2cloud.listening.transport.monotonic", return_value=0):
+                            "tgcloud.listening.transport.asyncio.sleep", new=AsyncMock()), patch(
+                            "tgcloud.listening.transport.monotonic", return_value=0):
                         await self.owner._download_one(task["id"])
                         if mode == "local":
                             await self.owner._upload_one(task["id"])
@@ -2103,7 +2103,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
                             with self.assertRaises(ListenerReadError):
                                 await reader.get_messages(-1001, ids=mid)
                         else:
-                            with patch("tg2cloud.listening.service.verified_chat", side_effect=late_error), self.assertRaises(ListenerReadError):
+                            with patch("tgcloud.listening.service.verified_chat", side_effect=late_error), self.assertRaises(ListenerReadError):
                                 await reader.get_messages(-1001, ids=mid)
                         self.assertEqual(account.state(self.db), observed["account"])
                         self.assertIs(self.listener.client, observed["client"])
@@ -2133,7 +2133,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(account.state(self.db)["enabled"])
                     original.disconnect.assert_not_awaited()
 
-    async def test_temporary_metadata_failures_retry_for_both_gateways_and_modes(self):
+    async def test_temporary_metadata_failures_retry_for_clouddrive2_and_modes(self):
         from telethon.errors import ServerError, TimedOutError
         async def download(msg, *, file, progress_callback):
             if isinstance(file, str):
@@ -2143,7 +2143,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
             progress_callback(100, 100)
             return file
         mid = 900
-        for backend in ("clouddrive2", "openlist"):
+        for backend in ("clouddrive2",):
             for mode in ("local", "stream"):
                 for phase in ("permissions", "metadata"):
                     for error in (ServerError(request=None, message="PRIVATE_DETAIL", code=500),
@@ -2162,8 +2162,8 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
                             if phase == "metadata":
                                 self.listener.client.get_messages.side_effect = [error, m]
                             verify = AsyncMock(side_effect=[error, NS()] if phase == "permissions" else [NS(), NS()])
-                            with patch("tg2cloud.listening.service.verified_chat", verify), patch(
-                                    "tg2cloud.transfer.download.asyncio.sleep", new=AsyncMock()):
+                            with patch("tgcloud.listening.service.verified_chat", verify), patch(
+                                    "tgcloud.transfer.download.asyncio.sleep", new=AsyncMock()):
                                 await self.owner._download_one(task["id"])
                                 if mode == "local":
                                     await self.owner._upload_one(task["id"])
@@ -2190,7 +2190,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
                 self.listener.client.get_messages = AsyncMock(side_effect=ServerError(
                     request=None, message="PRIVATE_TOKEN https://private.invalid/secret", code=500))
                 self.listener.client.download_media = AsyncMock()
-                with patch("tg2cloud.transfer.download.asyncio.sleep", new=AsyncMock()):
+                with patch("tgcloud.transfer.download.asyncio.sleep", new=AsyncMock()):
                     await self.owner._download_one(task["id"])
                 saved = self.db.get(task["id"])
                 self.assertEqual(saved["state"], "download_failed")
@@ -2223,8 +2223,8 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
             await release.wait()
         self.owner._download_one = hold
         try:
-            with patch("tg2cloud.listening.transport.monotonic", return_value=0), patch(
-                    "tg2cloud.transfer.scheduler.shutil.disk_usage", return_value=NS(free=100 * 1024**3)):
+            with patch("tgcloud.listening.transport.monotonic", return_value=0), patch(
+                    "tgcloud.transfer.scheduler.shutil.disk_usage", return_value=NS(free=100 * 1024**3)):
                 self.listener.download_limited()
                 await self.owner._start_downloads()
                 await asyncio.sleep(0)
@@ -2238,8 +2238,8 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
                 await self.owner._start_downloads()
                 self.assertEqual(self.owner.download_tasks, running)
                 self.assertFalse(any(task.cancelled() for task in running.values()))
-            with patch("tg2cloud.listening.transport.monotonic", return_value=60), patch(
-                    "tg2cloud.transfer.scheduler.shutil.disk_usage", return_value=NS(free=100 * 1024**3)):
+            with patch("tgcloud.listening.transport.monotonic", return_value=60), patch(
+                    "tgcloud.transfer.scheduler.shutil.disk_usage", return_value=NS(free=100 * 1024**3)):
                 await self.owner._start_downloads()
                 self.assertEqual(len(set(watched) & self.owner.download_tasks.keys()), 3)
                 self.assertEqual(self.owner.download_window.value, 4)
@@ -2259,7 +2259,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
             await release.wait()
         self.owner._download_one = hold
         try:
-            with patch("tg2cloud.transfer.scheduler.shutil.disk_usage", return_value=NS(free=100 * 1024**3)):
+            with patch("tgcloud.transfer.scheduler.shutil.disk_usage", return_value=NS(free=100 * 1024**3)):
                 for mid in range(1300, 1303):
                     await self.listener.receive(self.source, message(mid))
                     p = self.repo.pending(self.admin)[0]

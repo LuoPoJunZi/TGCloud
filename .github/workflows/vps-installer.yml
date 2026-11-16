@@ -151,9 +151,9 @@ jobs:
       - name: Isolated LAN Nginx checks (no product deployment)
         if: matrix.python == '3.13'
         env:
-          TG2CLOUD_TEST_LAN_DOCKER: "1"
+          TGCLOUD_TEST_LAN_DOCKER: "1"
         run: |
-          python -B -m tg2cloud.deployment.architecture docker
+          python -B -m tgcloud.deployment.architecture docker
           python -B -m unittest discover -s tests -p test_lan_gateway_docker.py -v
       - name: Python lint and syntax
         run: |

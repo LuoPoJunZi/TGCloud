@@ -17,7 +17,7 @@ import prepare_bootstrap
 import release_metadata
 import source_release
 
-from tg2cloud.deployment import baselines
+from tgcloud.deployment import baselines
 
 
 def check_manifests(root: Path) -> None:

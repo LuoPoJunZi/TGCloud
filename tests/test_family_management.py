@@ -15,9 +15,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tg2cloud.deployment import users as host
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.persistence import users
+from tgcloud.deployment import users as host
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.persistence import users
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -29,12 +29,12 @@ class ManagementTests(unittest.TestCase):
     def test_members_and_actions_have_separate_labels_without_logging_private_ids(self):
         record = self.record()
         record["users"] = [{"id": 456, "name": "合成成员", "enabled": True}]
-        manager = SimpleNamespace(ui=Mock(), log=Mock(), session=Mock(), product=PRODUCTS["openlist"])
+        manager = SimpleNamespace(ui=Mock(), log=Mock(), session=Mock(), product=PRODUCTS["clouddrive2"])
         manager.ui.ask.return_value = "0"
         with patch.object(host, "request", return_value=record):
             host.manage(manager, SimpleNamespace(running=True, version="1.4.4", config={"ALLOWED_USER_ID": "123"}))
         text = "\n".join(call.args[0] for call in manager.log.call_args_list)
-        for label in ("OpenList · 版本 1.4.4", "成员列表", "管理操作", "0. 返回主菜单"):
+        for label in ("CloudDrive2 · 版本 1.4.4", "成员列表", "管理操作", "0. 返回主菜单"):
             self.assertIn(label, text)
         manager.ui.private.assert_any_call("成员 1", "合成成员 · 456 · 启用")
         self.assertNotIn("456", text)
@@ -44,10 +44,10 @@ class ManagementTests(unittest.TestCase):
         record = self.record()
         session.run.return_value = (0, json.dumps({"api": 1, "record": record}))
         label = "Family'; $(not-a-command)"
-        self.assertEqual(host.request(session, PRODUCTS["openlist"], 123, action="add", name=label), record)
+        self.assertEqual(host.request(session, PRODUCTS["clouddrive2"], 123, action="add", name=label), record)
         args = shlex.split(session.run.call_args.args[0])
         self.assertEqual(json.loads(args[2])["name"], label)
-        self.assertEqual(args[3:], ["|", "docker", "exec", "-i", "tg2cloud-openlist-bot", "python", "-B", "-m", "tg2cloud.persistence.users"])
+        self.assertEqual(args[3:], ["|", "docker", "exec", "-i", "tgcloud-clouddrive2-bot", "python", "-B", "-m", "tgcloud.persistence.users"])
         self.assertNotIn("restart", args)
 
     def test_old_or_unknown_protocol_fails_no_fallback_database_writes(self):
@@ -65,7 +65,7 @@ class ManagementTests(unittest.TestCase):
         ui.confirm.return_value = False
         session = Mock()
         session.run.return_value = (0, json.dumps({"api": 1, "record": self.record()}))
-        manager = SimpleNamespace(ui=ui, log=Mock(), session=session, product=PRODUCTS["openlist"], recheck=Mock())
+        manager = SimpleNamespace(ui=ui, log=Mock(), session=session, product=PRODUCTS["clouddrive2"], recheck=Mock())
         host.manage(manager, SimpleNamespace(running=True, config={"ALLOWED_USER_ID": "123"}))
         self.assertEqual([json.loads(shlex.split(call.args[0])[2])["action"] for call in session.run.call_args_list], ["list", "list"])
         manager.recheck.assert_not_called()
@@ -89,7 +89,7 @@ class ManagementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "tg115.db"
             environment = dict(os.environ, PYTHONPATH=str(ROOT / "src"), DATA_DIR=directory, ALLOWED_USER_ID="123")
-            command = [sys.executable, "-S", "-B", "-m", "tg2cloud.persistence.users"]
+            command = [sys.executable, "-S", "-B", "-m", "tgcloud.persistence.users"]
             def run(request):
                 return subprocess.run(command, input=json.dumps(request), env=environment, cwd=directory,
                                       text=True, capture_output=True, check=False, timeout=20)
@@ -111,11 +111,11 @@ class ManagementTests(unittest.TestCase):
             with self.subTest(action=action):
                 record = self.record()
                 record["users"] = [{"id": 456, "name": "家人", "enabled": True}]
-                manager = SimpleNamespace(ui=Mock(), log=Mock(), session=Mock(), product=PRODUCTS["openlist"], recheck=Mock())
+                manager = SimpleNamespace(ui=Mock(), log=Mock(), session=Mock(), product=PRODUCTS["clouddrive2"], recheck=Mock())
                 manager.ui.ask.side_effect = [selected, "1", "0"]
                 instance = SimpleNamespace(running=True, config={"ALLOWED_USER_ID": "123"})
                 with patch.object(host, "request", return_value=record) as request, patch(
-                    "tg2cloud.deployment.feature_settings.member_quota"
+                    "tgcloud.deployment.feature_settings.member_quota"
                 ) as quota:
                     host.manage(manager, instance)
                 quota.assert_called_once_with(manager, instance, record, 456, action=action)

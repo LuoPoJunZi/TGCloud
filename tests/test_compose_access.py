@@ -13,15 +13,15 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import patch
 
-from test_compose import UI
+from test_compose import UI, write_candidate
 
-from tg2cloud.compose import access, packaging, runtime
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.persistence import bundle
-from tg2cloud.version import VERSION
+from tgcloud.compose import access, runtime
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.persistence import bundle
+from tgcloud.version import VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
-IMAGE = "ghcr.io/owner/tg2cloud@sha256:" + "a" * 64
+IMAGE = "ghcr.io/owner/tgcloud@sha256:" + "a" * 64
 
 
 class Answers(UI):
@@ -55,21 +55,15 @@ class AccessTests(unittest.TestCase):
         permission.start()
         self.addCleanup(permission.stop)
 
-    def candidate(self, edition="openlist"):
-        path = self.root / edition
-        path.mkdir()
-        (path / "docker-compose.yml").write_text(packaging.render(ROOT, edition, IMAGE))
-        (path / "compose-bundle.json").write_text(json.dumps({
-            "format": 3, "https_tools": 1, "mode": "compose", "edition": edition,
-            "version": VERSION, "image": IMAGE, "commit": "b" * 40}))
-        return path
+    def candidate(self, edition="clouddrive2"):
+        return write_candidate(self.root / edition)
 
     def initialize(self, root, ui):
         with patch.object(runtime.shutil, "disk_usage", return_value=NS(free=100 * 1024**3)), \
                 patch.object(runtime.os, "chown", create=True), redirect_stdout(io.StringIO()):
             return runtime.setup(root, ui)
 
-    def plan(self, mode="managed", edition="openlist"):
+    def plan(self, mode="managed", edition="clouddrive2"):
         return {"format": 1, "owner": access.OWNER, "edition": edition,
                 "mode": mode, "domain": "panel.example.com" if mode != "local" else "", "email": ""}
 
@@ -81,7 +75,7 @@ class AccessTests(unittest.TestCase):
                     patch("socket.create_connection", side_effect=AssertionError("offline setup")), \
                     redirect_stdout(io.StringIO()):
                 config = runtime.collect(ui, PRODUCTS[edition], plan)
-            self.assertEqual(config["TG2CLOUD_BIND_IP"], "127.0.0.1")
+            self.assertEqual(config["TGCLOUD_BIND_IP"], "127.0.0.1")
             self.assertEqual(plan, self.plan("local", edition))
             self.assertTrue(any("管理端口绑定" in prompt for prompt in ui.questions))
 
@@ -92,7 +86,7 @@ class AccessTests(unittest.TestCase):
                 plan = {}
                 with redirect_stdout(io.StringIO()) as output:
                     config = runtime.collect(ui, PRODUCTS[edition], plan)
-                self.assertEqual(config["TG2CLOUD_BIND_IP"], "127.0.0.1")
+                self.assertEqual(config["TGCLOUD_BIND_IP"], "127.0.0.1")
                 self.assertEqual(plan, self.plan(mode, edition))
                 self.assertFalse(any("管理端口绑定" in prompt for prompt in ui.questions))
                 self.assertEqual("Let's Encrypt 邮箱（可留空）" in ui.questions, mode == "managed")
@@ -135,20 +129,20 @@ class AccessTests(unittest.TestCase):
         self.initialize(root, Answers())
         plan_file.write_text(json.dumps(self.plan()))
         config = root / ".env"
-        config.write_text(config.read_text().replace("TG2CLOUD_BIND_IP=127.0.0.1", "TG2CLOUD_BIND_IP=192.168.1.5"))
+        config.write_text(config.read_text().replace("TGCLOUD_BIND_IP=127.0.0.1", "TGCLOUD_BIND_IP=192.168.1.5"))
         with self.assertRaisesRegex(ValueError, "127.0.0.1"):
-            runtime.saved_config(root, "openlist")
+            runtime.saved_config(root, "clouddrive2")
 
     def test_strict_schemas_and_legacy_metadata_without_access_plan(self):
-        for changes in ({"format": True}, {"mode": []}, {"mode": "unknown"}, {"edition": "clouddrive2"},
+        for changes in ({"format": True}, {"mode": []}, {"mode": "unknown"}, {"edition": "openlist"},
                         {"domain": "https://panel.example.com"}, {"email": "invalid"}, {"extra": 1}):
             value = dict(self.plan(), **changes)
             with self.subTest(changes=changes), self.assertRaises(ValueError):
-                access.validate_access(value, "openlist")
+                access.validate_access(value, "clouddrive2")
         with self.assertRaises(ValueError):
-            access.validate_access(dict(self.plan("local"), domain="panel.example.com"), "openlist")
+            access.validate_access(dict(self.plan("local"), domain="panel.example.com"), "clouddrive2")
         with self.assertRaises(ValueError):
-            access.validate_access(dict(self.plan("external"), email="owner@example.com"), "openlist")
+            access.validate_access(dict(self.plan("external"), email="owner@example.com"), "clouddrive2")
         root = self.candidate()
         self.initialize(root, Answers())
         (root / access.ACCESS_FILE).unlink()
@@ -157,8 +151,8 @@ class AccessTests(unittest.TestCase):
         value["format"] = 1
         del value["https_tools"]
         meta.write_text(json.dumps(value))
-        self.assertEqual(runtime.metadata(root)["format"], 1)
-        self.assertEqual(runtime.saved_config(root, "openlist")["TG2CLOUD_BIND_IP"], "127.0.0.1")
+        with self.assertRaises(ValueError):
+            runtime.metadata(root)
         value.update(format=2, https_tools=True)
         meta.write_text(json.dumps(value))
         with self.assertRaises(ValueError):
@@ -168,15 +162,15 @@ class AccessTests(unittest.TestCase):
         path = self.root / access.ACCESS_FILE
         path.write_text('{"format":1,"format":1}')
         with self.assertRaisesRegex(ValueError, "重复"):
-            access.read_access(self.root, "openlist", private_check=lambda _: None)
+            access.read_access(self.root, "clouddrive2", private_check=lambda _: None)
         path.write_text(" " * 8193)
         with self.assertRaises(ValueError):
-            access.read_access(self.root, "openlist", private_check=lambda _: None)
+            access.read_access(self.root, "clouddrive2", private_check=lambda _: None)
         path.write_text(json.dumps(self.plan()))
         other = self.root / "copy.json"
         os.link(path, other)
         with self.assertRaises(ValueError):
-            access.read_access(self.root, "openlist", private_check=lambda _: None)
+            access.read_access(self.root, "clouddrive2", private_check=lambda _: None)
 
     def test_plan_permission_protection_is_not_bypassed(self):
         if os.name == "posix":
@@ -185,7 +179,7 @@ class AccessTests(unittest.TestCase):
                     access.private_access(NS(stat=lambda uid=uid, mode=mode: NS(st_uid=uid, st_mode=mode)))
         value = self.plan()
         before = copy.deepcopy(value)
-        self.assertEqual(access.validate_access(value, "openlist"), value)
+        self.assertEqual(access.validate_access(value, "clouddrive2"), value)
         self.assertEqual(value, before)
 
     def test_offline_backup_includes_access_plan_but_not_shared_proxy(self):
@@ -195,11 +189,11 @@ class AccessTests(unittest.TestCase):
             with closing(sqlite3.connect(root / name)) as db:
                 db.execute("CREATE TABLE synthetic (value TEXT)")
         (root / "config/synthetic.conf").write_text("no-secrets")
-        (root / "openlist/data/config.json").write_text("{}")
+        (root / "clouddrive/config/synthetic.json").write_text("{}")
         archive = self.root / "backup.tar.gz"
         before = (root / access.ACCESS_FILE).read_bytes()
-        bundle.pack(root, archive, "openlist", VERSION)
-        with bundle.verified_snapshot(archive, self.root, "openlist", VERSION) as (snapshot, _):
+        bundle.pack(root, archive, "clouddrive2", VERSION)
+        with bundle.verified_snapshot(archive, self.root, "clouddrive2", VERSION) as (snapshot, _):
             self.assertEqual((snapshot / access.ACCESS_FILE).read_bytes(), before)
             self.assertFalse((snapshot / "https-tools").exists())
             self.assertFalse((snapshot / "certbot").exists())

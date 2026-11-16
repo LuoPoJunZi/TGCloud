@@ -1,7 +1,7 @@
 services:
   clouddrive2:
     image: cloudnas/clouddrive2@sha256:5491c21fb14a5774576515f8483ecdbe2780bf525985f426785b99488e7cc09d
-    container_name: tg2cloud-clouddrive2
+    container_name: tgcloud-clouddrive2
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       CLOUDDRIVE_HOME: /Config
@@ -21,13 +21,13 @@ services:
         max-file: "3"
     restart: unless-stopped
     networks:
-      - tg2cloud-clouddrive2-net
+      - tgcloud-clouddrive2-net
 
-  tg2cloud-clouddrive2-bot:
+  tgcloud-clouddrive2-bot:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: tg2cloud-clouddrive2-bot
+    container_name: tgcloud-clouddrive2-bot
     env_file:
       - .env
     environment:
@@ -35,7 +35,7 @@ services:
       DOWNLOAD_DIR: /downloads
       LOG_DIR: /logs
       RCLONE_CONFIG_PATH: /config/rclone/rclone.conf
-      TG2CLOUD_COMPOSE_SERVICE: tg2cloud-clouddrive2-bot
+      TGCLOUD_COMPOSE_SERVICE: tgcloud-clouddrive2-bot
     user: "10001:10001"
     volumes:
       - ./data:/data
@@ -65,8 +65,8 @@ services:
       retries: 3
       start_period: 45s
     networks:
-      - tg2cloud-clouddrive2-net
+      - tgcloud-clouddrive2-net
 
 networks:
-  tg2cloud-clouddrive2-net:
-    name: tg2cloud-clouddrive2-net
+  tgcloud-clouddrive2-net:
+    name: tgcloud-clouddrive2-net

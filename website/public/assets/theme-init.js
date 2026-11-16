@@ -1,6 +1,6 @@
 (() => {
   let value;
-  try { value = localStorage.getItem('tg2cloud-theme'); } catch {}
+  try { value = localStorage.getItem('tgcloud-theme'); } catch {}
   if (value !== 'dark' && value !== 'light') {
     value = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }

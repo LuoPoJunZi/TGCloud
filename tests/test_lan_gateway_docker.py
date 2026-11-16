@@ -14,11 +14,11 @@ import unittest
 import uuid
 from pathlib import Path
 
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.deployment.proxy import lan
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.proxy import lan
 
 ENABLED = (sys.platform.startswith("linux") and shutil.which("docker")
-           and os.environ.get("TG2CLOUD_TEST_LAN_DOCKER") == "1")
+           and os.environ.get("TGCLOUD_TEST_LAN_DOCKER") == "1")
 
 
 @unittest.skipUnless(ENABLED, "Opt-in Docker host-network test on disposable Linux CI only")
@@ -52,13 +52,13 @@ class LanDockerTests(unittest.TestCase):
         self.addCleanup(lambda: serving.join(timeout=5))
         self.addCleanup(backend.shutdown)
         self.docker("pull", lan.NGINX_IMAGE)
-        with tempfile.TemporaryDirectory(prefix="tg2cloud-lan-nginx-test-") as private:
+        with tempfile.TemporaryDirectory(prefix="tgcloud-lan-nginx-test-") as private:
             directory = Path(private)
             directory.chmod(0o755)
             config = directory / "nginx.conf"
             config.write_text(lan.render_files(product, address)["nginx.conf"])
             config.chmod(0o644)
-            name = "tg2cloud-test-lan-" + uuid.uuid4().hex
+            name = "tgcloud-test-lan-" + uuid.uuid4().hex
             flags = ["--name", name, "--network", "host", "--user", "101:101", "--read-only", "--cap-drop", "ALL",
                      "--security-opt", "no-new-privileges:true", "--tmpfs", lan.CONTAINER_TMP + ":" + lan.TMPFS_FLAGS,
                      "--mount", f"type=bind,source={config},target=/etc/nginx/nginx.conf,readonly", "--entrypoint", "nginx"]
@@ -77,8 +77,12 @@ class LanDockerTests(unittest.TestCase):
     def test_clouddrive2_lan_nginx(self):
         self.exercise(PRODUCTS["clouddrive2"])
 
-    def test_openlist_lan_nginx(self):
-        self.exercise(PRODUCTS["openlist"])
+class RetiredGatewayTests(unittest.TestCase):
+    def test_openlist_lan_is_rejected_before_docker(self):
+        from unittest.mock import patch
+        with patch.object(lan.instances, "docker_inventory") as inventory, self.assertRaises(SystemExit):
+            lan.main(["--edition", "openlist"])
+        inventory.assert_not_called()
 
 
 if __name__ == "__main__":

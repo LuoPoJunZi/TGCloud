@@ -12,13 +12,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import test_openlist_backup as shell_fixture
+import test_backup_shell as shell_fixture
 from test_scenarios import make_settings
 
-from tg2cloud.domain.errors import redact_text
-from tg2cloud.monitoring.resources import ResourceMonitor
-from tg2cloud.persistence.bundle import pack, preflight
-from tg2cloud.persistence.sqlite import TaskDB
+from tgcloud.domain.errors import redact_text
+from tgcloud.monitoring.resources import ResourceMonitor
+from tgcloud.persistence.bundle import pack, preflight
+from tgcloud.persistence.sqlite import TaskDB
 
 
 class BundleTests(unittest.TestCase):
@@ -28,11 +28,11 @@ class BundleTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.snapshot = self.root / "snapshot"
         self.snapshot.mkdir()
-        for name in (".env", "docker-compose.yml", "config/rclone/rclone.conf", "openlist/data/config.json"):
+        for name in (".env", "docker-compose.yml", "config/rclone/rclone.conf", "clouddrive/config/config.json"):
             path = self.snapshot / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("private-fixture", encoding="utf-8")
-        for name in ("data/tg115.db", "data/bot.session", "openlist/data/data.db"):
+        for name in ("data/tg115.db", "data/bot.session", "clouddrive/config/data.db"):
             path = self.snapshot / name
             path.parent.mkdir(parents=True, exist_ok=True)
             with closing(sqlite3.connect(path)) as conn:
@@ -42,17 +42,17 @@ class BundleTests(unittest.TestCase):
 
     def test_bundle_records_coverage_and_drills_without_changing_source(self):
         before = (self.snapshot / "data/tg115.db").read_bytes()
-        pack(self.snapshot, self.archive, "openlist", "1.2.0")
-        result = preflight(self.archive, self.root, "openlist", "1.2.1")
+        pack(self.snapshot, self.archive, "clouddrive2", "1.2.0")
+        result = preflight(self.archive, self.root, "clouddrive2", "1.2.1")
         self.assertEqual(result["files"], 7)
         self.assertEqual((self.snapshot / "data/tg115.db").read_bytes(), before)
-        self.assertFalse(list(self.root.glob("tg2cloud-restore-check-*")))
+        self.assertFalse(list(self.root.glob("tgcloud-restore-check-*")))
         with tarfile.open(self.archive) as tar:
             manifest = json.load(tar.extractfile("manifest.json"))
             self.assertEqual(manifest["excluded"], ["downloads", "logs", "shared-https"])
             self.assertIn("data/bot.session", manifest["files"])
         with self.assertRaises(FileExistsError):
-            pack(self.snapshot, self.archive, "openlist", "1.2.0")
+            pack(self.snapshot, self.archive, "clouddrive2", "1.2.0")
         self.assertTrue(self.archive.exists())
 
     def test_optional_personal_session_is_private_and_validated(self):
@@ -60,7 +60,7 @@ class BundleTests(unittest.TestCase):
         session.parent.mkdir(mode=0o700)
         with closing(sqlite3.connect(session)) as connection:
             connection.execute("CREATE TABLE synthetic(value TEXT)")
-        pack(self.snapshot,self.archive,"openlist","1.4.8")
+        pack(self.snapshot,self.archive,"clouddrive2","1.4.8")
         with tarfile.open(self.archive) as tar:
             manifest=json.load(tar.extractfile("manifest.json"))
             self.assertIn("data/listener/personal.session",manifest["files"])
@@ -68,28 +68,51 @@ class BundleTests(unittest.TestCase):
         self.archive.unlink()
         session.with_name(session.name+"-wal").write_bytes(b"live")
         with self.assertRaises(ValueError):
-            pack(self.snapshot,self.archive,"openlist","1.4.8")
+            pack(self.snapshot,self.archive,"clouddrive2","1.4.8")
 
     def test_corrupt_database_and_live_sidecar_fail_before_bundle(self):
         (self.snapshot / "data/tg115.db-wal").write_bytes(b"fixture")
         with self.assertRaises(ValueError):
-            pack(self.snapshot, self.archive, "openlist", "1.2.0")
+            pack(self.snapshot, self.archive, "clouddrive2", "1.2.0")
         (self.snapshot / "data/tg115.db-wal").unlink()
         (self.snapshot / "data/bot.session").write_bytes(b"truncated")
         with self.assertRaises(sqlite3.DatabaseError):
-            pack(self.snapshot, self.archive, "openlist", "1.2.0")
+            pack(self.snapshot, self.archive, "clouddrive2", "1.2.0")
         self.assertFalse(self.archive.exists())
 
     def test_cross_edition_downgrade_and_low_space_rejected(self):
-        pack(self.snapshot, self.archive, "openlist", "1.2.0")
-        for edition, target in (("clouddrive2", "1.2.0"), ("openlist", "1.1.0"), ("openlist", "2.0.0")):
+        pack(self.snapshot, self.archive, "clouddrive2", "1.2.0")
+        for edition, target in (("openlist", "1.2.0"), ("unknown", "1.2.0"), ("clouddrive2", "1.1.0"), ("clouddrive2", "2.0.0")):
             with self.subTest(edition=edition, target=target), self.assertRaises(ValueError):
                 preflight(self.archive, self.root, edition, target)
-        with patch("tg2cloud.persistence.bundle.shutil.disk_usage", return_value=SimpleNamespace(free=1)), self.assertRaises(ValueError):
-            preflight(self.archive, self.root, "openlist", "1.2.0")
+        with patch("tgcloud.persistence.bundle.shutil.disk_usage", return_value=SimpleNamespace(free=1)), self.assertRaises(ValueError):
+            preflight(self.archive, self.root, "clouddrive2", "1.2.0")
+
+    def test_invalid_backends_and_openlist_manifest_are_rejected_without_extraction(self):
+        for edition in ("openlist", "unknown", "", "cd2"):
+            with self.subTest(edition=edition), self.assertRaises(ValueError):
+                pack(self.snapshot, self.archive, edition, "1.2.0")
+            self.assertFalse(self.archive.exists())
+        pack(self.snapshot, self.archive, "clouddrive2", "1.2.0")
+        with tarfile.open(self.archive) as tar:
+            entries = [(member, tar.extractfile(member).read()) for member in tar if member.isfile()]
+        candidate = self.root / "openlist.tar.gz"
+        with tarfile.open(candidate, "w:gz") as tar:
+            for member, data in entries:
+                if member.name == "manifest.json":
+                    manifest = json.loads(data)
+                    manifest["edition"] = "openlist"
+                    data = json.dumps(manifest).encode()
+                    member.size = len(data)
+                tar.addfile(member, io.BytesIO(data))
+        original = candidate.read_bytes()
+        with self.assertRaisesRegex(ValueError, "edition/version incompatible"):
+            preflight(candidate, self.root, "clouddrive2", "1.2.0")
+        self.assertEqual(candidate.read_bytes(), original)
+        self.assertFalse(list(self.root.glob("tgcloud-restore-check-*")))
 
     def test_tampering_traversal_and_links_fail_closed(self):
-        pack(self.snapshot, self.archive, "openlist", "1.2.0")
+        pack(self.snapshot, self.archive, "clouddrive2", "1.2.0")
         with tarfile.open(self.archive) as tar:
             entries = [(m, tar.extractfile(m).read()) for m in tar if m.isfile()]
         for kind in ("tamper", "traversal", "link", "duplicate", "missing"):
@@ -107,9 +130,9 @@ class BundleTests(unittest.TestCase):
                         bad.type, bad.linkname = tarfile.SYMTYPE, "../../outside"
                     tar.addfile(bad)
             with self.subTest(kind=kind), self.assertRaises(ValueError):
-                preflight(candidate, self.root, "openlist", "1.2.0")
+                preflight(candidate, self.root, "clouddrive2", "1.2.0")
         self.assertFalse((self.root / "outside").exists())
-        self.assertFalse(list(self.root.glob("tg2cloud-restore-check-*")))
+        self.assertFalse(list(self.root.glob("tgcloud-restore-check-*")))
 
 
 class ResourceAndMigrationTests(unittest.TestCase):
@@ -119,14 +142,14 @@ class ResourceAndMigrationTests(unittest.TestCase):
             database = root / "database"
             database.mkdir()
             monitor = ResourceMonitor(root, database=database)
-            with patch("tg2cloud.monitoring.resources.psutil.disk_usage", return_value=SimpleNamespace(free=1000)) as usage:
+            with patch("tgcloud.monitoring.resources.psutil.disk_usage", return_value=SimpleNamespace(free=1000)) as usage:
                 snapshot = monitor.sample()
             self.assertEqual(usage.call_count, 1)
             self.assertEqual(len(snapshot.filesystems), 1)
             self.assertIn("database", snapshot.filesystems[0][0])
             self.assertGreater(snapshot.filesystems[0][1], 0)
             with patch.object(Path, "stat", side_effect=[SimpleNamespace(st_dev=1), SimpleNamespace(st_dev=2)]), \
-                    patch("tg2cloud.monitoring.resources.psutil.disk_usage", side_effect=[SimpleNamespace(free=100), SimpleNamespace(free=5)]):
+                    patch("tgcloud.monitoring.resources.psutil.disk_usage", side_effect=[SimpleNamespace(free=100), SimpleNamespace(free=5)]):
                 snapshot = monitor.sample()
             self.assertEqual([free for _, free in snapshot.filesystems], [100, 5])
 
@@ -170,7 +193,7 @@ class ResourceAndMigrationTests(unittest.TestCase):
 @unittest.skipUnless(shell_fixture.BASH, "Bash required for isolated rollback fixtures")
 class CloudRollbackTests(unittest.TestCase):
     def setUp(self):
-        self.fixture = shell_fixture.OpenListBackupTests(methodName="runTest")
+        self.fixture = shell_fixture.CloudDriveBackupTests(methodName="runTest")
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
         script = (shell_fixture.ROOT / "packaging/hooks/clouddrive2/remote_install.sh").read_text(encoding="utf-8")
@@ -185,7 +208,7 @@ class CloudRollbackTests(unittest.TestCase):
         result, calls = self.run_rollback()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.fixture.assert_database(self.fixture.database, 2)
-        self.assertIn("compose up -d --no-deps --force-recreate tg2cloud-clouddrive2-bot", calls)
+        self.assertIn("compose up -d --no-deps --force-recreate tgcloud-clouddrive2-bot", calls)
 
     def test_corrupt_copy_and_failed_stop_preserve_database_and_sidecars(self):
         original = self.fixture.database.read_bytes()

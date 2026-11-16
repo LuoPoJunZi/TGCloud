@@ -7,13 +7,13 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from tg2cloud.monitoring.progress import (
+from tgcloud.monitoring.progress import (
     _record_progress,
     _stage_rate,
     dashboard_rates,
     sample_rate,
 )
-from tg2cloud.storage.rclone import RcloneClient, _read_progress_tail, parse_progress
+from tgcloud.storage.rclone import RcloneClient, _read_progress_tail, parse_progress
 
 
 class ProgressTests(unittest.IsolatedAsyncioTestCase):
@@ -65,26 +65,26 @@ class ProgressTests(unittest.IsolatedAsyncioTestCase):
 
     def test_reset_and_successive_byte_counts_derive_rate(self):
         service = SimpleNamespace(_progress={})
-        with patch("tg2cloud.monitoring.progress.time.monotonic", return_value=10):
+        with patch("tgcloud.monitoring.progress.time.monotonic", return_value=10):
             _record_progress(service, 1, "upload", 0, reset=True)
         self.assertIsNone(service._progress[1]["speed"])
-        with patch("tg2cloud.monitoring.progress.time.monotonic", return_value=11):
+        with patch("tgcloud.monitoring.progress.time.monotonic", return_value=11):
             _record_progress(service, 1, "upload", 1024)
         self.assertEqual(service._progress[1]["speed"], 1024)
-        with patch("tg2cloud.monitoring.progress.time.monotonic", return_value=12):
+        with patch("tgcloud.monitoring.progress.time.monotonic", return_value=12):
             _record_progress(service, 1, "upload", 1024)
         self.assertEqual(service._progress[1]["speed"], 0)
-        with patch("tg2cloud.monitoring.progress.time.monotonic", return_value=13):
+        with patch("tgcloud.monitoring.progress.time.monotonic", return_value=13):
             _record_progress(service, 1, "upload", 0, reset=True)
         self.assertIsNone(service._progress[1]["speed"])
         self.assertEqual(service._progress[1]["started"], 13)
 
     def test_regressed_count_or_new_stage_does_not_reuse_old_speed(self):
         service = SimpleNamespace(_progress={1: {"stage": "upload", "bytes": 500, "speed": 99, "at": 9, "started": 1}})
-        with patch("tg2cloud.monitoring.progress.time.monotonic", return_value=10):
+        with patch("tgcloud.monitoring.progress.time.monotonic", return_value=10):
             _record_progress(service, 1, "upload", 5)
         self.assertIsNone(service._progress[1]["speed"])
-        with patch("tg2cloud.monitoring.progress.time.monotonic", return_value=11):
+        with patch("tgcloud.monitoring.progress.time.monotonic", return_value=11):
             _record_progress(service, 1, "stream", 5)
         self.assertIsNone(service._progress[1]["speed"])
 
@@ -93,15 +93,15 @@ class ProgressTests(unittest.IsolatedAsyncioTestCase):
             1: {"stage": "upload", "speed": None, "at": 99},
             2: {"stage": "upload", "speed": 5, "at": 90},
         })
-        with patch("tg2cloud.monitoring.progress.time.monotonic", return_value=100):
+        with patch("tgcloud.monitoring.progress.time.monotonic", return_value=100):
             self.assertEqual(_stage_rate(service, "upload"), 5)
             self.assertIsNone(sample_rate(service._progress[1]))
             self.assertIsNone(sample_rate(service._progress[2]))
             self.assertIsNone(sample_rate({"at": 101, "speed": 5}))
             self.assertEqual(sample_rate({"at": 99, "speed": 0}), 0)
 
-    async def test_both_backends_request_one_second_json_stats_without_changing_retries(self):
-        for backend, retries in (("clouddrive2", "2"), ("openlist", "1")):
+    async def test_clouddrive2_request_one_second_json_stats_without_changing_retries(self):
+        for backend, retries in (("clouddrive2", "2"),):
             client = RcloneClient(SimpleNamespace(storage_backend=backend))
             client.prepare_destination = AsyncMock()
             client.remote = lambda path: "test:" + path
@@ -127,24 +127,24 @@ class DashboardRateTests(unittest.TestCase):
     def test_stale_and_partial_active_totals_not_reported_as_zero_or_full_sum(self):
         tasks = {1: {"state": "uploading"}, 2: {"state": "uploading"}}
         service = self.service(tasks, {1: {"stage": "upload", "at": 99, "speed": 5}}, uploads=(1, 2))
-        with patch("tg2cloud.monitoring.progress.time.monotonic", return_value=100):
+        with patch("tgcloud.monitoring.progress.time.monotonic", return_value=100):
             self.assertEqual(dashboard_rates(service, {"uploading": 2}), (0, None))
             service._progress[2] = {"stage": "upload", "at": 99, "speed": 7}
             self.assertEqual(dashboard_rates(service, {"uploading": 2}), (0, 12))
-        with patch("tg2cloud.monitoring.progress.time.monotonic", return_value=110):
+        with patch("tgcloud.monitoring.progress.time.monotonic", return_value=110):
             self.assertEqual(dashboard_rates(service, {"uploading": 2}), (0, None))
 
     def test_completed_verifying_and_cleanup_do_not_keep_old_upload_speed(self):
         for state in ("completed", "cancelled", "verifying", "finalizing", "cleanup_pending"):
             service = self.service({1: {"state": state}}, {1: {"stage": "upload", "at": 99, "speed": 5}}, uploads=(1,))
-            with patch("tg2cloud.monitoring.progress.time.monotonic", return_value=100):
+            with patch("tgcloud.monitoring.progress.time.monotonic", return_value=100):
                 self.assertEqual(dashboard_rates(service, {state: 1}), (0, 0))
 
     def test_member_only_gets_own_speed_and_stream_is_pipeline_rate_in_both_directions(self):
         tasks = {1: {"sender_id": 11, "state": "streaming"}, 2: {"sender_id": 22, "state": "uploading"}}
         service = self.service(tasks, {1: {"stage": "stream", "speed": 5, "at": 99},
                                       2: {"stage": "upload", "speed": 90, "at": 99}}, downloads=(1,), uploads=(2,))
-        with patch("tg2cloud.monitoring.progress.time.monotonic", return_value=100):
+        with patch("tgcloud.monitoring.progress.time.monotonic", return_value=100):
             self.assertEqual(dashboard_rates(service, {"streaming": 1}, sender_id=11), (5, 5))
             self.assertEqual(dashboard_rates(service, {"uploading": 1}, sender_id=22), (0, 90))
             self.assertEqual(dashboard_rates(service, {}, sender_id=33), (0, 0))

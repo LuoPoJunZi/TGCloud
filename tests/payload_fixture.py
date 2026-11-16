@@ -7,11 +7,11 @@ import tempfile
 from functools import lru_cache
 from pathlib import Path
 
-from tg2cloud.deployment.payload import build_payload
-from tg2cloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.payload import build_payload
+from tgcloud.deployment.profiles import PRODUCTS
 
 ROOT = Path(__file__).resolve().parents[1]
-_temporary = tempfile.TemporaryDirectory(prefix="tg2cloud-test-contexts-")
+_temporary = tempfile.TemporaryDirectory(prefix="tgcloud-test-contexts-")
 atexit.register(_temporary.cleanup)
 
 

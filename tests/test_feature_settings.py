@@ -12,10 +12,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tg2cloud.deployment import feature_settings as host
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.persistence import features
-from tg2cloud.persistence.sqlite import TaskDB
+from tgcloud.deployment import feature_settings as host
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.persistence import features
+from tgcloud.persistence.sqlite import TaskDB
 
 
 class PromptUI:
@@ -87,7 +87,7 @@ class SettingsMenuTests(unittest.TestCase):
         self.lock.assert_not_called()
 
     def test_notification_toggles_and_threshold_save_without_another_menu(self):
-        self.manager.product = PRODUCTS["openlist"]
+        self.manager.product = PRODUCTS["clouddrive2"]
         self.manager.ui = PromptUI(["1", "2", "3", "25", "0"], [True, True, True])
         host.manage_notifications(self.manager, self.instance)
         current = self.db.feature_settings()
@@ -103,7 +103,7 @@ class SettingsMenuTests(unittest.TestCase):
         for label in ("开启异常通知", "关闭异常通知", "关闭恢复通知", "开启恢复通知", "25 GB", "异常通知开启后生效"):
             self.assertIn(label, text)
         self.assertEqual(self.manager.recheck.call_count, 3)
-        self.assertTrue(all(call.args[0].name == "openlist.lock" for call in self.lock.call_args_list))
+        self.assertTrue(all(call.args[0].name == "clouddrive2.lock" for call in self.lock.call_args_list))
         self.manager.session.run.assert_not_called()
 
     def test_zero_threshold_means_existing_safety_line_not_disabling_protection(self):
@@ -159,7 +159,7 @@ class SettingsMenuTests(unittest.TestCase):
 
 class RequestAndQuotaTests(unittest.TestCase):
     def setUp(self):
-        self.manager = SimpleNamespace(ui=Mock(), log=Mock(), product=PRODUCTS["openlist"], session=Mock(), recheck=Mock())
+        self.manager = SimpleNamespace(ui=Mock(), log=Mock(), product=PRODUCTS["clouddrive2"], session=Mock(), recheck=Mock())
         self.instance = SimpleNamespace(running=True, config={"ALLOWED_USER_ID": "123"})
         self.usage = {"daily_bytes": 10, "max_queued": 2, "max_active": 1, "completed_bytes": 3, "reserved_bytes": 4}
 
@@ -169,7 +169,7 @@ class RequestAndQuotaTests(unittest.TestCase):
         host.request(self.manager, self.instance, "settings-write", revision="initial", updates={"classification": value})
         args = shlex.split(self.manager.session.run.call_args.args[0])
         self.assertEqual(json.loads(args[2])["updates"]["classification"], value)
-        self.assertEqual(args[3:], ["|", "docker", "exec", "-i", "tg2cloud-openlist-bot", "python", "-B", "-m", "tg2cloud.persistence.control"])
+        self.assertEqual(args[3:], ["|", "docker", "exec", "-i", "tgcloud-clouddrive2-bot", "python", "-B", "-m", "tgcloud.persistence.control"])
         for code, output in ((1, "FAKE_PRIVATE"), (0, "FAKE_PRIVATE"), (0, '{"api":99}')):
             self.manager.session.run.return_value = (code, output)
             with self.assertRaises(ValueError) as caught:
@@ -195,7 +195,7 @@ class RequestAndQuotaTests(unittest.TestCase):
                 values = {"daily_bytes": 20 * 1024**3, "max_queued": 3, "max_active": 2} if action == "set" else dict.fromkeys(expected, 0)
                 self.assertEqual(request.call_args.kwargs, {"user_id": 456, "revision": "initial", "expected": expected, "values": values})
                 self.assertEqual(request.call_args.args[2], "quota-write")
-                self.assertEqual(lock.call_args.args[0].name, "openlist.lock")
+                self.assertEqual(lock.call_args.args[0].name, "clouddrive2.lock")
         self.assertEqual(self.manager.recheck.call_count, 2)
 
     def test_invalid_quota_action_and_declined_clear_cannot_write(self):

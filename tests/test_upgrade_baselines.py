@@ -8,20 +8,19 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from tg2cloud.deployment import baselines, releases
-from tg2cloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment import baselines, releases
+from tgcloud.deployment.profiles import PRODUCTS
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class BaselineTests(unittest.TestCase):
-    def test_reviewed_catalog_matches_original_git_objects_for_both_editions(self):
-        spec = importlib.util.spec_from_file_location("baseline_metadata", ROOT / ".github/scripts/baseline_metadata.py")
-        tool = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tool)
+    def test_original_project_baselines_are_not_accepted_by_tgcloud(self):
         for tag, record in baselines.CATALOG.items():
-            with self.subTest(tag=tag):
-                self.assertEqual(tool.entry(tag, record["commit"]), record)
+            with self.subTest(tag=tag), patch.object(baselines, "payload_digest") as read:
+                with self.assertRaisesRegex(ValueError, "可信目录"):
+                    baselines.verify(ROOT, tag, record["commit"])
+                read.assert_not_called()
 
     def test_known_baseline_does_not_require_deleted_release_or_tag(self):
         client = Mock()
@@ -45,11 +44,10 @@ class BaselineTests(unittest.TestCase):
                 releases.download_baseline(client, tag, Path("temp"), Mock())
 
     def test_corrupt_payload_or_wrong_commit_stops(self):
-        record = baselines.CATALOG["v1.3.4"]
         with self.assertRaisesRegex(ValueError, "可信目录"):
             baselines.verify(ROOT, "v1.3.4", "0" * 40)
-        with patch.object(baselines, "payload_digest", return_value="0" * 64), self.assertRaisesRegex(ValueError, "不匹配"):
-            baselines.verify(ROOT, "v1.3.4", record["commit"])
+        with patch.dict(baselines.CATALOG, {"v0.0.1": {"commit": "a" * 40, "payloads": {"clouddrive2": "b" * 64}}}), patch.object(baselines, "payload_digest", return_value="0" * 64), self.assertRaisesRegex(ValueError, "不匹配"):
+            baselines.verify(ROOT, "v0.0.1", "a" * 40)
 
     def test_digest_covers_path_content_addition_and_crlf_normalization(self):
         with tempfile.TemporaryDirectory() as private:
@@ -103,8 +101,8 @@ class MaintenancePreflightTests(unittest.TestCase):
             root = Path(private)
             marker = root / "packaging/external-webdav.json"
             marker.parent.mkdir()
-            marker.write_text('{"api":2,"proxy_schema":2,"owner":"tg2cloud.external_webdav"}')
-            name = "src/tg2cloud/version.py"
+            marker.write_text('{"api":2,"proxy_schema":2,"owner":"tgcloud.external_webdav"}')
+            name = "src/tgcloud/version.py"
             path = root / name
             path.parent.mkdir(parents=True)
             path.write_bytes(b'VERSION = "1.4.4"\n')
@@ -130,8 +128,8 @@ class MaintenancePreflightTests(unittest.TestCase):
             root = Path(private)
             marker = root / "packaging/external-webdav.json"
             marker.parent.mkdir()
-            marker.write_text('{"api":1,"proxy_schema":2,"owner":"tg2cloud.external_webdav"}')
-            name = "src/tg2cloud/version.py"
+            marker.write_text('{"api":1,"proxy_schema":2,"owner":"tgcloud.external_webdav"}')
+            name = "src/tgcloud/version.py"
             path = root / name
             path.parent.mkdir(parents=True)
             path.write_bytes(b'VERSION = "1.4.4"\n')

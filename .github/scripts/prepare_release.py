@@ -29,10 +29,15 @@ def prepare(root: Path, version: str) -> tuple[dict, str]:
         if path.is_symlink() or path.resolve() != path.absolute():
             raise ValueError("linked release input is not supported")
         return path.read_text(encoding="utf-8")
-    name = "src/tg2cloud/version.py"
+    name = "src/tgcloud/version.py"
     changes[name] = replace_one(read(name), r'^VERSION = "[0-9.]+"$', 'VERSION = "' + version + '"')
     name = "install.sh"
-    changes[name] = replace_one(read(name), r'^installer_version\s*=\s*"[0-9.]+"$', 'installer_version = "' + version + '"')
+    entry = read(name)
+    if 'script_root=' in entry and "installer_version" not in entry:
+        if 'exec python3 -B "$script_root/scripts/run_source.py" install "$@"' not in entry:
+            raise ValueError("invalid local-source Linux entry")
+    else:
+        changes[name] = replace_one(entry, r'^installer_version\s*=\s*"[0-9.]+"$', 'installer_version = "' + version + '"')
     for name in ("website/package.json", "website/package-lock.json", "website/site.config.json"):
         original = read(name)
         content = json.loads(original)

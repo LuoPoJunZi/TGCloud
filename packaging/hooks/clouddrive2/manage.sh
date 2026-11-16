@@ -2,10 +2,10 @@
 set -Eeuo pipefail
 umask 077
 
-INSTALL_DIR="${INSTALL_DIR:-/opt/tg2cloud-clouddrive2}"
-BACKUP_DIR="/opt/tg2cloud-clouddrive2-backups"
-BOT_SERVICE="tg2cloud-clouddrive2-bot"
-BOT_CONTAINER="tg2cloud-clouddrive2-bot"
+INSTALL_DIR="${INSTALL_DIR:-/opt/tgcloud-clouddrive2}"
+BACKUP_DIR="/opt/tgcloud-clouddrive2-backups"
+BOT_SERVICE="tgcloud-clouddrive2-bot"
+BOT_CONTAINER="tgcloud-clouddrive2-bot"
 [[ "$INSTALL_DIR" =~ ^/opt/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] || exit 2
 [[ "/$INSTALL_DIR/" != *"/../"* && "/$INSTALL_DIR/" != *"/./"* ]] || exit 2
 [[ "$(realpath -e -- "$INSTALL_DIR")" == "$INSTALL_DIR" ]] || exit 2
@@ -15,7 +15,7 @@ source ./backup_retention.sh
 
 check_config() {
   local fingerprint
-  fingerprint="$(python3 app/tg2cloud/deployment/fingerprints.py --root app)"
+  fingerprint="$(python3 app/tgcloud/deployment/fingerprints.py --root app)"
   docker compose config --format json \
     | docker compose exec -T "$BOT_SERVICE" python -m app.deployment_check \
         --expected-code "$fingerprint"
@@ -75,13 +75,13 @@ apply_config() {
     restarted=true
     if docker compose up -d --no-deps "$BOT_SERVICE" && wait_healthy; then
       trap - ERR INT TERM HUP
-      printf 'TG2CLOUD_APPLY_CONFIG=OK\n配置备份：%s\n' "$backup"
+      printf 'TGCLOUD_APPLY_CONFIG=OK\n配置备份：%s\n' "$backup"
       return
     fi
   fi
   restore_config
   trap - ERR INT TERM HUP
-  printf 'TG2CLOUD_APPLY_CONFIG=FAILED\n已恢复旧配置；备份：%s\n' "$backup" >&2
+  printf 'TGCLOUD_APPLY_CONFIG=FAILED\n已恢复旧配置；备份：%s\n' "$backup" >&2
   return 1
 }
 
@@ -90,10 +90,10 @@ case "${1:-status}" in
     docker compose ps
     bot_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$BOT_CONTAINER" 2>/dev/null || true)"
     if [[ "$bot_health" != healthy ]]; then
-      printf 'TG2CLOUD_BOT_HEALTH=%s\nTG2CLOUD_STATUS=STOPPED\n' "${bot_health:-missing}" >&2
+      printf 'TGCLOUD_BOT_HEALTH=%s\nTGCLOUD_STATUS=STOPPED\n' "${bot_health:-missing}" >&2
       exit 1
     fi
-    printf 'TG2CLOUD_BOT_HEALTH=healthy\nTG2CLOUD_STATUS=OK\n'
+    printf 'TGCLOUD_BOT_HEALTH=healthy\nTGCLOUD_STATUS=OK\n'
     ;;
   logs)
     docker compose logs --since=30m --tail=200 -f "$BOT_SERVICE" \
@@ -114,16 +114,16 @@ case "${1:-status}" in
     validate_config
     docker compose up -d --no-deps "$BOT_SERVICE"
     wait_healthy
-    printf 'TG2CLOUD_UPDATE=OK\n'
+    printf 'TGCLOUD_UPDATE=OK\n'
     ;;
   apply-config)
     apply_config "$@"
     ;;
   backups)
-    tg2cloud_backup_inventory "$BACKUP_DIR"
+    tgcloud_backup_inventory "$BACKUP_DIR"
     ;;
   prune-backups)
-    tg2cloud_prune_backups "$BACKUP_DIR" "${2:-5}"
+    tgcloud_prune_backups "$BACKUP_DIR" "${2:-5}"
     ;;
   check|doctor)
     check_config

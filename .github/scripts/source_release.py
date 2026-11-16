@@ -26,23 +26,23 @@ LEGACY_REQUIRED = {
     "payload_clouddrive2/Dockerfile", "payload_clouddrive2/requirements.txt",
     "payload_clouddrive2/remote_install.sh", "payload_openlist/remote_install.sh",
     "payload_clouddrive2/docker-compose.yml", "payload_openlist/docker-compose.yml",
-    "assets/brand/tg2cloud-logo.svg",
+    "assets/brand/tgcloud-logo.svg",
 }
 ROOT_LEGACY_REQUIRED = (LEGACY_REQUIRED - {path for path in LEGACY_REQUIRED if path.startswith("scripts/lib/")}) | {
     "deployer_products.py", "vps_resources.py", "domain_proxy.py", "proxy_maintenance.py",
 }
 MODERN_REQUIRED = {
     "install.sh", "install-lan.sh", "LICENSE", "pyproject.toml",
-    "scripts/run_source.py", "src/tg2cloud/__init__.py", "src/tg2cloud/version.py",
-    "src/tg2cloud/app.py", "src/tg2cloud/deployment/profiles.py",
-    "src/tg2cloud/deployment/fingerprints.py", "src/tg2cloud/cli/commands.py",
+    "scripts/run_source.py", "src/tgcloud/__init__.py", "src/tgcloud/version.py",
+    "src/tgcloud/app.py", "src/tgcloud/deployment/profiles.py",
+    "src/tgcloud/deployment/fingerprints.py", "src/tgcloud/cli/commands.py",
     "requirements/bot.lock.txt", "requirements/dev.lock.txt", "packaging/Dockerfile",
-    "packaging/compose/docker-compose.clouddrive2.yml", "packaging/compose/docker-compose.openlist.yml",
-    "packaging/bootstrap-manifest.json", "packaging/runtime-manifest.json", "assets/brand/tg2cloud-logo.svg",
+    "packaging/compose/docker-compose.clouddrive2.yml",
+    "packaging/bootstrap-manifest.json", "packaging/runtime-manifest.json", "assets/brand/tgcloud-logo.svg",
 }
 HISTORICAL_MODERN_REQUIRED = MODERN_REQUIRED | {"uninstall.sh"}
-REQUIRED = MODERN_REQUIRED | {"packaging/external-webdav.json", "src/tg2cloud/deployment/uninstall.py",
-                              "src/tg2cloud/addons/external_webdav/entry.py"}
+REQUIRED = MODERN_REQUIRED | {"packaging/external-webdav.json", "src/tgcloud/deployment/uninstall.py",
+                              "src/tgcloud/addons/external_webdav/entry.py"}
 
 
 def unified_layout(marker: bytes | None, *, has_addon: bool) -> bool:
@@ -53,8 +53,8 @@ def unified_layout(marker: bytes | None, *, has_addon: bool) -> bool:
         return False
     value = json.loads(marker)
     if (not isinstance(value, dict) or type(value.get("api")) is not int
-            or value not in ({"api": 1, "proxy_schema": 2, "owner": "tg2cloud.external_webdav"},
-                             {"api": 2, "proxy_schema": 2, "owner": "tg2cloud.external_webdav"})):
+            or value not in ({"api": 1, "proxy_schema": 2, "owner": "tgcloud.external_webdav"},
+                             {"api": 2, "proxy_schema": 2, "owner": "tgcloud.external_webdav"})):
         raise ValueError("unsupported external WebDAV release contract")
     return value["api"] == 2
 
@@ -70,18 +70,18 @@ def manifest_files(content: bytes, expected: set[str]) -> list[str]:
 
 
 def helpers_in_tree(files: set[str]) -> set[str]:
-    result = {"scripts/run_source.py", "src/tg2cloud/__init__.py", "src/tg2cloud/version.py", "src/tg2cloud/config.py"} | {
-        path for path in files if path.endswith(".py") and path.startswith(("src/tg2cloud/cli/", "src/tg2cloud/deployment/", "src/tg2cloud/addons/"))
+    result = {"scripts/run_source.py", "src/tgcloud/__init__.py", "src/tgcloud/version.py", "src/tgcloud/config.py"} | {
+        path for path in files if path.endswith(".py") and path.startswith(("src/tgcloud/cli/", "src/tgcloud/deployment/", "src/tgcloud/addons/"))
     }
-    if {"src/tg2cloud/deployment/backup.py", "src/tg2cloud/cli/naming.py"} & files:
-        result.update("src/tg2cloud/" + name for name in (
+    if {"src/tgcloud/deployment/backup.py", "src/tgcloud/cli/naming.py"} & files:
+        result.update("src/tgcloud/" + name for name in (
             "persistence/__init__.py", "persistence/backup.py", "persistence/bundle.py",
             "domain/__init__.py", "domain/naming.py"))
-    if "src/tg2cloud/persistence/paths.py" in files:
-        result.add("src/tg2cloud/persistence/paths.py")
-    if "src/tg2cloud/compose/management.py" in files:
-        result.update(path for path in files if path.startswith("src/tg2cloud/compose/") and path.endswith(".py"))
-        result.update("packaging/compose/docker-compose." + edition + ".yml" for edition in ("clouddrive2", "openlist"))
+    if "src/tgcloud/persistence/paths.py" in files:
+        result.add("src/tgcloud/persistence/paths.py")
+    if "src/tgcloud/compose/management.py" in files:
+        result.update(path for path in files if path.startswith("src/tgcloud/compose/") and path.endswith(".py"))
+        result.add("packaging/compose/docker-compose.clouddrive2.yml")
     return result
 
 
@@ -95,12 +95,12 @@ def git(root: Path, *args: str) -> bytes:
 def artifact_name(tag: str) -> str:
     if not TAG.fullmatch(tag):
         raise ValueError("invalid release tag")
-    return f"TG2Cloud-{tag}-source.tar.gz"
+    return f"TGCloud-{tag}-source.tar.gz"
 
 
 def validate_pins(root: Path, commit: str) -> None:
     """Catch a new release accidentally shipping old online wizard code."""
-    layout = git(root, "ls-tree", "--name-only", commit, "src/tg2cloud/version.py")
+    layout = git(root, "ls-tree", "--name-only", commit, "src/tgcloud/version.py")
     current_helpers = None
     unified = False
     if layout:
@@ -108,9 +108,16 @@ def validate_pins(root: Path, commit: str) -> None:
         current_helpers = manifest_files(git(root, "show", f"{commit}:packaging/bootstrap-manifest.json"), helpers_in_tree(files))
         marker = "packaging/external-webdav.json"
         unified = unified_layout(git(root, "show", f"{commit}:{marker}") if marker in files else None,
-                                 has_addon=any(name.startswith("src/tg2cloud/addons/external_webdav/") for name in files))
+                                 has_addon=any(name.startswith("src/tgcloud/addons/external_webdav/") for name in files))
     for entry in (("install.sh", "install-lan.sh") if unified else ("install.sh", "install-lan.sh", "uninstall.sh")):
         text = git(root, "show", f"{commit}:{entry}").decode("utf-8")
+        if 'script_root=' in text and "installer_commit" not in text:
+            command = "lan" if entry == "install-lan.sh" else "install"
+            expected = 'exec python3 -B "$script_root/scripts/run_source.py" ' + command + ' "$@"'
+            if (current_helpers is None or expected not in text
+                    or any(item in text for item in ("https://", "http://", "curl", "wget"))):
+                raise ValueError("invalid local-source Linux entry")
+            continue
         pins = re.findall(r'^installer_commit\s*=\s*"([0-9a-f]{40})"$', text, re.MULTILINE)
         if len(pins) != 1:
             raise ValueError(f"missing immutable helper pin: {entry}")
@@ -148,7 +155,7 @@ def verify(directory: Path, tag: str) -> None:
         raise ValueError("source archive SHA256 mismatch")
     files = {}
     total = 0
-    prefix = f"TG2Cloud-{tag}/"
+    prefix = f"TGCloud-{tag}/"
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as bundle:
         seen = set()
         for member in bundle:
@@ -168,9 +175,9 @@ def verify(directory: Path, tag: str) -> None:
             if relative.lower().endswith((".exe", ".pyc")) or any(part in {"build", "dist", ".venv", "__pycache__", "legacy"} for part in PurePosixPath(relative).parts):
                 raise ValueError("build output in source archive")
             files[relative] = bundle.extractfile(member).read()
-    modern = "src/tg2cloud/version.py" in files
+    modern = "src/tgcloud/version.py" in files
     legacy_lib = "scripts/lib/deployer_products.py" in files
-    has_addon = any(path.startswith("src/tg2cloud/addons/external_webdav/") for path in files)
+    has_addon = any(path.startswith("src/tgcloud/addons/external_webdav/") for path in files)
     unified = modern and unified_layout(files.get("packaging/external-webdav.json"), has_addon=has_addon)
     required = (REQUIRED if unified else HISTORICAL_MODERN_REQUIRED) if modern else LEGACY_REQUIRED if legacy_lib else ROOT_LEGACY_REQUIRED
     if not required.issubset(files):
@@ -178,50 +185,54 @@ def verify(directory: Path, tag: str) -> None:
     if modern:
         if has_addon:
             needed = {"packaging/external-webdav.json",
-                      "src/tg2cloud/addons/external_webdav/cli.py", "src/tg2cloud/addons/external_webdav/service.py"}
+                      "src/tgcloud/addons/external_webdav/cli.py", "src/tgcloud/addons/external_webdav/service.py"}
             if not unified:
                 needed.add("install-webdav.sh")
             if not needed <= files.keys():
                 raise ValueError("incomplete external WebDAV release contract")
         if unified and {"uninstall.sh", "install-webdav.sh"} & files.keys():
             raise ValueError("retired standalone entry in unified source layout")
-        runtime = {path for path in files if path.startswith("src/tg2cloud/") and path.endswith(".py")}
+        runtime = {path for path in files if path.startswith("src/tgcloud/") and path.endswith(".py")}
         manifest_files(files["packaging/runtime-manifest.json"], runtime)
         manifest_files(files["packaging/bootstrap-manifest.json"], helpers_in_tree(set(files)))
     if "packaging/compose-release.json" in files:
         contract = json.loads(files["packaging/compose-release.json"])
-        legacy = {"format": 1, "registry": "ghcr.io", "image": "tg2cloud", "platforms": ["linux/amd64", "linux/arm64"]}
+        legacy = {"format": 1, "registry": "ghcr.io", "image": "tgcloud", "platforms": ["linux/amd64", "linux/arm64"]}
         current = legacy | {"format": 2, "https_tools": 1}
+        local = {"format": 4, "https_tools": 1, "mode": "compose", "edition": "clouddrive2",
+                 "project": "tgcloud", "local_build": True}
         if (not isinstance(contract, dict) or type(contract.get("format")) is not int
-                or contract not in (legacy, current)
+                or contract not in (legacy, current, local)
+                or (contract == local and (type(contract.get("local_build")) is not bool
+                                          or type(contract.get("https_tools")) is not int))
                 or (contract == current and type(contract.get("https_tools")) is not int)):
             raise ValueError("unsupported direct Compose contract")
-        if not {"src/tg2cloud/compose/__main__.py", "src/tg2cloud/compose/runtime.py",
-                "src/tg2cloud/compose/packaging.py", ".github/scripts/compose_release.py",
-                ".github/workflows/compose-images.yml", "docs/COMPOSE.md"} <= files.keys():
+        if not {"src/tgcloud/compose/__main__.py", "src/tgcloud/compose/runtime.py",
+                "src/tgcloud/compose/packaging.py", ".github/scripts/compose_release.py",
+                ".github/workflows/compose-images.yml", "docs/compose-guide.md"} <= files.keys():
             raise ValueError("incomplete direct Compose source layout")
-        if contract == current:
+        if contract in (current, local):
             if not {"packaging/compose-https.sh", "packaging/bootstrap-manifest.json",
-                    "src/tg2cloud/compose/https.py", "src/tg2cloud/compose/access.py"} <= files.keys():
+                    "src/tgcloud/compose/https.py", "src/tgcloud/compose/access.py"} <= files.keys():
                 raise ValueError("incomplete direct Compose HTTPS source layout")
             launcher = files["packaging/compose-https.sh"]
             if (launcher.count(b"@HTTPS_MANIFEST_SHA256@") != 1
                     or b"exec python3 -I -S -B" not in launcher
-                    or b"tg2cloud.compose.https" not in launcher):
+                    or b"tgcloud.compose.https" not in launcher):
                 raise ValueError("invalid direct Compose HTTPS launcher")
     # Verify all declared Edition payload inputs, not just a hand-maintained list.
-    profile = "src/tg2cloud/deployment/profiles.py" if modern else "scripts/lib/deployer_products.py" if legacy_lib else "deployer_products.py"
+    profile = "src/tgcloud/deployment/profiles.py" if modern else "scripts/lib/deployer_products.py" if legacy_lib else "deployer_products.py"
     tree = ast.parse(files[profile].decode("utf-8"))
     payloads = {node.value for node in ast.walk(tree)
                 if isinstance(node, ast.Constant) and isinstance(node.value, str)
                 and node.value.startswith(("packaging/", "requirements/") if modern else ("payload_clouddrive2/", "payload_openlist/"))
                 and (not modern or PurePosixPath(node.value).suffix or PurePosixPath(node.value).name == ".dockerignore")}
-    editions = ("packaging/compose/docker-compose.clouddrive2.yml", "packaging/compose/docker-compose.openlist.yml") if modern else ("payload_clouddrive2", "payload_openlist")
+    editions = ("packaging/compose/docker-compose.clouddrive2.yml",) if modern else ("payload_clouddrive2", "payload_openlist")
     if not all(any(path.startswith(edition) for path in payloads) for edition in editions):
         raise ValueError("both Edition payload manifests are required")
     if not payloads.issubset(files):
         raise ValueError("missing Edition payload inputs: " + ", ".join(sorted(payloads - files.keys())))
-    version_path = "src/tg2cloud/version.py" if modern else "payload_clouddrive2/app/version.py"
+    version_path = "src/tgcloud/version.py" if modern else "payload_clouddrive2/app/version.py"
     versions = [ast.literal_eval(node.value) for node in ast.parse(files[version_path].decode("utf-8")).body
                 if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "VERSION" for t in node.targets)]
     if versions != [tag[1:].split("-", 1)[0]]:
@@ -241,7 +252,7 @@ def build(root: Path, directory: Path, tag: str) -> None:
     validate_pins(root, commit)
     if directory.exists() and any(directory.iterdir()):
         raise ValueError("output directory must be empty; refusing to replace artifacts")
-    archive = git(root, "archive", "--format=tar", f"--prefix=TG2Cloud-{tag}/", commit)
+    archive = git(root, "archive", "--format=tar", f"--prefix=TGCloud-{tag}/", commit)
     if len(archive) > LIMIT:
         raise ValueError("source archive too large")
     data = gzip.compress(archive, mtime=0)

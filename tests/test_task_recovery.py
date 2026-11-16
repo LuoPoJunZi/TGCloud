@@ -15,10 +15,10 @@ from unittest.mock import AsyncMock, patch
 from test_scenarios import FakeRclone, make_service, make_settings
 from test_telethon_compat import callback_data
 
-from tg2cloud.domain.errors import StagingScan, failure_kind
-from tg2cloud.monitoring.resources import ResourceSnapshot
-from tg2cloud.persistence.sqlite import TaskDB
-from tg2cloud.storage.rclone import RcloneClient, RcloneError
+from tgcloud.domain.errors import StagingScan, failure_kind
+from tgcloud.monitoring.resources import ResourceSnapshot
+from tgcloud.persistence.sqlite import TaskDB
+from tgcloud.storage.rclone import RcloneClient, RcloneError
 
 
 class RecoveryTests(unittest.IsolatedAsyncioTestCase):
@@ -87,72 +87,35 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         await self.service._offer_recovery(event, task["id"])
         self.assertFalse(getattr(self.service, "_recovery_confirmations", {}))
 
-    async def test_openlist_partial_final_is_held_then_renamed_without_deletion(self):
-        self.service.settings = replace(self.settings, storage_backend="openlist")
-        local = self.local()
-        task = self.task(state="waiting_upload", local_path=str(local))
-        async def interrupted(path, remote, **kwargs):
-            self.service.rclone.files[remote] = b"te"
-            raise RcloneError("connection reset secret-value")
-        self.service.rclone.upload = AsyncMock(side_effect=interrupted)
-        with patch("tg2cloud.app.asyncio.sleep", new=AsyncMock()):
-            await self.service._upload_one(task["id"])
-        held = self.db.get(task["id"])
-        self.assertEqual(held["failure_kind"], "remote_conflict")
-        self.assertEqual(self.service.rclone.upload.await_count, 1)
-        self.assertTrue(local.exists())
-        self.assertFalse(self.service.rclone.removed)
-        self.db.recover(self.settings.download_dir)
-        self.assertEqual(self.db.get(task["id"])["state"], "upload_failed_retained")
-        self.assertFalse(self.service._retry_task(held))
-        event = SimpleNamespace(reply=AsyncMock(), edit=AsyncMock())
-        await self.service._offer_recovery(event, task["id"], rename=True)
-        plan = self.service._recovery_confirmations[task["id"]]
-        await self.service._confirm_recovery(event, task["id"], plan["token"])
-        self.service.rclone.upload = FakeRclone.upload.__get__(self.service.rclone)
+    async def test_final_size_mismatch_never_deletes_final(self):
+        task = self.task(state="uploading", local_path=str(self.local()), remote_final_path="example.bin")
+        self.service.rclone.files["example.bin"] = b"t"
         await self.service._upload_one(task["id"])
-        done = self.db.get(task["id"])
-        self.assertEqual(done["state"], "completed")
-        self.assertEqual(done["verification_method"], "size")
-        self.assertIsNotNone(done["verified_at"])
-        self.assertEqual(self.service.rclone.files["example.bin"], b"te")
-        self.assertEqual(self.service.rclone.files["example (task-1).bin"], b"test")
+        self.assertEqual(self.db.get(task["id"])["failure_kind"], "remote_conflict")
         self.assertFalse(self.service.rclone.removed)
-
-    async def test_final_size_mismatch_never_deletes_final_on_either_backend(self):
-        for backend in ("clouddrive2", "openlist"):
-            task = self.task(state="uploading", local_path=str(self.local()), remote_final_path="example.bin")
-            self.service.settings = replace(self.settings, storage_backend=backend)
-            self.service.rclone.files["example.bin"] = b"t"
-            await self.service._upload_one(task["id"])
-            self.assertEqual(self.db.get(task["id"])["failure_kind"], "remote_conflict")
-            self.assertFalse(self.service.rclone.removed)
-            self.assertTrue(self.local().exists())
+        self.assertTrue(self.local().exists())
 
     async def test_reopened_database_recognizes_already_received_final_without_reupload(self):
-        for backend in ("clouddrive2", "openlist"):
-            with self.subTest(backend=backend):
-                self.service.settings = replace(self.settings, storage_backend=backend)
-                local = self.local()
-                task = self.task(state="uploading", local_path=str(local), remote_final_path="example.bin",
-                                 failure_kind=None, verification_method=None, verified_at=None)
-                path = self.db.path
-                self.db.close()
-                self.db = TaskDB(path)
-                self.addCleanup(self.db.close)
-                self.service.db = self.db
-                self.db.recover(self.settings.download_dir)
-                self.service.rclone = FakeRclone()
-                self.service.rclone.files["example.bin"] = b"test"
-                self.service.rclone.upload = AsyncMock(side_effect=AssertionError("must not upload twice"))
-                await self.service._upload_one(task["id"])
-                final = self.db.get(task["id"])
-                self.assertEqual(final["state"], "completed")
-                self.assertEqual(final["verification_method"], "size")
-                self.assertIsNotNone(final["verified_at"])
-                self.service.rclone.upload.assert_not_awaited()
-                self.assertFalse(self.service.rclone.removed)
-                self.assertFalse(local.exists())
+        local = self.local()
+        task = self.task(state="uploading", local_path=str(local), remote_final_path="example.bin",
+                         failure_kind=None, verification_method=None, verified_at=None)
+        path = self.db.path
+        self.db.close()
+        self.db = TaskDB(path)
+        self.addCleanup(self.db.close)
+        self.service.db = self.db
+        self.db.recover(self.settings.download_dir)
+        self.service.rclone = FakeRclone()
+        self.service.rclone.files["example.bin"] = b"test"
+        self.service.rclone.upload = AsyncMock(side_effect=AssertionError("must not upload twice"))
+        await self.service._upload_one(task["id"])
+        final = self.db.get(task["id"])
+        self.assertEqual(final["state"], "completed")
+        self.assertEqual(final["verification_method"], "size")
+        self.assertIsNotNone(final["verified_at"])
+        self.service.rclone.upload.assert_not_awaited()
+        self.assertFalse(self.service.rclone.removed)
+        self.assertFalse(local.exists())
 
     async def test_auth_permission_and_rate_limit_stop_and_survive_restart(self):
         for code, kind in ((401, "authentication"), (403, "permission"), (429, "rate_limited")):
@@ -251,7 +214,7 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.service.download_tasks)
         self.assertIn("安全线", self.service._resource_pause_reason)
         self.service.snapshot = replace(self.service.snapshot, filesystems=(("database", 100 * 1024**3),))
-        with patch("tg2cloud.transfer.scheduler.shutil.disk_usage", return_value=SimpleNamespace(free=100 * 1024**3)):
+        with patch("tgcloud.transfer.scheduler.shutil.disk_usage", return_value=SimpleNamespace(free=100 * 1024**3)):
             await self.service._start_downloads()
         await asyncio.gather(*self.service.download_tasks.values())
         self.service._download_one.assert_awaited_once()
@@ -271,38 +234,36 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("未完成", event.reply.call_args.args[0])
         self.assertNotIn("100", event.reply.call_args.args[0])
 
-    async def test_direct_final_upload_has_no_internal_write_retries(self):
-        for backend, retries, low in (("openlist", "1", "1"), ("clouddrive2", "2", "5")):
-            client = RcloneClient(replace(self.settings, storage_backend=backend))
-            client.prepare_destination = AsyncMock()
-            client._run = AsyncMock()
-            await client.upload(self.local(), "safe.bin")
-            args = client._run.call_args.args
-            self.assertEqual(args[args.index("--retries") + 1], retries)
-            self.assertEqual(args[args.index("--low-level-retries") + 1], low)
+    async def test_cloud_drive_upload_preserves_internal_write_retries(self):
+        client = RcloneClient(self.settings)
+        client.prepare_destination = AsyncMock()
+        client._run = AsyncMock()
+        await client.upload(self.local(), "safe.bin")
+        args = client._run.call_args.args
+        self.assertEqual(args[args.index("--retries") + 1], "2")
+        self.assertEqual(args[args.index("--low-level-retries") + 1], "5")
 
-    async def test_interrupted_stream_preserves_partial_object_for_both_editions(self):
-        for backend in ("clouddrive2", "openlist"):
-            self.service.settings = replace(self.settings, storage_backend=backend)
-            task = self.task(state="reserved", transfer_mode="stream", remote_path=None,
-                             remote_temp_path=None, remote_final_path=None, download_retries=0)
-            fake = FakeRclone()
-            async def open_stream(path, exact_size, storage=fake):
-                async def write(data):
-                    storage.files[path] = data
-                return SimpleNamespace(write=write, abort=AsyncMock())
-            async def interrupted(message, *, file, progress_callback):
-                await file.write(b"pa")
-                raise RcloneError("connection reset")
-            fake.open_upload_stream = open_stream
-            self.service.rclone = fake
-            self.service._source = SimpleNamespace(get_messages=AsyncMock(return_value=SimpleNamespace(media=True)),
-                                                   download_media=interrupted)
-            with patch("tg2cloud.app.asyncio.sleep", new=AsyncMock()):
-                await self.service._stream_one(task["id"])
-            self.assertEqual(self.db.get(task["id"])["failure_kind"], "remote_conflict")
-            self.assertEqual(list(fake.files.values()), [b"pa"])
-            self.assertFalse(fake.removed)
+    async def test_interrupted_stream_preserves_partial_staging_object(self):
+        task = self.task(state="reserved", transfer_mode="stream", remote_path=None,
+                         remote_temp_path=None, remote_final_path=None, download_retries=0)
+        fake = FakeRclone()
+        async def open_stream(path, exact_size):
+            async def write(data):
+                fake.files[path] = data
+            return SimpleNamespace(write=write, abort=AsyncMock())
+        async def interrupted(message, *, file, progress_callback):
+            await file.write(b"pa")
+            raise RcloneError("connection reset")
+        fake.open_upload_stream = open_stream
+        self.service.rclone = fake
+        self.service._source = SimpleNamespace(get_messages=AsyncMock(return_value=SimpleNamespace(media=True)),
+                                               download_media=interrupted)
+        with patch("tgcloud.app.asyncio.sleep", new=AsyncMock()):
+            await self.service._stream_one(task["id"])
+        self.assertEqual(self.db.get(task["id"])["failure_kind"], "remote_conflict")
+        self.assertEqual(list(fake.files.values()), [b"pa"])
+        self.assertTrue(next(iter(fake.files)).startswith(".uploading-"))
+        self.assertFalse(fake.removed)
 
 
 class ScanTests(unittest.IsolatedAsyncioTestCase):
@@ -344,7 +305,7 @@ class ScanTests(unittest.IsolatedAsyncioTestCase):
             stderr.feed_eof()
             process = SimpleNamespace(stderr=stderr, returncode=None, wait=AsyncMock(return_value=1), kill=lambda: None)
             client._read_staging = AsyncMock(side_effect=TimeoutError())
-            with patch("tg2cloud.storage.rclone.asyncio.create_subprocess_exec", new=AsyncMock(return_value=process)), \
+            with patch("tgcloud.storage.rclone.asyncio.create_subprocess_exec", new=AsyncMock(return_value=process)), \
                     patch.object(process, "kill") as kill:
                 result = await client.list_staging_objects()
             self.assertFalse(result.complete)

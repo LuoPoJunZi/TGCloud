@@ -16,13 +16,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tg2cloud.compose import packaging
-from tg2cloud.deployment.payload import payload_sources
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.deployment.runtime import files as host_files
+from local_project_fixture import source
+
+from tgcloud.compose import packaging
+from tgcloud.deployment.payload import payload_sources
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.runtime import files as host_files
 
 ROOT = Path(__file__).resolve().parents[1]
-IMAGE = "ghcr.io/owner/tg2cloud@sha256:" + "a" * 64
 _git = shutil.which("git")
 _git_bash = Path(_git).resolve().parents[1] / "bin/bash.exe" if _git else None
 BASH = os.getenv("TG115_TEST_BASH") or (
@@ -40,25 +41,25 @@ def bash_path(path: Path) -> str:
 
 class HTTPSBundleTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="tg2cloud https ")
+        self.temp = tempfile.TemporaryDirectory(prefix="tgcloud https ")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
     def candidate(self):
         root = self.root / "bundle with spaces"
-        for name, content in packaging.bundle_files(ROOT, "openlist", IMAGE).items():
+        for name, content in packaging.bundle_files(ROOT, source_digest=source().digest).items():
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
         return root
 
     def test_complete_shared_source_and_compose_resources_are_hashed(self):
-        files = packaging.bundle_files(ROOT, "openlist", IMAGE)
+        files = packaging.bundle_files(ROOT, source_digest=source().digest)
         metadata = json.loads(files["compose-bundle.json"])
-        self.assertEqual((metadata["format"], metadata["https_tools"]), (3, 1))
+        self.assertEqual((metadata["format"], metadata["https_tools"]), (4, 1))
         manifest = json.loads(files["https-tools/manifest.json"])
         expected = set(host_files(ROOT))
-        expected.update(path.relative_to(ROOT).as_posix() for path in (ROOT / "src/tg2cloud/compose").rglob("*.py"))
+        expected.update(path.relative_to(ROOT).as_posix() for path in (ROOT / "src/tgcloud/compose").rglob("*.py"))
         expected.update("packaging/compose/docker-compose." + edition + ".yml" for edition in PRODUCTS)
         self.assertEqual(set(manifest["files"]), expected)
         self.assertEqual(list(manifest["files"]), sorted(expected))
@@ -70,7 +71,7 @@ class HTTPSBundleTests(unittest.TestCase):
         self.assertIn(hashlib.sha256(files["https-tools/manifest.json"]).hexdigest(), launcher)
         self.assertIn('exec python3 -I -S -B -c "$launcher" "$bundle_root" "$@"', launcher)
         self.assertNotIn("@HTTPS_MANIFEST_SHA256@", launcher)
-        self.assertEqual(files, packaging.bundle_files(ROOT, "openlist", IMAGE))
+        self.assertEqual(files, packaging.bundle_files(ROOT, source_digest=source().digest))
 
     def environment(self):
         # Exercise the installed interpreter, including Python 3.10 CI. Git Bash
@@ -86,7 +87,7 @@ class HTTPSBundleTests(unittest.TestCase):
     def launch(self, root, *arguments, input=""):
         unrelated = self.root / "untrusted cwd"
         unrelated.mkdir(exist_ok=True)
-        for name in ("sitecustomize.py", "tg2cloud.py"):
+        for name in ("sitecustomize.py", "tgcloud.py"):
             (unrelated / name).write_text('raise RuntimeError("must not import cwd or site code")\n', encoding="utf-8")
         return subprocess.run([BASH, bash_path(root / "https.sh"), *arguments], cwd=unrelated,
                               env=self.environment(), input=input, capture_output=True, text=True,
@@ -105,7 +106,7 @@ class HTTPSBundleTests(unittest.TestCase):
     @unittest.skipUnless(BASH, "Requires Bash; Linux CI must run the offline host launcher")
     def test_tampered_extra_missing_and_hardlinked_helpers_are_rejected_before_import(self):
         root = self.candidate()
-        code = root / "https-tools/src/tg2cloud/compose/https.py"
+        code = root / "https-tools/src/tgcloud/compose/https.py"
         original = code.read_bytes()
         manifest = root / "https-tools/manifest.json"
         original_manifest = manifest.read_bytes()
@@ -138,7 +139,7 @@ class HTTPSBundleTests(unittest.TestCase):
         self.assertEqual(retained.read_bytes(), original)
         # Native Linux additionally exercises actual file/directory symlinks.
         if os.name == "posix":
-            for linked in (code, root / "https-tools/src/tg2cloud/compose"):
+            for linked in (code, root / "https-tools/src/tgcloud/compose"):
                 with self.subTest(linked=linked.name):
                     saved = linked.with_name(linked.name + "-saved")
                     linked.rename(saved)
@@ -152,7 +153,7 @@ class HTTPSBundleTests(unittest.TestCase):
     @unittest.skipUnless(BASH, "Requires Bash; Linux CI must run the offline host launcher")
     def test_launcher_preserves_arguments_stdin_and_exit_status(self):
         root = self.candidate()
-        code = root / "https-tools/src/tg2cloud/compose/https.py"
+        code = root / "https-tools/src/tgcloud/compose/https.py"
         code.write_bytes(b'import json,sys\nprint(json.dumps({"argv":sys.argv[1:], "stdin":sys.stdin.readline().rstrip("\\n")}))\nraise SystemExit(7)\n')
         manifest = root / "https-tools/manifest.json"
         old = hashlib.sha256(manifest.read_bytes()).hexdigest()
@@ -178,7 +179,7 @@ class HTTPSReleaseContractTests(unittest.TestCase):
         for product in PRODUCTS.values():
             names.update(path.relative_to(ROOT).as_posix() for path in payload_sources(ROOT, product).values())
         names.update({"packaging/compose-release.json", "packaging/compose-https.sh",
-                      ".github/scripts/compose_release.py", ".github/workflows/compose-images.yml", "docs/COMPOSE.md"})
+                      ".github/scripts/compose_release.py", ".github/workflows/compose-images.yml", "docs/compose-guide.md"})
         cls.files = {name: (ROOT / name).read_bytes() for name in names}
 
     def verify(self, files):
@@ -189,7 +190,7 @@ class HTTPSReleaseContractTests(unittest.TestCase):
             buffer = io.BytesIO()
             with tarfile.open(fileobj=buffer, mode="w") as archive:
                 for relative, body in files.items():
-                    info = tarfile.TarInfo("TG2Cloud-" + tag + "/" + relative)
+                    info = tarfile.TarInfo("TGCloud-" + tag + "/" + relative)
                     info.size = len(body)
                     archive.addfile(info, io.BytesIO(body))
             content = gzip.compress(buffer.getvalue(), mtime=0)
@@ -197,7 +198,7 @@ class HTTPSReleaseContractTests(unittest.TestCase):
             (root / "SHA256SUMS.txt").write_text(hashlib.sha256(content).hexdigest() + "  " + name + "\n", encoding="ascii")
             source_release.verify(root, tag)
 
-    def test_new_contract_requires_https_launcher_and_accepts_historical_format_one(self):
+    def test_local_contract_requires_https_launcher_and_rejects_old_contracts(self):
         self.verify(self.files)
         files = dict(self.files)
         del files["packaging/compose-https.sh"]
@@ -207,7 +208,8 @@ class HTTPSReleaseContractTests(unittest.TestCase):
         old["format"] = 1
         del old["https_tools"]
         files["packaging/compose-release.json"] = json.dumps(old).encode()
-        self.verify(files)
+        with self.assertRaisesRegex(ValueError, "unsupported direct Compose"):
+            self.verify(files)
 
     def test_unknown_or_inexact_https_contracts_are_rejected(self):
         current = json.loads(self.files["packaging/compose-release.json"])

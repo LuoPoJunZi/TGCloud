@@ -18,7 +18,7 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tg2cloud.addons.external_webdav import (
+from tgcloud.addons.external_webdav import (
     cli,
     config,
     nginx,
@@ -26,17 +26,17 @@ from tg2cloud.addons.external_webdav import (
     scope,
     verification,
 )
-from tg2cloud.addons.external_webdav.service import Service
-from tg2cloud.deployment import uninstall
-from tg2cloud.deployment.host import SafeLog
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.deployment.proxy import maintenance
-from tg2cloud.deployment.proxy.manager import (
+from tgcloud.addons.external_webdav.service import Service
+from tgcloud.deployment import uninstall
+from tgcloud.deployment.host import SafeLog
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.proxy import maintenance
+from tgcloud.deployment.proxy.manager import (
     DomainProxyManager,
     render_compose,
     render_config_set,
 )
-from tg2cloud.deployment.proxy.state import (
+from tgcloud.deployment.proxy.state import (
     certificate_domains,
     empty_state,
     has_routes,
@@ -50,7 +50,7 @@ SECRET = "Kp9!synthetic-Qx8uLz-7mR"
 XML = b'<D:multistatus xmlns:D="DAV:"><D:response><D:href>/dav/</D:href><D:propstat><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>'
 
 
-def route(edition="openlist", *, enabled=True):
+def route(edition="clouddrive2", *, enabled=True):
     return {"kind": "external_webdav", "owner": config.OWNER, "edition": edition,
             "instance_dir": PRODUCTS[edition].install_dir, "domain": edition + "-files.example.test",
             "enabled": enabled, "backend_port": PRODUCTS[edition].management_port,
@@ -58,13 +58,13 @@ def route(edition="openlist", *, enabled=True):
 
 
 def shared():
-    return {"version": 2, "domains": {"clouddrive2": {"domain": "admin.example.test", "backend_port": 19798}},
-            "external_webdav": {"openlist": route()}}
+    return {"version": 2, "project": "tgcloud", "domains": {"clouddrive2": {"domain": "admin.example.test", "backend_port": 19798}},
+            "external_webdav": {"clouddrive2": route()}}
 
 
 def env(relative="Telegram", user="bot-reader"):
     return {"WEBDAV_" + key + "_B64": base64.b64encode(value.encode()).decode()
-            for key, value in {"URL": PRODUCTS["openlist"].webdav_url, "USERNAME": user, "TARGET_PATH": relative}.items()}
+            for key, value in {"URL": PRODUCTS["clouddrive2"].webdav_url, "USERNAME": user, "TARGET_PATH": relative}.items()}
 
 
 class ConfigTests(unittest.TestCase):
@@ -126,7 +126,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_atomic_hash_replacement_is_seen_by_directory_reader(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory).resolve() / "auth" / "openlist.htpasswd"
+            path = Path(directory).resolve() / "auth" / "clouddrive2.htpasswd"
             config.atomic(path, b"old-hash", mode=0o640)
             old_inode = path.stat().st_ino
             config.atomic(path, b"new-hash", mode=0o640)
@@ -155,7 +155,7 @@ class SharedStateTests(unittest.TestCase):
         for field, value in (("owner", "unknown"), ("kind", "management"), ("enabled", "yes"),
                              ("auth_file", "../../passwd"), ("instance_dir", "/opt/../private"), ("backend_port", 80)):
             state = shared()
-            state["external_webdav"]["openlist"][field] = value
+            state["external_webdav"]["clouddrive2"][field] = value
             with self.subTest(field=field), self.assertRaises(ValueError):
                 normalize_state(json.dumps(state))
 
@@ -165,9 +165,9 @@ class SharedStateTests(unittest.TestCase):
         removed = state_without_route(updated, "clouddrive2")
         self.assertEqual(removed["external_webdav"], state["external_webdav"])
         self.assertTrue(has_routes(removed))
-        self.assertEqual(certificate_domains(removed), ("openlist-files.example.test",))
-        removed["external_webdav"]["openlist"]["enabled"] = False
-        self.assertEqual(certificate_domains(removed), ("openlist-files.example.test",))
+        self.assertEqual(certificate_domains(removed), ("clouddrive2-files.example.test",))
+        removed["external_webdav"]["clouddrive2"]["enabled"] = False
+        self.assertEqual(certificate_domains(removed), ("clouddrive2-files.example.test",))
 
     def test_management_domain_collision(self):
         with self.assertRaisesRegex(ValueError, "WebDAV"):
@@ -176,10 +176,10 @@ class SharedStateTests(unittest.TestCase):
     def test_generated_config_has_independent_gate_and_preserves_management_block(self):
         files = render_config_set(shared())
         management = files["conf.d/20-clouddrive2.conf"]
-        public = files["conf.d/30-external-webdav-openlist.conf"]
+        public = files["conf.d/30-external-webdav-clouddrive2.conf"]
         self.assertIn("location = /dav", management)
         self.assertIn("return 403", management)
-        for expected in ("auth_basic_user_file /etc/nginx/external-auth/openlist.htpasswd", "proxy_set_header Authorization $http_authorization",
+        for expected in ("auth_basic_user_file /etc/nginx/external-auth/clouddrive2.htpasswd", "proxy_set_header Authorization $http_authorization",
                          "GET|HEAD|OPTIONS|PROPFIND", "return 405", "proxy_buffering off", "proxy_set_header Range $http_range",
                          "location = /dav", "location ^~ /dav/", "location / { return 404", "proxy_hide_header Location",
                          "limit_conn", "rate=2r/s", "client_max_body_size 16k", "access_log off", "proxy_max_temp_file_size 0"):
@@ -195,7 +195,7 @@ class SharedStateTests(unittest.TestCase):
         self.assertIn("listen 443 ssl", text)
 
     def test_method_guard_runs_before_limit_except_location_selection(self):
-        for edition in ("clouddrive2", "openlist"):
+        for edition in ("clouddrive2",):
             with self.subTest(edition=edition):
                 text = nginx.render_route(route(edition))
                 tls_server = text.split("listen 443 ssl;", 1)[1]
@@ -233,7 +233,7 @@ class SharedStateTests(unittest.TestCase):
     def test_activation_failure_preserves_other_edition_and_disables_selected(self):
         state = shared()
         state["external_webdav"]["clouddrive2"] = route("clouddrive2")
-        manager = DomainProxyManager(Mock(), PRODUCTS["openlist"], {}, Mock())
+        manager = DomainProxyManager(Mock(), PRODUCTS["clouddrive2"], {}, Mock())
         manager.read_state = Mock(return_value=state)
         manager._ensure_state_file = Mock()
         manager._activate = Mock(side_effect=[RuntimeError("candidate fails"), None])
@@ -242,30 +242,30 @@ class SharedStateTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             manager.apply_shared_state_locked(state)
         fallback = manager._commit_state.call_args.args[0]
-        self.assertFalse(fallback["external_webdav"]["openlist"]["enabled"])
-        self.assertTrue(fallback["external_webdav"]["clouddrive2"]["enabled"])
+        self.assertFalse(fallback["external_webdav"]["clouddrive2"]["enabled"])
+        self.assertEqual(fallback["domains"], state["domains"])
 
     def test_core_uninstall_refuses_dependent_gateway(self):
         with patch.object(uninstall, "docker_snapshot", return_value=({}, {})), patch.object(uninstall, "read_state", return_value=shared()), self.assertRaisesRegex(uninstall.UninstallError, "WebDAV"):
-            uninstall.build_plan(("openlist",), Mock())
+            uninstall.build_plan(("clouddrive2",), Mock())
 
     def test_core_uninstall_guides_to_selected_addon_menu(self):
         with (patch.object(uninstall, "docker_snapshot", return_value=({}, {})),
               patch.object(uninstall, "read_state", return_value=shared()),
               self.assertRaisesRegex(uninstall.UninstallError, "15. 外部 WebDAV → 7. 卸载外部 WebDAV") as caught):
-            uninstall.build_plan(("openlist",), Mock())
-        self.assertNotIn("tg2cloud-webdav uninstall", str(caught.exception))
+            uninstall.build_plan(("clouddrive2",), Mock())
+        self.assertNotIn("tgcloud-webdav uninstall", str(caught.exception))
 
     def test_schema2_backup_requires_authentication_resources(self):
         with self.assertRaisesRegex(ValueError, "authentication"):
             maintenance.validate_auth_records(shared(), {})
-        maintenance.validate_auth_records(shared(), {"proxy/external-auth/openlist.htpasswd": {"kind": "file"}})
+        maintenance.validate_auth_records(shared(), {"proxy/external-auth/clouddrive2.htpasswd": {"kind": "file"}})
 
 
 class VerificationTests(unittest.TestCase):
     def test_xml_encoding_and_untrusted_href(self):
         self.assertEqual(verification.propfind(XML, route()["domain"]), ("/dav/",))
-        for href in ("/dav/%E4%B8%AD%E6%96%87%20file.mp4", "https://openlist-files.example.test/dav/a.mp4"):
+        for href in ("/dav/%E4%B8%AD%E6%96%87%20file.mp4", "https://clouddrive2-files.example.test/dav/a.mp4"):
             self.assertTrue(verification.propfind(XML.replace(b"/dav/", href.encode()), route()["domain"]))
         for href in ("/davevil/", "/dav/../admin", "/dav/%252e%252e/foo", "http://127.0.0.1/dav/", "https://evil.test/dav/", "/dav/a?token=secret", "/dav/\\foo"):
             with self.subTest(href=href), self.assertRaises(ValueError):
@@ -305,10 +305,10 @@ class LifecycleTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.ui, self.session = Mock(), Mock()
         self.messages = []
-        self.service = Service(PRODUCTS["openlist"], self.session, SafeLog(self.messages.append), self.ui,
+        self.service = Service(PRODUCTS["clouddrive2"], self.session, SafeLog(self.messages.append), self.ui,
                                root=Path(self.temp.name).resolve())
-        self.service.launcher = Path(self.temp.name).resolve() / "bin/tg2cloud-webdav"
-        self.item = {"schema": 1, "owner": config.OWNER, "edition": "openlist", "instance_dir": "/opt/tg2cloud-openlist",
+        self.service.launcher = Path(self.temp.name).resolve() / "bin/tgcloud-webdav"
+        self.item = {"schema": 1, "owner": config.OWNER, "edition": "clouddrive2", "instance_dir": "/opt/tgcloud-clouddrive2",
                      "domain": route()["domain"], "username": "phone-reader", "bot_root": "/网盘", "target_dir": "/网盘/Telegram",
                      "binding": config.binding(env()), "phase": "enabled", "scope_verification": "manual-native-readonly",
                      "backend_image": "pinned-test-image", "revision": "a" * 32}
@@ -350,7 +350,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(events, ["revoke", "apply"])
         state = self.service.manager.apply_shared_state_locked.call_args.args[0]
         self.assertEqual(state["domains"], shared()["domains"])
-        self.assertFalse(state["external_webdav"]["openlist"]["enabled"])
+        self.assertFalse(state["external_webdav"]["clouddrive2"]["enabled"])
         self.session.run.assert_not_called()
 
     def test_concurrent_revision_change_prevents_mutation(self):
@@ -489,7 +489,7 @@ class LifecycleTests(unittest.TestCase):
     def test_actual_scope_and_username_are_used_for_both_editions(self):
         for edition, relative, bot_root, target in (
                 ("clouddrive2", "", "/资料/归档", "/资料/归档"),
-                ("openlist", "视频/周末", "/媒体 A", "/媒体 A/视频/周末"),
+                ("clouddrive2", "视频/周末", "/媒体 A", "/媒体 A/视频/周末"),
                 ("clouddrive2", "Movies", "/", "/Movies")):
             with self.subTest(edition=edition):
                 current = self.configure_fixture()
@@ -506,7 +506,7 @@ class LifecycleTests(unittest.TestCase):
                 self.assertEqual(current["value"]["username"], user)
                 self.assertIn("Bot 保存目录：" + target, self.messages)
                 self.assertIn("管理页：https://manage.example.test", self.messages)
-                self.assertIn(("base path：" if edition == "openlist" else "根目录：") + target, self.messages)
+                self.assertIn("根目录：" + target, self.messages)
                 self.assertIn("目标目录：" + target, self.messages)
                 self.assertIn("用户名：" + user, self.messages)
                 self.assertNotIn("/115open/Telegram", "\n".join(self.messages))
@@ -582,7 +582,7 @@ class LifecycleTests(unittest.TestCase):
                 self.ui.ask.side_effect = ([route()["domain"], "", "phone-reader", SECRET] if changed == "none"
                                            else [route()["domain"], "", "/confirmed", "phone-reader", SECRET])
                 self.ui.confirm.return_value = False
-                with patch.object(scope, "openlist_root", side_effect=ValueError("unsupported")):
+                with patch.object(scope, "clouddrive2_root", side_effect=ValueError("unsupported")):
                     self.service.configure(install_dir=None)
                 prompts = [call.args[0] for call in self.ui.ask.call_args_list]
                 self.assertEqual(any("仅首次补充" in prompt for prompt in prompts), changed != "none")
@@ -598,8 +598,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.ui.ask.call_count, 4)
         self.assertEqual(current["value"]["target_dir"], "/媒体/家庭/Telegram")
         self.assertIn("Bot 保存目录：/媒体/家庭/Telegram", self.messages)
-        self.assertIn("根目录：/媒体/家庭/Telegram" if not self.service.product.is_openlist
-                      else "base path：/媒体/家庭/Telegram", self.messages)
+        self.assertIn("根目录：/媒体/家庭/Telegram", self.messages)
         prompts = [call.args[0] for call in self.ui.confirm.call_args_list]
         self.assertIn("确认继续？", prompts)
         self.assertIn("已完成以上账号和权限设置？", prompts)
@@ -660,34 +659,34 @@ class EntryAndReleaseTests(unittest.TestCase):
         messages = []
         service = SimpleNamespace(log=messages.append)
         for check in (False, True):
-            with patch.dict(os.environ, {"TG2CLOUD_MANAGER_MENU": "1"}):
+            with patch.dict(os.environ, {"TGCLOUD_MANAGER_MENU": "1"}):
                 Service.management_hint(service, check=check)
-            self.assertIn("\ntg2cloud\n选择 15. 外部 WebDAV", messages[-1])
-            self.assertNotIn("tg2cloud-webdav", messages[-1])
+            self.assertIn("\ntgcloud\n选择 15. 外部 WebDAV", messages[-1])
+            self.assertNotIn("tgcloud-webdav", messages[-1])
             if check:
                 self.assertIn("3. 检查连接与配置", messages[-1])
-        with patch.dict(os.environ, {"TG2CLOUD_MANAGER_MENU": ""}):
+        with patch.dict(os.environ, {"TGCLOUD_MANAGER_MENU": ""}):
             Service.management_hint(service)
-            self.assertIn("tg2cloud-webdav", messages[-1])
+            self.assertIn("tgcloud-webdav", messages[-1])
             Service.management_hint(service, check=True)
-            self.assertIn("tg2cloud-webdav check", messages[-1])
+            self.assertIn("tgcloud-webdav check", messages[-1])
 
     def test_main_manager_context_skips_edition_choice_and_returns_without_mutation(self):
         service, ui, messages = Mock(), Mock(), []
-        service.product, service.ui, service.log = PRODUCTS["openlist"], ui, messages.append
+        service.product, service.ui, service.log = PRODUCTS["clouddrive2"], ui, messages.append
         service.record.return_value = None
         ui.ask.side_effect = lambda *args, **kwargs: kwargs["validate"]("0")
-        with (patch.dict(os.environ, {"TG2CLOUD_MANAGER_MENU": "1"}),
-              patch("tg2cloud.addons.external_webdav.discovery.host"),
-              patch("tg2cloud.addons.external_webdav.service.Service", return_value=service) as factory,
+        with (patch.dict(os.environ, {"TGCLOUD_MANAGER_MENU": "1"}),
+              patch("tgcloud.addons.external_webdav.discovery.host"),
+              patch("tgcloud.addons.external_webdav.service.Service", return_value=service) as factory,
               patch.object(cli, "WebDAVTerminal", return_value=ui), patch.object(cli.signal, "signal"),
-              patch("tg2cloud.deployment.host.SafeLog", return_value=SafeLog(messages.append))):
-            self.assertEqual(cli.main(["--edition", "openlist", "--install-dir", "/srv/family-openlist"]), 0)
-        self.assertEqual(factory.call_args.args[0].key, "openlist")
+              patch("tgcloud.deployment.host.SafeLog", return_value=SafeLog(messages.append))):
+            self.assertEqual(cli.main(["--edition", "clouddrive2", "--install-dir", "/srv/family-clouddrive2"]), 0)
+        self.assertEqual(factory.call_args.args[0].key, "clouddrive2")
         self.assertEqual(ui.ask.call_count, 1)
         self.assertIn("0.  返回主菜单", "\n".join(messages))
         self.assertNotIn("请选择存储网关", "\n".join(messages))
-        self.assertNotIn("TG2Cloud 外部 WebDAV v", "\n".join(messages))
+        self.assertNotIn("TGCloud 外部 WebDAV v", "\n".join(messages))
         self.assertNotIn("当前网关：", "\n".join(messages))
         service.configure.assert_not_called()
         service.install_runtime.assert_not_called()
@@ -699,18 +698,17 @@ class EntryAndReleaseTests(unittest.TestCase):
                 service, ui, messages = Mock(), Mock(), []
                 service.record.return_value = {"phase": "enabled"} if installed else None
                 service.configure.return_value = False
-                values = iter(("1", "2" if installed else "1", "0", "0"))
+                values = iter(("2" if installed else "1", "0", "0"))
                 ui.ask.side_effect = lambda *args, values=values, **kwargs: kwargs["validate"](next(values))
                 service.product, service.ui, service.log = PRODUCTS["clouddrive2"], ui, messages.append
-                with (patch("tg2cloud.addons.external_webdav.discovery.host"),
-                      patch("tg2cloud.addons.external_webdav.service.Service", return_value=service) as factory,
+                with (patch("tgcloud.addons.external_webdav.discovery.host"),
+                      patch("tgcloud.addons.external_webdav.service.Service", return_value=service) as factory,
                       patch.object(cli, "WebDAVTerminal", return_value=ui), patch.object(cli.signal, "signal"),
-                      patch("tg2cloud.deployment.host.SafeLog", return_value=SafeLog(messages.append))):
+                      patch("tgcloud.deployment.host.SafeLog", return_value=SafeLog(messages.append))):
                     self.assertEqual(cli.main([]), 0)
                 self.assertEqual(factory.call_args.args[0].key, "clouddrive2")
-                gateway, operation = ui.ask.call_args_list[:2]
-                self.assertEqual(gateway.args[0], "输入序号（回车默认为 1）")
-                self.assertEqual(gateway.kwargs["default"], "1")
+                operation = ui.ask.call_args_list[0]
+                self.assertFalse(any("网关" in c.args[0] for c in ui.ask.call_args_list))
                 self.assertEqual(operation.kwargs["default"], "2" if installed else "1")
                 if installed:
                     service.maintain.assert_called_once_with("status", sample_file="")
@@ -746,31 +744,31 @@ class EntryAndReleaseTests(unittest.TestCase):
         service = Mock()
         service.configure.return_value = False
         service.record.return_value = {"phase": "enabled"}
-        service.product = PRODUCTS["openlist"]
-        with (patch("tg2cloud.addons.external_webdav.discovery.host"),
-              patch("tg2cloud.addons.external_webdav.service.Service", return_value=service),
+        service.product = PRODUCTS["clouddrive2"]
+        with (patch("tgcloud.addons.external_webdav.discovery.host"),
+              patch("tgcloud.addons.external_webdav.service.Service", return_value=service),
               patch.object(cli, "WebDAVTerminal"), patch.object(cli.signal, "signal"),
               patch.object(cli, "source_identity", return_value={"source": "local-reviewed-source"}),
               patch("builtins.print")):
-            self.assertEqual(cli.main(["install", "--edition", "openlist"]), 0)
+            self.assertEqual(cli.main(["install", "--edition", "clouddrive2"]), 0)
         service.install_runtime.assert_not_called()
 
     def test_numbered_wizard_dispatches_chinese_menu_and_preserves_cli_actions(self):
-        for edition, number in (("clouddrive2", "1"), ("openlist", "2")):
+        for edition, number in (("clouddrive2", "1"),):
             for action, action_number in zip(cli.ACTIONS, map(str, range(1, 10))):
                 with self.subTest(edition=edition, action=action):
                     service, ui = Mock(), Mock()
                     service.record.return_value = {"phase": "enabled", "instance_dir": PRODUCTS[edition].install_dir} if action == "upgrade" else None
                     service.configure.return_value = False
-                    values = iter((number, action_number, "0", "0"))
-                    ui.ask.side_effect = lambda *args, values=values, **kwargs: kwargs["validate"](next(values))
+                    values = iter((action_number, "0", "0"))
+                    ui.ask.side_effect = lambda *args, values=values, **kwargs: str(ROOT) if "完整本地源码" in args[0] else kwargs["validate"](next(values))
                     ui.confirm.return_value = False
                     messages = []
                     service.product, service.ui, service.log = PRODUCTS[edition], ui, messages.append
-                    with (patch("tg2cloud.addons.external_webdav.discovery.host"),
-                          patch("tg2cloud.addons.external_webdav.service.Service", return_value=service) as factory,
+                    with (patch("tgcloud.addons.external_webdav.discovery.host"),
+                          patch("tgcloud.addons.external_webdav.service.Service", return_value=service) as factory,
                           patch.object(cli, "WebDAVTerminal", return_value=ui), patch.object(cli.signal, "signal"),
-                          patch("tg2cloud.deployment.host.SafeLog", return_value=SafeLog(messages.append))):
+                          patch("tgcloud.deployment.host.SafeLog", return_value=SafeLog(messages.append))):
                         self.assertEqual(cli.main([]), 0)
                     self.assertEqual(factory.call_args.args[0].key, edition)
                     text = "\n".join(messages)
@@ -794,11 +792,15 @@ class EntryAndReleaseTests(unittest.TestCase):
     def test_exit_menu_does_not_probe_instances_or_mutate(self):
         ui = Mock()
         ui.ask.side_effect = lambda *args, **kwargs: kwargs["validate"]("0")
-        with (patch("tg2cloud.addons.external_webdav.discovery.host"),
-              patch("tg2cloud.addons.external_webdav.service.Service") as service,
+        service = Mock(ui=ui, product=PRODUCTS["clouddrive2"])
+        service.record.return_value = None
+        with (patch("tgcloud.addons.external_webdav.discovery.host"),
+              patch("tgcloud.addons.external_webdav.service.Service", return_value=service) as factory,
               patch.object(cli, "WebDAVTerminal", return_value=ui), patch.object(cli.signal, "signal"), patch("builtins.print")):
             self.assertEqual(cli.main([]), 0)
-        service.assert_not_called()
+        factory.assert_called_once()
+        service.preflight.assert_not_called()
+        service.maintain.assert_not_called()
         ui.close.assert_called_once()
 
     def test_password_validation_explains_error_without_echoing_input(self):
@@ -824,26 +826,12 @@ class EntryAndReleaseTests(unittest.TestCase):
         ui.confirm.assert_not_called()
         printed.assert_not_called()
 
-    def test_bootstrap_banner_hides_commit_but_retains_identity(self):
-        release = releases.core.Release("v1.4.6", "a" * 40)
-        prefix = "https://github.com/LuoPoJunZi/TG2Cloud/releases/download/v1.4.6/"
-        name = "TG2Cloud-v1.4.6-source.tar.gz"
-        body = b"synthetic verified archive"
-        digest = hashlib.sha256(body).hexdigest()
-        metadata = {"draft": False, "prerelease": False, "tag_name": release.tag,
-                    "assets": [{"name": value, "browser_download_url": prefix + value} for value in (name, "SHA256SUMS.txt")]}
-        client = Mock()
-        client.resolve.return_value = release
-        client.json.return_value = metadata
-        output = io.StringIO()
-        with (tempfile.TemporaryDirectory() as private,
-              patch.object(releases.core, "ReleaseClient", return_value=client),
-              patch.object(releases, "read_asset", side_effect=[(digest + "  " + name + "\n").encode(), body]),
-              patch.object(releases.core, "extract_source"), patch.object(releases.core, "source_version", return_value=release.version),
-              patch.object(releases, "supported"), patch("sys.stdout", output)):
-            _, identity = releases.download(Path(private))
-        self.assertEqual(identity, {"source": "stable-release", "tag": release.tag, "commit": release.commit, "archive_sha256": digest})
-        self.assertNotIn(release.commit, output.getvalue())
+    def test_online_bootstrap_refuses_without_network_or_writing(self):
+        with tempfile.TemporaryDirectory() as private, patch.object(releases.core, "ReleaseClient") as client:
+            with self.assertRaisesRegex(ValueError, "在线发布尚未配置"):
+                releases.download(Path(private))
+            self.assertEqual(list(Path(private).iterdir()), [])
+        client.assert_not_called()
 
     def test_help_without_site_packages_or_checkout_working_directory(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -859,7 +847,7 @@ class EntryAndReleaseTests(unittest.TestCase):
             source = (ROOT / name).read_text(encoding="utf-8")
             self.assertNotIn("external_webdav", block.sub("", source))
             self.assertNotIn("install-webdav.sh", source)
-            self.assertNotIn("tg2cloud-webdav", source)
+            self.assertNotIn("tgcloud-webdav", source)
             for embedded in block.findall(source):
                 tree = ast.parse(embedded)
                 for node in ast.walk(tree):
@@ -870,13 +858,13 @@ class EntryAndReleaseTests(unittest.TestCase):
                         self.assertTrue(all(isinstance(path, str) for path in ast.literal_eval(node.value)))
                         node.value = ast.Tuple(elts=[], ctx=ast.Load())
                 self.assertNotIn("external_webdav", ast.unparse(tree))
-        for name in ("src/tg2cloud/cli/vps.py", "src/tg2cloud/app.py"):
+        for name in ("src/tgcloud/cli/vps.py", "src/tgcloud/app.py"):
             self.assertNotIn("external_webdav", (ROOT / name).read_text(encoding="utf-8"))
 
     def test_main_dispatch_does_not_call_addon_installer(self):
-        from tg2cloud.cli import commands
+        from tgcloud.cli import commands
 
-        for command, target in (("install", "tg2cloud.cli.vps.main"), ("lan", "tg2cloud.deployment.proxy.lan.main")):
+        for command, target in (("install", "tgcloud.cli.vps.main"), ("lan", "tgcloud.deployment.proxy.lan.main")):
             with self.subTest(command=command), patch(target, return_value=0) as operation, patch.object(cli, "main") as addon, patch.object(commands.signal, "signal"):
                 self.assertEqual(commands.main([command, "--help"]), 0)
                 operation.assert_called_once_with(["--help"])
@@ -885,17 +873,17 @@ class EntryAndReleaseTests(unittest.TestCase):
     def test_stable_contract_and_host_bundle_are_complete(self):
         releases.supported(ROOT)
         files = releases.host_files(ROOT)
-        self.assertIn("src/tg2cloud/addons/external_webdav/cli.py", files)
-        self.assertIn("src/tg2cloud/deployment/proxy/manager.py", files)
-        self.assertNotIn("src/tg2cloud/app.py", files)
-        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(ValueError, "尚不包含"):
+        self.assertIn("src/tgcloud/addons/external_webdav/cli.py", files)
+        self.assertIn("src/tgcloud/deployment/proxy/manager.py", files)
+        self.assertNotIn("src/tgcloud/app.py", files)
+        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(ValueError, "缺少受支持"):
             releases.supported(Path(directory))
 
     def test_unified_contract_requires_management_code_and_rejects_old_or_unknown_entry_layout(self):
         self.assertEqual(releases.contract(ROOT), releases.CONTRACT)
         files = releases.host_files(ROOT)
-        self.assertIn("src/tg2cloud/deployment/uninstall.py", files)
-        self.assertIn("src/tg2cloud/addons/external_webdav/entry.py", files)
+        self.assertIn("src/tgcloud/deployment/uninstall.py", files)
+        self.assertIn("src/tgcloud/addons/external_webdav/entry.py", files)
         self.assertNotIn("install-webdav.sh", files)
         self.assertFalse((ROOT / "uninstall.sh").exists())
         self.assertFalse((ROOT / "install-webdav.sh").exists())
@@ -905,40 +893,41 @@ class EntryAndReleaseTests(unittest.TestCase):
             marker.parent.mkdir()
             for api in (True, 2.0, "2", 999):
                 marker.write_text(json.dumps(dict(releases.CONTRACT, api=api)))
-                with self.subTest(api=api), self.assertRaisesRegex(ValueError, "不支持"):
+                with self.subTest(api=api), self.assertRaisesRegex(ValueError, "不受支持"):
                     releases.supported(root)
             marker.write_text(json.dumps(releases.CONTRACT))
-            with self.assertRaisesRegex(ValueError, "缺失"):
+            with self.assertRaisesRegex(ValueError, "缺失|不完整"):
                 releases.supported(root)
 
     def test_offline_host_bundle_is_self_contained_and_detects_tampering(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
-            service = Service(PRODUCTS["openlist"], Mock(), Mock(), Mock(), root=root)
-            launcher = root / "bin/tg2cloud-webdav"
-            service.install_runtime(ROOT, {"source": "local-reviewed-source"}, launcher=launcher)
+            service = Service(PRODUCTS["clouddrive2"], Mock(), Mock(), Mock(), root=root)
+            launcher = root / "bin/tgcloud-webdav"
+            service.install_runtime(ROOT, cli.source_identity(ROOT), launcher=launcher)
             runtime = next((root / "runtime").iterdir())
-            self.assertNotIn("app.py", {path.name for path in (runtime / "src/tg2cloud").iterdir()})
+            self.assertNotIn("app.py", {path.name for path in (runtime / "src/tgcloud").iterdir()})
             code = ("import sys; sys.path.insert(0," + repr(str(runtime / "src")) + "); "
-                    "import tg2cloud.addons.external_webdav.service, tg2cloud.addons.external_webdav.cli; "
+                    "import tgcloud.addons.external_webdav.service, tgcloud.addons.external_webdav.cli; "
                     "assert not any(n.split('.')[0] in {'telethon','cryptg','psutil','PySide6'} for n in sys.modules)")
             result = subprocess.run([sys.executable, "-I", "-S", "-c", code], cwd=root,
                                     capture_output=True, text=True, timeout=20, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             before = launcher.read_bytes()
-            service.install_runtime(ROOT, {"source": "local-reviewed-source"}, launcher=launcher)
+            service.install_runtime(ROOT, cli.source_identity(ROOT), launcher=launcher)
             self.assertEqual(launcher.read_bytes(), before)
-            nested = runtime / "src/tg2cloud/addons/external_webdav/nginx.py"
+            nested = runtime / "src/tgcloud/addons/external_webdav/nginx.py"
             nested.write_bytes(nested.read_bytes() + b"\n# synthetic tamper\n")
             with self.assertRaisesRegex(ValueError, "摘要不匹配"):
-                service.install_runtime(ROOT, {"source": "local-reviewed-source"}, launcher=launcher)
+                service.install_runtime(ROOT, cli.source_identity(ROOT), launcher=launcher)
             self.assertEqual(launcher.read_bytes(), before)
 
-    def test_release_asset_host_allowlist(self):
-        for url in ("http://github.com/a", "https://evil.test/a", "https://user:secret@github.com/a", "https://github.com:444/a"):
-            with self.assertRaises(ValueError):
-                releases.valid_url(url)
-        releases.valid_url("https://github.com/LuoPoJunZi/TG2Cloud/releases/download/v9.0.0/SHA256SUMS.txt")
+    def test_local_origin_rejects_remote_or_unknown_project_identities(self):
+        for value in ({"kind": "stable-release", "project": "tgcloud", "source_sha256": "a" * 64},
+                      {"kind": "local-source", "project": "old-project", "source_sha256": "a" * 64},
+                      {"kind": "local-source", "project": "tgcloud", "source_sha256": "invalid"}):
+            with self.subTest(origin=value), self.assertRaises(ValueError):
+                releases.origin(value)
 
     def test_hash_not_secret_is_passed_to_openssl_argv(self):
         fake = "$6$rounds=200000$" + "a" * 16 + "$" + "b" * 86
@@ -950,25 +939,17 @@ class EntryAndReleaseTests(unittest.TestCase):
 
 class RuntimeInstallTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="tg2cloud-runtime-test-")
+        temporary = tempfile.TemporaryDirectory(prefix="tgcloud-runtime-test-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.source = self.root / "source"
-        files = {name: b"# synthetic host source\n" for name in (
-            "scripts/run_source.py", "src/tg2cloud/__init__.py", "src/tg2cloud/version.py",
-            "src/tg2cloud/config.py", "src/tg2cloud/cli/__init__.py",
-            "src/tg2cloud/cli/commands.py", "src/tg2cloud/cli/management.py", "src/tg2cloud/deployment/uninstall.py",
-            "src/tg2cloud/addons/external_webdav/entry.py", "src/tg2cloud/addons/external_webdav/service.py",
-            "src/tg2cloud/addons/external_webdav/cli.py")}
-        files[releases.FEATURE] = json.dumps(releases.CONTRACT).encode()
-        for name, body in files.items():
-            path = self.source / name
-            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            path.write_bytes(body)
-        self.service = Service(PRODUCTS["openlist"], Mock(), Mock(), Mock(), root=self.root / "addon")
-        self.launcher = self.root / "bin/tg2cloud-webdav"
+        from local_project_fixture import host_source
+        host_source(self.source)
+        self.service = Service(PRODUCTS["clouddrive2"], Mock(), Mock(), Mock(), root=self.root / "addon")
+        self.launcher = self.root / "bin/tgcloud-webdav"
         self.launcher.parent.mkdir(mode=0o700)
-        self.old_launcher = b'#!/bin/sh\n# TG2Cloud external_webdav managed\n# previous reviewed runtime\n'
+        from tgcloud.addons.external_webdav.entry import HEADER
+        self.old_launcher = (HEADER + '# previous reviewed runtime\n').encode()
         self.launcher.write_bytes(self.old_launcher)
         checksum = hashlib.sha256()
         for name in releases.host_files(self.source):
@@ -976,7 +957,7 @@ class RuntimeInstallTests(unittest.TestCase):
         self.destination = self.service.root / "runtime" / checksum.hexdigest()
 
     def install(self):
-        self.service.install_runtime(self.source, {"source": "local-reviewed-source"}, launcher=self.launcher)
+        self.service.install_runtime(self.source, cli.source_identity(self.source), launcher=self.launcher)
 
     def assert_failure_preserved_runtime(self):
         self.assertEqual(self.launcher.read_bytes(), self.old_launcher)
@@ -986,7 +967,7 @@ class RuntimeInstallTests(unittest.TestCase):
     def test_copy_failure_and_normal_interruption_clean_only_current_candidate_and_retry(self):
         for failure in (OSError, KeyboardInterrupt):
             with self.subTest(failure=failure.__name__):
-                with patch("tg2cloud.addons.external_webdav.service.shutil.copyfile", side_effect=failure("synthetic copy failure")), self.assertRaises(failure):
+                with patch("tgcloud.addons.external_webdav.service.shutil.copyfile", side_effect=failure("synthetic copy failure")), self.assertRaises(failure):
                     self.install()
                 self.assert_failure_preserved_runtime()
         self.install()
@@ -1015,7 +996,7 @@ class RuntimeInstallTests(unittest.TestCase):
             target.write_bytes(target.read_bytes() + b"# synthetic corruption\n")
             return result
 
-        with patch("tg2cloud.addons.external_webdav.service.shutil.copyfile", side_effect=corrupt_copy), self.assertRaisesRegex(ValueError, "摘要不匹配"):
+        with patch("tgcloud.addons.external_webdav.service.shutil.copyfile", side_effect=corrupt_copy), self.assertRaisesRegex(ValueError, "摘要不匹配"):
             self.install()
         self.assert_failure_preserved_runtime()
         self.install()
@@ -1029,7 +1010,7 @@ class RuntimeInstallTests(unittest.TestCase):
                 raise OSError("synthetic promotion failure")
             return original(source, target)
 
-        with patch("tg2cloud.addons.external_webdav.service.os.replace", side_effect=fail_promotion), self.assertRaises(OSError):
+        with patch("tgcloud.addons.external_webdav.service.os.replace", side_effect=fail_promotion), self.assertRaises(OSError):
             self.install()
         self.assert_failure_preserved_runtime()
         self.install()
@@ -1048,7 +1029,7 @@ class RuntimeInstallTests(unittest.TestCase):
         self.assertTrue(self.destination.is_dir())
         self.assertEqual(self.launcher.read_bytes(), self.old_launcher)
         self.assertEqual(list(self.destination.parent.glob("stage-*")), [])
-        with patch("tg2cloud.addons.external_webdav.service.shutil.copyfile") as copyfile:
+        with patch("tgcloud.addons.external_webdav.service.shutil.copyfile") as copyfile:
             self.install()
         copyfile.assert_not_called()
         self.assertNotEqual(self.launcher.read_bytes(), self.old_launcher)

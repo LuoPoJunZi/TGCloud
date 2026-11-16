@@ -1,9 +1,9 @@
 {
-  "name": "tg2cloud-docs",
-  "version": "1.5.9",
+  "name": "tgcloud-docs",
+  "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "TG2Cloud Chinese documentation, dependency-free static site",
+  "description": "TGCloud Chinese documentation, dependency-free static site",
   "engines": {
     "node": ">=22"
   },

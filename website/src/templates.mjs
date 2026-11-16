@@ -3,34 +3,44 @@ import {icon} from './icons.mjs';
 
 const link = (slug) => `/${slug}/`;
 const ext = 'target="_blank" rel="noopener noreferrer"';
-const brandIcon = '<img class="brand-mark" src="/assets/tg2cloud-icon-64.png" width="64" height="64" alt="">';
+const brandIcon = '<img class="brand-mark" src="/assets/tgcloud-icon-64.png" width="64" height="64" alt="">';
 export function renderPage({config:c, page, body='', headings=[], previous, next, home=false, notFound=false, hashes}) {
-  const fullTitle = home ? 'TG2Cloud · 从 Telegram，到你的云存储' : `${page.title} | TG2Cloud Docs`;
+  const fullTitle = home ? 'TGCloud · 从 Telegram，到你的云存储' : `${page.title} | TGCloud Docs`;
   const slug = page.slug || '';
   const description = page.description || c.description;
   const url = c.siteUrl ? c.siteUrl.replace(/\/$/,'') + (home ? '/' : notFound ? '/404.html' : link(slug)) : '';
   const section = c.navigation.find(g=>g.items.some(p=>p.slug===slug))?.title || '文档';
   const navLinks = `<a href="/guide/introduction/" ${slug.startsWith('guide/')?'class="active"':''}>指南</a><a href="/guide/quick-start/">从零部署</a><a href="/faq/" ${slug==='faq'?'class="active"':''}>常见问题</a><a href="/changelog/" ${slug==='changelog'?'class="active"':''}>更新日志</a>`;
-  const brand=`<a href="/" class="brand" aria-label="TG2Cloud 文档首页"><span class="brand-icon">${brandIcon}</span><span>TG2Cloud</span><span class="brand-divider"></span><span class="brand-docs">Docs</span></a>`;
+  const brand=`<a href="/" class="brand" aria-label="TGCloud 文档首页"><span class="brand-icon">${brandIcon}</span><span>TGCloud</span><span class="brand-divider"></span><span class="brand-docs">Docs</span></a>`;
   const sidebar = c.navigation.map(g=>`<div class="sidebar-group"><p class="sidebar-label">${e(g.title)}</p>${g.items.map(p=>`<a href="${link(p.slug)}" ${p.slug===slug?'class="current" aria-current="page"':''}>${e(p.title)}</a>`).join('')}</div>`).join('');
   const historyLinks = (c.versionHistory || []).filter(row=>row.version!==c.version).slice(0,3)
     .map(row=>`<a href="/changelog/#${encodeURIComponent(row.id)}">v${e(row.version)} 更新记录</a>`).join('');
-  const versionMenu = `<details class="version-menu"><summary aria-label="版本与发布记录">v${e(c.version)} ${icon('down')}</summary><div class="version-popover"><span class="menu-caption">本文档对应版本</span><a href="/changelog/#${slugify('TG2Cloud v'+c.version)}">v${e(c.version)} <span class="badge">当前</span></a><a href="${c.repo}/releases/latest" ${ext}>GitHub 最新 Release ↗</a><div class="menu-line"></div><span class="menu-caption">历史更新记录 · 非文档快照</span>${historyLinks}<a href="/changelog/">完整版本记录</a><a href="${c.repo}/releases" ${ext}>全部 Releases ↗</a></div></details>`;
+  const publication = c.releaseStatus==='released' ? `<a href="${c.repo}/releases/latest" ${ext}>GitHub 最新 Release ↗</a>` : '<span class="menu-caption">本地整理 · 尚未发布</span>';
+  const versionMenu = `<details class="version-menu"><summary aria-label="版本与发布记录">v${e(c.version)} ${icon('down')}</summary><div class="version-popover"><span class="menu-caption">本文档对应版本</span><a href="/changelog/#${slugify('TGCloud v'+c.version)}">v${e(c.version)} <span class="badge">当前</span></a>${publication}<div class="menu-line"></div><span class="menu-caption">历史更新记录 · 非文档快照</span>${historyLinks}<a href="/changelog/">完整版本记录</a><a href="/sources/">历史档案与来源 ↗</a></div></details>`;
   const references = {
-    'guide/prerequisites':'docs/VPS-INSTALL.md', 'guide/quick-start':'docs/VPS-INSTALL.md',
-    'deploy/ssh':'docs/VPS-INSTALL.md', 'deploy/telegram':'docs/填写信息清单.md',
-    'deploy/clouddrive2':'docs/STORAGE.md', 'deploy/openlist':'docs/STORAGE.md',
-    'deploy/domain-https':'docs/DOCKER-NGINX.md', 'deploy/resources':'docs/ARCHITECTURES.md',
-    'deploy/verification':'docs/STORAGE.md', 'deploy/external-webdav':'docs/external-webdav.md',
-    'usage/commands':'docs/BOT-USAGE.md', 'usage/status':'docs/BOT-USAGE.md',
-    'usage/first-transfer':'docs/NAMING.md', 'usage/streaming':'docs/BOT-USAGE.md',
-    'operations/maintenance':'docs/OPERATIONS.md', 'operations/update':'docs/VPS-INSTALL.md',
-    'operations/backup':'docs/BACKUP-RESTORE.md',
-    'faq':'docs/FAQ.md', 'troubleshooting/ssh':'docs/OPERATIONS.md',
-    'troubleshooting/webdav':'docs/STORAGE.md', 'troubleshooting/transfer':'docs/RECOVERY.md',
-    'reference/config':'src/tg2cloud/deployment/profiles.py', 'reference/security':'.github/SECURITY.md',
-    'reference/development':'.github/CONTRIBUTING.md', 'changelog':'CHANGELOG.md'
-  };
+    "guide/prerequisites": "docs/install.md",
+    "guide/quick-start": "docs/install.md",
+    "deploy/ssh": "docs/security.md",
+    "deploy/telegram": "docs/configuration-guide.md",
+    "deploy/clouddrive2": "docs/configuration-guide.md",
+    "deploy/compose": "docs/compose-guide.md",
+    "deploy/domain-https": "docs/security.md",
+    "deploy/resources": "docs/configuration-guide.md",
+    "deploy/verification": "docs/bot-guide.md",
+    "deploy/external-webdav": "docs/security.md",
+    "usage/commands": "docs/bot-guide.md",
+    "usage/status": "docs/operations-guide.md",
+    "usage/first-transfer": "docs/bot-guide.md",
+    "usage/streaming": "docs/bot-guide.md",
+    "operations/maintenance": "docs/operations-guide.md",
+    "operations/update": "docs/operations-guide.md",
+    "operations/backup": "docs/backup-and-recovery.md",
+    "reference/config": "docs/configuration-guide.md",
+    "reference/security": "docs/security.md",
+    "reference/development": "docs/development.md",
+    "changelog": "CHANGELOG.md",
+    "sources": "archive/README.md"
+};
   const sourcePath = references[slug] || 'README.md';
   const toc = headings.filter(h=>h.level===2 || h.level===3).map(h=>`<a class="toc-h${h.level}" href="#${encodeURIComponent(h.id)}">${e(h.title)}</a>`).join('');
   const mobileToc = toc ? `<details class="mobile-toc"><summary>本页目录 ${icon('down')}</summary><nav aria-label="本页章节">${toc}</nav></details>` : '';
@@ -48,9 +58,9 @@ export function renderPage({config:c, page, body='', headings=[], previous, next
 ${url?`<link rel="canonical" href="${e(url)}"><meta property="og:url" content="${e(url)}">`:''}
 ${notFound?'<meta name="robots" content="noindex">':''}
 <link rel="icon" href="/favicon.ico" sizes="any">
-<link rel="icon" href="/assets/tg2cloud-icon.svg" type="image/svg+xml">
-<link rel="icon" href="/assets/tg2cloud-icon-32.png" type="image/png" sizes="32x32">
-<link rel="apple-touch-icon" href="/assets/tg2cloud-icon-256.png">
+<link rel="icon" href="/assets/tgcloud-icon.svg" type="image/svg+xml">
+<link rel="icon" href="/assets/tgcloud-icon-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="/assets/tgcloud-icon-256.png">
 <script src="/assets/theme-init.js?v=${hashes.init}"></script>
 <link rel="stylesheet" href="/assets/style.css?v=${hashes.css}">
 <script defer src="/assets/app.js?v=${hashes.js}"></script>
@@ -61,13 +71,13 @@ ${notFound?'<meta name="robots" content="noindex">':''}
 ${versionMenu}
 <button class="search-button" type="button" data-open-search aria-label="搜索文档">${icon('search')}<span>搜索文档</span><kbd>Ctrl K</kbd></button>
 <button type="button" class="icon-button theme-toggle" aria-label="切换深色主题" title="切换深浅色主题">${icon('sun','sun-icon')}${icon('moon','moon-icon')}</button>
-<a class="icon-button github-link" href="${c.repo}" ${ext} aria-label="访问 TG2Cloud GitHub">${icon('github')}</a>
+<a class="icon-button github-link" href="${c.repo}" ${ext} aria-label="访问 TGCloud GitHub">${icon('github')}</a>
 <button class="icon-button mobile-nav-toggle" type="button" aria-label="打开导航菜单" aria-haspopup="dialog">${icon('menu')}</button>
 </div></div></header>
 ${!home&&!notFound?`<div class="mobile-doc-toolbar"><button class="mobile-nav-toggle" type="button">${icon('menu')} 文档导航</button><a href="#main-content">正文 ↑</a></div>`:''}
 ${main}
-<footer class="site-footer ${home?'':'compact'}"><div class="footer-inner"><div><strong>TG2Cloud</strong><span> From Telegram to Your Cloud.</span></div><div><a href="/reference/credits/">来源与致谢</a><a href="/reference/security/">安全与隐私</a><a href="${c.repo}" ${ext}>GitHub ↗</a></div></div><p>基于 whyhhh20/TG115 演进 · MIT License · 与 Telegram、CloudDrive2、OpenList 及云存储运营方无官方隶属关系。</p></footer>
-<dialog id="search-dialog" aria-labelledby="search-label"><div class="search-head">${icon('search')}<label class="sr-only" id="search-label" for="search-input">搜索 TG2Cloud 文档</label><input id="search-input" type="search" placeholder="搜索部署、WebDAV、401、备份…" autocomplete="off" spellcheck="false"><button class="icon-button" type="button" data-close-search aria-label="关闭搜索">${icon('close')}</button></div><p class="search-status" aria-live="polite"></p><div id="search-results" role="list"></div><div class="search-foot"><span>本地全文搜索 · 不上传搜索内容</span><span><kbd>↑</kbd><kbd>↓</kbd> 选择 <kbd>Enter</kbd> 打开 <kbd>Esc</kbd> 关闭</span></div></dialog>
+<footer class="site-footer ${home?'':'compact'}"><div class="footer-inner"><div><strong>TGCloud</strong><span> From Telegram to Your Cloud.</span></div><div><a href="/sources/">来源与致谢</a><a href="/reference/security/">安全与隐私</a><a href="${c.repo}" ${ext}>GitHub ↗</a></div></div><p>基于 whyhhh20/TG115 演进 · MIT License · 与 Telegram、CloudDrive2 及云存储运营方无官方隶属关系。</p></footer>
+<dialog id="search-dialog" aria-labelledby="search-label"><div class="search-head">${icon('search')}<label class="sr-only" id="search-label" for="search-input">搜索 TGCloud 文档</label><input id="search-input" type="search" placeholder="搜索部署、WebDAV、401、备份…" autocomplete="off" spellcheck="false"><button class="icon-button" type="button" data-close-search aria-label="关闭搜索">${icon('close')}</button></div><p class="search-status" aria-live="polite"></p><div id="search-results" role="list"></div><div class="search-foot"><span>本地全文搜索 · 不上传搜索内容</span><span><kbd>↑</kbd><kbd>↓</kbd> 选择 <kbd>Enter</kbd> 打开 <kbd>Esc</kbd> 关闭</span></div></dialog>
 <dialog id="mobile-nav-dialog" aria-label="站点导航"><div class="mobile-menu-head">${brand}<button class="icon-button" type="button" data-close-nav aria-label="关闭导航">${icon('close')}</button></div><nav class="mobile-primary">${navLinks}<a href="/download/">安装与下载</a></nav><nav class="mobile-sidebar">${sidebar}</nav></dialog>
 <button class="back-to-top" type="button" aria-label="回到顶部" hidden>↑</button>
 <div id="toast" role="status" aria-live="polite"></div>
@@ -76,7 +86,7 @@ ${main}
 
 function homeContent(c) {
   const features=[
-    ['monitor','Linux 一键部署','选择 Edition、探测资源、收集配置并确认，通过脚本完成安装与维护。','/guide/quick-start/'],
+    ['monitor','Linux 一键部署','直接使用 CloudDrive2、探测资源并确认配置，通过脚本完成安装与维护。','/guide/quick-start/'],
     ['queue','持久队列，重启可恢复','SQLite 保存任务状态，提供去重、失败保留与有边界的恢复机制。','/usage/status/'],
     ['stream','大文件也有另一条路径','超过本地任务预算时走流式管道，不必先保留完整本地文件。','/usage/streaming/'],
     ['server','资源预算，更稳妥地运行','检查 CPU、内存、磁盘与 inode；按 VPS 实况选择合适预算。','/deploy/resources/'],
@@ -85,28 +95,28 @@ function homeContent(c) {
   ];
   return `<main id="main-content">
 <section class="hero-section"><div class="hero-wrap"><div class="hero-copy">
-<a class="release-pill" href="/changelog/"><span class="dot"></span> v${e(c.version)} 文档 <span class="pill-divider"></span> 双 Edition ${icon('arrow')}</a>
-<h1><span class="hero-brand">TG2Cloud</span><span>从 Telegram，</span><span>到你的云存储。</span></h1>
-<p class="hero-description">转发给自己的 Bot，剩下的交给 VPS。<br>通过 CloudDrive2 或 OpenList，把文件有序存入<br class="desktop-break">你自己挂载的云端。</p>
+<a class="release-pill" href="/changelog/"><span class="dot"></span> v${e(c.version)} 文档 <span class="pill-divider"></span> CloudDrive2 单版本 ${icon('arrow')}</a>
+<h1><span class="hero-brand">TGCloud</span><span>从 Telegram，</span><span>到你的云存储。</span></h1>
+<p class="hero-description">转发给自己的 Bot，剩下的交给 VPS。<br>通过 CloudDrive2，把文件有序存入<br class="desktop-break">你自己挂载的云端。</p>
 <div class="hero-actions"><a class="button primary" href="/guide/quick-start/">从零开始部署 ${icon('arrow')}</a><a class="button secondary" href="/download/">${icon('download')} 安装与下载</a></div>
 <div class="hero-tags"><span>${icon('code')} 开源自托管</span><span>${icon('shield')} 私人 Bot</span><span>${icon('cloudsmall')} 多云目标</span></div>
 </div><div class="hero-visual">
 <div class="route-card"><div class="route-header"><span class="route-title"><span class="mini-brand">${brandIcon}</span> 你的文件，你的路径</span><span class="route-label">工作原理</span></div>
 <div class="route-source"><span class="route-source-icon">${icon('telegram')}</span><div><strong>Telegram</strong><span>转发到自己的私人 Bot</span></div><span class="small-tag">手动选择</span></div>
 <div class="route-connector"><span></span><small>文件与任务</small></div>
-<div class="route-core"><div class="core-top"><span>${icon('server')} TG2Cloud <small>on VPS</small></span><span class="core-chip">自动处理</span></div><div class="core-steps"><span>持久排队</span><b>→</b><span>下载 / 流式</span><b>→</b><span>大小校验</span></div></div>
+<div class="route-core"><div class="core-top"><span>${icon('server')} TGCloud <small>on VPS</small></span><span class="core-chip">自动处理</span></div><div class="core-steps"><span>持久排队</span><b>→</b><span>下载 / 流式</span><b>→</b><span>大小校验</span></div></div>
 <div class="route-split"><span></span><span></span></div>
-<div class="gateway-pair"><a href="/deploy/clouddrive2/" class="gateway">${icon('cloudsmall')}<strong>CloudDrive2</strong><span>WebDAV 网关</span></a><a href="/deploy/openlist/" class="gateway">${icon('folder')}<strong>OpenList</strong><span>WebDAV 网关</span></a></div>
+<div class="gateway-pair"><a href="/deploy/clouddrive2/" class="gateway">${icon('cloudsmall')}<strong>CloudDrive2</strong><span>专用 WebDAV 网关</span></a></div>
 <div class="route-merge"><span></span><span></span></div>
 <div class="route-destination">${icon('cloud')}<div><strong>Your Cloud</strong><span>你自行挂载、授权的云存储</span></div><span class="destination-tag">不止 115</span></div>
 <div class="route-foot">${icon('info')} 网关接收成功，不等于云盘官方最终完成。</div>
 </div><div class="hero-visual-caption"><span class="caption-line"></span> FROM TELEGRAM TO YOUR CLOUD <span class="caption-line"></span></div>
 </div></div></section>
-<section class="edition-section home-container"><div class="section-heading"><div><span class="eyebrow">ONE CORE. TWO EDITIONS.</span><h2>选你熟悉的网关，开始转存。</h2></div><a class="text-link" href="/guide/editions/">查看版本差异 ${icon('arrow')}</a></div>
+<section class="edition-section home-container"><div class="section-heading"><div><span class="eyebrow">CLOUDDRIVE2. ONE PROJECT.</span><h2>配置 CloudDrive2，开始转存。</h2></div><a class="text-link" href="/guide/project/">查看项目范围 ${icon('arrow')}</a></div>
 <div class="edition-grid"><a href="/deploy/clouddrive2/" class="edition-card"><div class="edition-icon cd2">${icon('cloudsmall')}</div><div class="edition-copy"><span class="eyebrow">CLOUDDRIVE2 EDITION</span><h3>CloudDrive2 部署指南</h3><p>使用 CloudDrive2 挂载云存储，通过专用 WebDAV 用户写入文件。</p><div class="edition-meta"><span>HTTPS 管理入口</span><span>受管部署需要 FUSE</span></div></div><span class="round-arrow">${icon('arrow')}</span></a>
-<a href="/deploy/openlist/" class="edition-card"><div class="edition-icon openlist">${icon('folder')}</div><div class="edition-copy"><span class="eyebrow">OPENLIST EDITION</span><h3>OpenList 部署指南</h3><p>在自己的 OpenList 后台挂载存储，配置目标目录与写入权限。</p><div class="edition-meta"><span>HTTPS 管理入口</span><span>直接写入最终路径</span></div></div><span class="round-arrow">${icon('arrow')}</span></a></div></section>
+</div></section>
 <section class="features-section home-container"><div class="section-heading"><div><span class="eyebrow">BUILT FOR YOUR WORKFLOW</span><h2>不只传过去，也把过程管起来。</h2></div><p class="section-side-note">部署、传输、验收、运维<br>一份文档，按步骤找到答案。</p></div><div class="feature-grid">${features.map(([i,title,desc,href])=>`<a class="feature-card" href="${href}"><span class="feature-icon">${icon(i)}</span><h3>${title}</h3><p>${desc}</p><span class="feature-link">阅读文档 ${icon('arrow')}</span></a>`).join('')}</div></section>
-<section class="reading-section home-container"><div class="reading-copy"><span class="eyebrow">START HERE</span><h2>第一次使用？<br>沿这条路线就好。</h2><p>不必一次读完整站。先让一个小文件<br>安全到达，再逐步扩大使用规模。</p><a class="text-link" href="/guide/quick-start/">查看完整部署教程 ${icon('arrow')}</a></div><div class="reading-steps">${[['01','准备环境与凭据','确认 VPS、Telegram 与云存储目标。','/guide/prerequisites/'],['02','运行安装向导','选择 Edition 和磁盘预算，确认安装计划。','/download/'],['03','配置 WebDAV，完成验收','按步骤确认真实写入、检查与清理。','/deploy/verification/'],['04','发送第一个小文件','观察任务，在云盘客户端核对结果。','/usage/first-transfer/']].map(([n,t,d,h])=>`<a href="${h}" class="reading-step"><span>${n}</span><div><h3>${t}</h3><p>${d}</p></div>${icon('arrow')}</a>`).join('')}</div></section>
-<section class="release-section home-container"><div class="release-banner"><div><span class="eyebrow">DOCUMENTED VERSION</span><h2>v${e(c.version)} 文档，选择你的 Edition。</h2><p>文档对应当前源码；下载页标明已发布版本，先校验，再运行。</p></div><div><a class="button primary" href="/download/">${icon('download')} 查看下载与校验</a><a class="release-secondary" href="${c.repo}/releases/latest" ${ext}>前往 GitHub 最新 Release ↗</a></div></div><div class="home-notice">${icon('info')}<p><strong>使用前请注意：</strong>当前不自动监听频道，不批量抓取历史。只转存你有权保存的内容。项目基于 <a href="${c.upstreamRepo}" ${ext}>whyhhh20/TG115</a> 演进；115 是示例，不是唯一目标网盘。</p></div></section>
+<section class="reading-section home-container"><div class="reading-copy"><span class="eyebrow">START HERE</span><h2>第一次使用？<br>沿这条路线就好。</h2><p>不必一次读完整站。先让一个小文件<br>安全到达，再逐步扩大使用规模。</p><a class="text-link" href="/guide/quick-start/">查看完整部署教程 ${icon('arrow')}</a></div><div class="reading-steps">${[['01','准备环境与凭据','确认 VPS、Telegram 与云存储目标。','/guide/prerequisites/'],['02','运行安装向导','填写磁盘预算和账号，确认安装计划。','/download/'],['03','配置 WebDAV，完成验收','按步骤确认真实写入、检查与清理。','/deploy/verification/'],['04','发送第一个小文件','观察任务，在云盘客户端核对结果。','/usage/first-transfer/']].map(([n,t,d,h])=>`<a href="${h}" class="reading-step"><span>${n}</span><div><h3>${t}</h3><p>${d}</p></div>${icon('arrow')}</a>`).join('')}</div></section>
+<section class="release-section home-container"><div class="release-banner"><div><span class="eyebrow">DOCUMENTED VERSION</span><h2>v${e(c.version)} · CloudDrive2 单版本。</h2><p>文档对应当前本地源码；在线发布尚未完成。先核对来源，再运行。</p></div><div><a class="button primary" href="/download/">${icon('download')} 查看下载与校验</a><a class="release-secondary" href="${c.repo}" ${ext}>查看 TGCloud 项目 ↗</a></div></div><div class="home-notice">${icon('info')}<p><strong>使用前请注意：</strong>监听须管理员显式授权，不擅自抓取历史。只转存你有权保存的内容。项目基于 <a href="${c.upstreamRepo}" ${ext}>whyhhh20/TG115</a> 演进；115 是示例，不是唯一目标网盘。</p></div></section>
 </main>`;
 }

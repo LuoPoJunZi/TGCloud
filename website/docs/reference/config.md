@@ -1,73 +1,34 @@
-# 配置与路径速查
+# TGCloud 配置
 
-v1.5.3 起，全新安装使用 `data/tg2cloud.db`；已有实例若只有 `data/tg115.db`，继续使用原文件，保留任务、授权和恢复记录，不自动改名或创建空库。若两个文件并存会停止并要求核对，不自动合并。备份／隔离恢复识别两种文件名，但每份实例只能有一个业务数据库。不要手动移动正在使用的 SQLite 文件或删除旁文件。
+通过 `tgcloud` 菜单和逐项输入生成配置，不要求普通用户编写 JSON。
 
+## Telegram 与 CloudDrive2
 
-下面按当前产品定义整理，用于核对而不是让你全局搜索替换旧名称。
+准备自己的 API ID / API Hash、Bot Token 和允许使用的管理员 ID。Bot 私聊鉴权、用户隔离及来源访问检查继续生效。云存储账号、OAuth、Cookie 等仅在自己的 CloudDrive2 中配置。
 
-## 两个 Edition 的资源
+为 Bot 创建专用 WebDAV 用户，核对账号根目录、目标子目录及写入权限。不要把网关管理账号或 Bot 凭据用于公网只读访问。
 
-| 项目 | CloudDrive2 | OpenList |
-| --- | --- | --- |
-| 安装目录 | `/opt/tg2cloud-clouddrive2` | `/opt/tg2cloud-openlist` |
-| 备份目录 | `/opt/tg2cloud-clouddrive2-backups` | `/opt/tg2cloud-openlist-backups` |
-| Bot 容器 | `tg2cloud-clouddrive2-bot` | `tg2cloud-openlist-bot` |
-| 网关容器 | `tg2cloud-clouddrive2` | `tg2cloud-openlist` |
-| Docker 网络 | `tg2cloud-clouddrive2-net` | `tg2cloud-openlist-net` |
-| 本机管理端口 | `19798` | `5244` |
-| FUSE 要求 | 受管安装需要 | 产品配置不要求 |
+## 新项目身份
 
-## 共享 HTTPS 代理资源
-
-| 项目 | 两个 Edition 共用 |
+| 项目 | 默认值 |
 | --- | --- |
-| 受管代理运行目录 | `/opt/tg2cloud-proxy`；外部代理模式按登记责任维护 |
-| 代理私密备份目录 | `/opt/tg2cloud-proxy-backups` |
-| managed 模式 Nginx 容器 | `tg2cloud-proxy-nginx` |
-| managed 模式 Certbot 容器 | `tg2cloud-proxy-certbot` |
-| 公网入口 | TCP 80/443，两个 Edition 使用不同域名 |
+| Python 包 / 命令 | `tgcloud` |
+| 源码版本 | `src/tgcloud/version.py`，0.0.1 |
+| 安装目录 | `/opt/tgcloud-clouddrive2` |
+| Bot 容器 | `tgcloud-clouddrive2-bot` |
+| 网关容器 | `tgcloud-clouddrive2` |
+| 网络 | `tgcloud-clouddrive2-net` |
+| Bot 使用的 WebDAV 地址 | `http://tgcloud-clouddrive2:19798/dav` |
+| 数据库（新装） | `data/tgcloud.db` |
+| Bot Session | `data/bot.session` |
+| 个人监听 Session | `data/listener/personal.session` |
+| 后端参数 | `TGCLOUD_STORAGE_BACKEND=clouddrive2` |
+| rclone 名称 | `TGCLOUD_RCLONE_REMOTE_NAME=cd2` |
 
-Edition 业务备份不包含此目录。代理归档含证书私钥与 ACME 账户，目录权限 700、文件权限 600；维护和历史清理使用 [HTTPS 工具](/deploy/domain-https/)，不是业务 `manage.sh prune-backups`。[备份边界](/operations/backup/)。
+`.env`、数据库、Session、rclone 配置和备份不得提交公共仓库。Base64 是字段编码，不是加密。现有用户数据不因源码改名自动迁移或重命名。
 
-## 容器内 WebDAV 地址
+## 磁盘与验证
 
-CloudDrive2：
+暂存预算和真实可用空间由预检与运行时共同保护；不要把磁盘保留空间设为零。写入成功后还需大小复验，重要文件应在网盘官方客户端独立确认。
 
-```text
-http://tg2cloud-clouddrive2:19798/dav
-```
-
-OpenList：
-
-```text
-http://tg2cloud-openlist:5244/dav/
-```
-
-这些是 Bot 访问受管网关的 Docker 内网地址。管理页浏览器入口使用当前 Edition 的 HTTPS 域名，不能把两者混用；公网 `/dav` 与 `/dav/` 会被固定拒绝。
-
-## 已明确的任务预算变量
-
-| 变量 | 默认 | 含义 |
-| --- | --- | --- |
-| `LOCAL_TEMP_BUDGET_GB` | `20` | Bot 本地任务预算 |
-| `MIN_FREE_DISK_GB` | `8` | 磁盘最少保留 |
-
-完整运行配置以当前 Linux 向导、已保存实例和源码为准。本页不提供可以直接覆盖生产实例的空白 `.env` 模板，避免误清已有凭据或默认项。
-
-## 常见状态标记
-
-| 标记 | 含义 |
-| --- | --- |
-| `TG2CLOUD_DESTINATION=OK` | 当前真实 WebDAV 验收完成 |
-| `TG2CLOUD_UPDATE=OK` | 管理脚本更新检查通过后的成功标记 |
-| `TG115_*` | 仅在必要旧脚本输出读取中保留兼容，不代表应使用旧目录 |
-
-## 不应手动替换的内部兼容项
-
-全新安装的 SQLite 文件名为 `tg2cloud.db`；历史变量仅在必要的兼容读取中保留，不自动导入旧 TG115 数据。
-
-不要把整个部署目录的 `TG115` 字符串全部替换为 `TG2Cloud`。改变内部状态格式需要代码和迁移验证。
-
-## 配置生效方式
-
-升级默认保留原 `.env`，不会因重新输入或重启自动改密。显式变更使用经过检查的 `apply-config` 流程；`restart` 和 `manage.sh update` 不等于下载新版本或应用新配置，见[配置变更](/operations/update/#单独应用配置)。
+配置完成后按 [Bot 指南](/usage/commands/)验证首次转存，恢复数据前阅读[备份和恢复](/operations/backup/)。

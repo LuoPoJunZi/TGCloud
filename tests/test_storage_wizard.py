@@ -6,12 +6,12 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import tg2cloud.cli.terminal as tgdep_terminal
-import tg2cloud.deployment.instances as tgdep_instances
-import tg2cloud.deployment.preflight as tgdep_preflight
-from tg2cloud.deployment.host import SafeLog
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.deployment.resources import GIB, VpsResources, recommend_storage
+import tgcloud.cli.terminal as tgdep_terminal
+import tgcloud.deployment.instances as tgdep_instances
+import tgcloud.deployment.preflight as tgdep_preflight
+from tgcloud.deployment.host import SafeLog
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.resources import GIB, VpsResources, recommend_storage
 
 
 def resources(**changes):
@@ -81,16 +81,14 @@ class StorageWizardTests(unittest.TestCase):
             self.choose(resources(docker_same_filesystem=False, docker_storage_available_bytes=GIB))
         self.assertIn("分别校验", "\n".join(self.messages))
 
-    def test_openlist_does_not_require_clouddrive_fuse_or_memory(self):
-        sample = resources(fuse_available=False, memory_total_bytes=GIB)
-        self.ui.ask.side_effect = ["1"]
-        self.ui.confirm.return_value = False
-        with self.assertRaises(ValueError):
-            self.choose(sample)
-        product = PRODUCTS["openlist"]
-        self.instance = tgdep_instances.Instance(product, Path(product.install_dir), False)
-        self.ui.ask.side_effect = ["1"]
-        self.assertEqual(self.choose(sample), ("8", "8"))
+    def test_clouddrive_still_requires_fuse_and_sufficient_memory(self):
+        for missing in ({"fuse_available": False}, {"memory_total_bytes": GIB}):
+            with self.subTest(missing=missing):
+                self.ui.ask.side_effect = ["1"]
+                self.ui.confirm.return_value = False
+                with self.assertRaises(ValueError):
+                    self.choose(resources(**missing))
+        self.assertEqual(set(PRODUCTS), {"clouddrive2"})
 
     def test_existing_instance_cannot_be_reconfigured_by_recommendation(self):
         self.instance.present = True

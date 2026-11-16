@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, patch
 
-from tg2cloud.listening import account
+from tgcloud.listening import account
 
 
 class LoginInputTests(unittest.IsolatedAsyncioTestCase):

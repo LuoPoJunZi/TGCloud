@@ -15,15 +15,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tg2cloud.deployment import uninstall
-from tg2cloud.deployment.profiles import PRODUCTS
-from tg2cloud.deployment.proxy import maintenance
-from tg2cloud.deployment.proxy.manager import DomainProxyManager, empty_state
+from tgcloud.deployment import uninstall
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.proxy import maintenance
+from tgcloud.deployment.proxy.manager import DomainProxyManager, empty_state
 
 
 def registry(edition="clouddrive2"):
-    return {"format": 1, "owner": "tg2cloud.compose.https", "instances": {
-        edition: {"root": "/srv/tg2cloud-" + edition, "domain": edition + ".example.test"}}}
+    return {"format": 1, "owner": "tgcloud.compose.https", "project": "tgcloud", "instances": {
+        edition: {"root": "/srv/tgcloud-" + edition, "domain": edition + ".example.test"}}}
 
 
 def proxy_state(edition="clouddrive2"):
@@ -33,10 +33,12 @@ def proxy_state(edition="clouddrive2"):
 
 
 class RegistryTests(unittest.TestCase):
-    def test_optional_empty_and_valid_two_editions(self):
+    def test_optional_empty_and_valid_cd2_with_retired_registry_rejected(self):
         value = registry()
-        value["instances"].update(registry("openlist")["instances"])
         self.assertEqual(maintenance.parse_compose_registry(json.dumps(value)), value)
+        value["instances"].update(registry("openlist")["instances"])
+        with self.assertRaises(ValueError):
+            maintenance.validate_compose_registry(value)
         value["instances"] = {}
         self.assertEqual(maintenance.validate_compose_registry(value), value)
 
@@ -73,7 +75,9 @@ class RegistryTests(unittest.TestCase):
 
     def test_consistency_requires_owned_route_to_exist_and_match(self):
         maintenance.validate_compose_routes(registry(), proxy_state())
-        for state in (empty_state(), proxy_state("openlist")):
+        mismatch = proxy_state()
+        mismatch["domains"]["clouddrive2"]["domain"] = "different.example.test"
+        for state in (empty_state(), mismatch):
             with self.assertRaisesRegex(ValueError, "disagrees"):
                 maintenance.validate_compose_routes(registry(), state)
 
@@ -158,7 +162,9 @@ class BackupTests(unittest.TestCase):
             for member in source:
                 handle = source.extractfile(member) if member.isfile() else None
                 entries.append((copy.copy(member), handle.read() if handle else None))
-        replacement = json.dumps(registry("openlist")).encode()
+        changed = registry()
+        changed["instances"]["clouddrive2"]["domain"] = "different.example.test"
+        replacement = json.dumps(changed).encode()
         for member, content in entries:
             if member.name == "proxy/manifest.json":
                 manifest = json.loads(content)
@@ -233,14 +239,11 @@ class UninstallDependencyTests(unittest.TestCase):
             snapshot.assert_not_called()
         session.run.assert_not_called()
 
-    def test_other_edition_registry_keeps_proxy_and_manager(self):
+    def test_retired_registry_blocks_cleanup_without_touching_docker(self):
         self.write_registry("openlist")
-        with patch.object(uninstall.configuration, "regular_private", side_effect=self.fixture_private), patch.object(uninstall, "docker_snapshot", return_value=({}, {})), patch.object(uninstall, "read_state", return_value=empty_state()), patch.object(uninstall, "checked_path"):
-            plan = uninstall.build_plan(("clouddrive2",), Mock())
-            self.assertFalse(plan.remove_proxy)
-            self.assertTrue(uninstall.other_edition_present(("clouddrive2",), {}))
-            self.assertTrue(uninstall.manager_in_use(Mock()))
-            self.assertNotIn(uninstall.PROXY_BACKUP_ROOT, uninstall.backup_targets(("clouddrive2",), {}, True))
+        with patch.object(uninstall.configuration, "regular_private", side_effect=self.fixture_private), patch.object(uninstall, "docker_snapshot") as snapshot, patch.object(uninstall, "read_state", return_value=empty_state()), patch.object(uninstall, "checked_path"), self.assertRaises(uninstall.UninstallError):
+            uninstall.build_plan(("clouddrive2",), Mock())
+        snapshot.assert_not_called()
 
     def test_purge_refuses_own_or_global_proxy_deletion_with_any_owner(self):
         self.write_registry()
@@ -265,8 +268,8 @@ class GenericWriterTests(unittest.TestCase):
         return DomainProxyManager(session, PRODUCTS[edition], {}, lambda _: None)
 
     def test_global_migration_refuses_even_another_editions_compose_route(self):
-        from tg2cloud.cli import proxy
-        manager = self.manager("openlist", json.dumps(registry()))
+        from tgcloud.cli import proxy
+        manager = self.manager("clouddrive2", json.dumps(registry()))
         manager.read_state = Mock(return_value=proxy_state())
         manager.session.hold_lock = Mock()
         with patch.object(proxy, "DockerNginx") as docker, self.assertRaisesRegex(RuntimeError, "Compose"):

@@ -11,12 +11,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from tg2cloud.compose.packaging import render
-from tg2cloud.deployment.proxy.rendering import render_compose
-from tg2cloud.persistence.private import private_file
-from tg2cloud.persistence.sqlite import TaskDB
-from tg2cloud.storage.rclone import RcloneClient, RcloneError
-from tg2cloud.telegram.client import create_client
+from tgcloud.compose.packaging import render
+from tgcloud.deployment.proxy.rendering import render_compose
+from tgcloud.persistence.private import private_file
+from tgcloud.persistence.sqlite import TaskDB
+from tgcloud.storage.rclone import RcloneClient, RcloneError
+from tgcloud.telegram.client import create_client
 
 ROOT = Path(__file__).resolve().parents[1]
 SECRET = "SYNTHETIC_password_不回显%[]"
@@ -29,50 +29,46 @@ class CredentialTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
-    def client(self, edition="clouddrive2"):
+    def client(self):
         return RcloneClient(
             SimpleNamespace(
                 rclone_config_path=self.root / "rclone.conf",
                 cd2_url="http://127.0.0.1:1234/dav/",
                 cd2_user="测试用户",
                 cd2_password=SECRET,
-                rclone_remote_name="openlist" if edition == "openlist" else "cd2",
+                rclone_remote_name="cd2",
             )
         )
 
-    async def test_both_editions_use_stdin_preserve_options_and_only_initialize_once(
-        self,
-    ):
-        for edition in ("clouddrive2", "openlist"):
-            with self.subTest(edition=edition):
-                client = self.client(edition)
-                path = client.settings.rclone_config_path
-                path.write_text(
-                    "[archive]\ntype = local\ncustom = 100%\n["
-                    + client.remote_name
-                    + "]\ntype = webdav\ntimeout = 45s\n",
-                    encoding="utf-8",
-                )
-                client._run = AsyncMock(return_value=(0, OBSCURED, ""))
-                await asyncio.gather(client.ensure_config(), client.ensure_config())
-                client._run.assert_awaited_once_with(
-                    "obscure",
-                    "-",
-                    input_data=(SECRET + "\n").encode(),
-                    timeout=30,
-                    check=False,
-                )
-                self.assertNotIn(SECRET, json.dumps(client._run.call_args.args))
-                parser = configparser.RawConfigParser()
-                parser.read(path, encoding="utf-8")
-                self.assertEqual(parser.get("archive", "custom"), "100%")
-                self.assertEqual(parser.get(client.remote_name, "timeout"), "45s")
-                self.assertEqual(parser.get(client.remote_name, "user"), "测试用户")
-                self.assertEqual(parser.get(client.remote_name, "pass"), OBSCURED)
-                self.assertNotIn(SECRET, path.read_text(encoding="utf-8"))
-                if os.name == "posix":
-                    self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-                self.assertEqual(list(self.root.glob(".rclone-*")), [])
+    async def test_stdin_credentials_preserve_options_and_only_initialize_once(self):
+        client = self.client()
+        path = client.settings.rclone_config_path
+        path.write_text(
+            "[archive]\ntype = local\ncustom = 100%\n["
+            + client.remote_name
+            + "]\ntype = webdav\ntimeout = 45s\n",
+            encoding="utf-8",
+        )
+        client._run = AsyncMock(return_value=(0, OBSCURED, ""))
+        await asyncio.gather(client.ensure_config(), client.ensure_config())
+        client._run.assert_awaited_once_with(
+            "obscure",
+            "-",
+            input_data=(SECRET + "\n").encode(),
+            timeout=30,
+            check=False,
+        )
+        self.assertNotIn(SECRET, json.dumps(client._run.call_args.args))
+        parser = configparser.RawConfigParser()
+        parser.read(path, encoding="utf-8")
+        self.assertEqual(parser.get("archive", "custom"), "100%")
+        self.assertEqual(parser.get(client.remote_name, "timeout"), "45s")
+        self.assertEqual(parser.get(client.remote_name, "user"), "测试用户")
+        self.assertEqual(parser.get(client.remote_name, "pass"), OBSCURED)
+        self.assertNotIn(SECRET, path.read_text(encoding="utf-8"))
+        if os.name == "posix":
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(list(self.root.glob(".rclone-*")), [])
 
     async def test_configuration_failure_or_interrupt_preserves_previous_file(self):
         for mode in (
@@ -104,7 +100,7 @@ class CredentialTests(unittest.IsolatedAsyncioTestCase):
                 client._run = obscure
                 context = (
                     patch(
-                        "tg2cloud.storage.rclone.os.replace",
+                        "tgcloud.storage.rclone.os.replace",
                         side_effect=OSError("synthetic replace error"),
                     )
                     if mode == "write_failure"
@@ -145,7 +141,7 @@ class CredentialTests(unittest.IsolatedAsyncioTestCase):
             returncode=0, communicate=AsyncMock(return_value=(OBSCURED.encode(), b""))
         )
         with patch(
-            "tg2cloud.storage.rclone.asyncio.create_subprocess_exec",
+            "tgcloud.storage.rclone.asyncio.create_subprocess_exec",
             AsyncMock(return_value=process),
         ) as launch:
             await client.ensure_config()
@@ -163,7 +159,7 @@ class CredentialTests(unittest.IsolatedAsyncioTestCase):
         process.wait = AsyncMock(return_value=-15)
         with (
             patch(
-                "tg2cloud.storage.rclone.asyncio.create_subprocess_exec",
+                "tgcloud.storage.rclone.asyncio.create_subprocess_exec",
                 AsyncMock(return_value=process),
             ),
             self.assertRaises(asyncio.CancelledError),
@@ -205,7 +201,7 @@ class PrivateFileTests(unittest.TestCase):
             session = root / "bot.session"
             session.write_bytes(b"synthetic preserved session")
             inode = session.stat().st_ino
-            with patch("tg2cloud.telegram.client.TelegramClient") as constructor:
+            with patch("tgcloud.telegram.client.TelegramClient") as constructor:
                 create_client(
                     SimpleNamespace(data_dir=root, api_id=123, api_hash="synthetic")
                 )
@@ -245,7 +241,7 @@ class PrivateFileTests(unittest.TestCase):
             path.write_bytes(b"keep")
             with (
                 patch(
-                    "tg2cloud.persistence.private.os.fstat",
+                    "tgcloud.persistence.private.os.fstat",
                     return_value=SimpleNamespace(
                         st_mode=0o100644,
                         st_nlink=2,
@@ -265,7 +261,7 @@ class PrivateFileTests(unittest.TestCase):
                 info = path.stat()
                 with (
                     patch(
-                        "tg2cloud.persistence.private.os.fstat",
+                        "tgcloud.persistence.private.os.fstat",
                         return_value=SimpleNamespace(
                             st_mode=info.st_mode,
                             st_nlink=1,
@@ -283,11 +279,15 @@ class PrivateFileTests(unittest.TestCase):
 class LogRotationTests(unittest.TestCase):
     def test_both_editions_managed_direct_compose_and_shared_proxy_are_bounded(self):
         expected = 'max-size: "10m"\n        max-file: "3"'
-        for edition in ("clouddrive2", "openlist"):
+        for edition in ("clouddrive2",):
             managed = (
                 ROOT / "packaging/compose" / ("docker-compose." + edition + ".yml")
             ).read_text()
-            direct = render(ROOT, edition, "ghcr.io/example/tg2cloud:v1.5.5")
+            from local_project_fixture import source
+
+            from tgcloud.compose.packaging import image_name
+            digest = source().digest
+            direct = render(ROOT, edition, image_name(digest), source_digest=digest)
             self.assertEqual(managed.count(expected), 2)
             self.assertEqual(direct.count(expected), 3)
             self.assertEqual(direct.count("driver: json-file"), 3)

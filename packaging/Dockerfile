@@ -3,16 +3,16 @@ FROM python:3.12-slim-trixie@sha256:aa943ce411423c7582288f18707ff66eddcbaeb51050
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PYTHONPATH=/opt/tg2cloud:/opt/tg2cloud/app
+    PYTHONPATH=/opt/tgcloud:/opt/tgcloud/app
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates rclone tini tzdata \
-    && groupadd --system --gid 10001 tg2cloud \
+    && groupadd --system --gid 10001 tgcloud \
     && useradd --system --uid 10001 --gid 10001 --home-dir /nonexistent \
-        --shell /usr/sbin/nologin tg2cloud \
+        --shell /usr/sbin/nologin tgcloud \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /opt/tg2cloud
+WORKDIR /opt/tgcloud
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -24,4 +24,4 @@ RUN chmod -R a+rX app
 USER 10001:10001
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["python", "-m", "tg2cloud.app"]
+CMD ["python", "-m", "tgcloud.app"]

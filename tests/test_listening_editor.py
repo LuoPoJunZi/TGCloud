@@ -15,11 +15,11 @@ from test_listening import event, message
 from test_scenarios import make_service, make_settings
 from test_telethon_compat import callback_data
 
-from tg2cloud.domain.actors import user_scope
-from tg2cloud.listening import account, rules
-from tg2cloud.listening.service import Listener
-from tg2cloud.persistence.sqlite import TaskDB
-from tg2cloud.telegram import editor, planning
+from tgcloud.domain.actors import user_scope
+from tgcloud.listening import account, rules
+from tgcloud.listening.service import Listener
+from tgcloud.persistence.sqlite import TaskDB
+from tgcloud.telegram import editor, planning
 
 
 class EditorTests(unittest.IsolatedAsyncioTestCase):
@@ -367,7 +367,7 @@ class EditorTests(unittest.IsolatedAsyncioTestCase):
             get_messages=AsyncMock(return_value=[message(caption="数学")])
         )
         await self.click("测试规则")
-        with patch("tg2cloud.listening.service.verified_chat", new=AsyncMock()):
+        with patch("tgcloud.listening.service.verified_chat", new=AsyncMock()):
             await self.click("测试最近消息（草稿）")
         self.assertIn("跳过", self.text)
         self.assertEqual(self.config()["rules"]["groups"][0]["keywords"], [])
@@ -544,7 +544,7 @@ class EditorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_plan_status_root_directory_and_navigation_are_readable(self):
         item = rules.facts(message(original="城市漫游.mp4"))
-        from tg2cloud.domain.planning import name_plan
+        from tgcloud.domain.planning import name_plan
         plan, _ = self.repo.create(self.admin, item, name_plan(item["original"], item["caption"], "fallback.mp4"), batch="preview-batch", target_base=self.owner.settings.cd2_target)
         e = self.e()
         await planning.plan_card(self.owner, e, plan)

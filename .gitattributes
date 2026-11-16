@@ -1,8 +1,16 @@
 * text=auto
 *.sh text eol=lf
+*.py text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
 *.ps1 text eol=crlf
 *.md text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
 *.exe binary
 *.zip binary
+
+# Historical evidence is hashed as archived; preserve its exact bytes on checkout.
+archive/project-history/** -text

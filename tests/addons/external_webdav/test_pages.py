@@ -5,14 +5,14 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tg2cloud.addons.external_webdav import cli, discovery
-from tg2cloud.deployment.profiles import PRODUCTS
+from tgcloud.addons.external_webdav import cli, discovery
+from tgcloud.deployment.profiles import PRODUCTS
 
 
 class PageTests(unittest.TestCase):
     def service(self, answers):
         messages, values = [], iter(answers)
-        service = Mock(product=PRODUCTS["openlist"], log=messages.append)
+        service = Mock(product=PRODUCTS["clouddrive2"], log=messages.append)
         service.record.return_value = {"phase": "enabled"}
         service.ui.ask.side_effect = lambda *a, **kw: kw["validate"](next(values))
         return service, messages
@@ -30,7 +30,7 @@ class PageTests(unittest.TestCase):
         log.assert_not_called()
 
     def args(self):
-        return SimpleNamespace(action=None, edition="openlist", install_dir=None, sample_file="")
+        return SimpleNamespace(action=None, edition="clouddrive2", install_dir=None, sample_file="")
 
     def test_status_refresh_and_return_then_exit(self):
         service, messages = self.service(("2", "1", "0", "0"))
@@ -38,7 +38,7 @@ class PageTests(unittest.TestCase):
         self.assertEqual(service.maintain.call_count, 2)
         self.assertTrue(all(call.args[0] == "status" for call in service.maintain.call_args_list))
         self.assertIn("返回功能菜单", "\n".join(messages))
-        self.assertIn("OpenList · 版本", "\n".join(messages))
+        self.assertIn("CloudDrive2 · 版本", "\n".join(messages))
         service.configure.assert_not_called()
 
     def test_check_refresh_keeps_read_only_action(self):
@@ -60,7 +60,7 @@ class PageTests(unittest.TestCase):
 
     def test_user_menu_returns_without_an_extra_pause(self):
         service, _ = self.service(("10", "0"))
-        with patch("tg2cloud.addons.external_webdav.users.menu") as menu:
+        with patch("tgcloud.addons.external_webdav.users.menu") as menu:
             cli.interactive(service, self.args())
         menu.assert_called_once_with(service, sample_file="")
 

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Existing immutable version tag to publish (for example v1.3.0)"
+        description: "Existing immutable version tag to publish (for example v0.0.1)"
         required: false
         type: string
   push:
@@ -119,7 +119,7 @@ jobs:
 
       - name: Install Linux validation tools
         run: |
-          if [[ -f src/tg2cloud/version.py ]]; then
+          if [[ -f src/tgcloud/version.py ]]; then
             sudo apt-get update
             sudo apt-get install -y shellcheck rclone fuse3 kmod
             python -m pip install -r requirements/dev.lock.txt
@@ -142,7 +142,7 @@ jobs:
         run: |
           if [[ -f .github/scripts/linux_validation.py ]]; then
             python3 -B .github/scripts/linux_validation.py shell
-          elif [[ -f src/tg2cloud/version.py ]]; then
+          elif [[ -f src/tgcloud/version.py ]]; then
             bash -n install.sh
             bash -n install-lan.sh
             bash -n uninstall.sh
@@ -179,7 +179,7 @@ jobs:
             export PYTHONPATH=src
             python -B .github/scripts/linux_validation.py test
             python -B .github/scripts/linux_validation.py quality
-          elif [[ -f src/tg2cloud/version.py ]]; then
+          elif [[ -f src/tgcloud/version.py ]]; then
             command -v bash shellcheck rclone docker
             docker info >/dev/null
             export PYTHONPATH=src
@@ -212,31 +212,31 @@ jobs:
 
       - name: Validate edition Compose and build the runtime image
         run: |
-          if [[ -f src/tg2cloud/version.py ]]; then
+          if [[ -f src/tgcloud/version.py ]]; then
             python .github/scripts/build_payload.py --edition all --directory build/release-contexts
             touch build/release-contexts/clouddrive2/.env build/release-contexts/openlist/.env
             docker compose -f build/release-contexts/clouddrive2/docker-compose.yml config --quiet
             OPENLIST_ADMIN_PASSWORD=ci-only-placeholder docker compose -f build/release-contexts/openlist/docker-compose.yml config --quiet
-            docker build -t tg2cloud-bot:release-test build/release-contexts/clouddrive2
+            docker build -t tgcloud-bot:release-test build/release-contexts/clouddrive2
           else
             touch payload_clouddrive2/.env
             docker compose -f payload_clouddrive2/docker-compose.yml config --quiet
             cp payload_clouddrive2/.env payload_openlist/.env
             OPENLIST_ADMIN_PASSWORD=ci-only-placeholder docker compose -f payload_openlist/docker-compose.yml config --quiet
-            docker build -t tg2cloud-bot:release-test payload_clouddrive2
+            docker build -t tgcloud-bot:release-test payload_clouddrive2
           fi
 
       - name: Run both Edition candidate images as non-root
         timeout-minutes: 20
         env:
-          TG2CLOUD_TEST_DOCKER: "1"
+          TGCLOUD_TEST_DOCKER: "1"
         run: python -m unittest discover -s tests -p test_runtime_namespace.py -v
 
       - name: Native platform, gateway HTTP and FUSE validation
         if: hashFiles('.github/scripts/check_native_architecture.py') != ''
         timeout-minutes: 15
         env:
-          TG2CLOUD_TEST_NATIVE_DOCKER: "1"
+          TGCLOUD_TEST_NATIVE_DOCKER: "1"
         run: |
           sudo modprobe fuse
           test -c /dev/fuse
@@ -244,19 +244,19 @@ jobs:
 
       - name: Isolated LAN Nginx checks (no product deployment)
         env:
-          TG2CLOUD_TEST_LAN_DOCKER: "1"
+          TGCLOUD_TEST_LAN_DOCKER: "1"
         run: python -m unittest discover -s tests -p test_lan_gateway_docker.py -v
 
       - name: Isolated external WebDAV Nginx, authentication and Range
         if: hashFiles('packaging/external-webdav.json') != ''
         env:
-          TG2CLOUD_TEST_EXTERNAL_WEBDAV_DOCKER: "1"
+          TGCLOUD_TEST_EXTERNAL_WEBDAV_DOCKER: "1"
         run: python -B -m unittest discover -s tests -p test_docker.py -v
 
       - name: Isolated existing Nginx single-hop, reload and original-site preservation
         if: hashFiles('tests/test_external_nginx_docker.py') != ''
         env:
-          TG2CLOUD_TEST_EXTERNAL_NGINX_DOCKER: "1"
+          TGCLOUD_TEST_EXTERNAL_NGINX_DOCKER: "1"
         run: python -B -m unittest discover -s tests -p test_external_nginx_docker.py -v
 
       - name: Package immutable source once and verify bootstrap pins and SHA256
@@ -269,7 +269,7 @@ jobs:
         with:
           name: ${{ env.RELEASE_ARTIFACT }}
           path: |
-            build/source-release/TG2Cloud-*-source.tar.gz
+            build/source-release/TGCloud-*-source.tar.gz
             build/source-release/SHA256SUMS.txt
           if-no-files-found: error
           compression-level: 0
@@ -319,7 +319,7 @@ jobs:
             prerelease_args+=(--prerelease)
           fi
           gh release create "${RELEASE_TAG}" \
-            "release-assets/TG2Cloud-${RELEASE_TAG}-source.tar.gz" \
+            "release-assets/TGCloud-${RELEASE_TAG}-source.tar.gz" \
             release-assets/SHA256SUMS.txt \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
@@ -337,7 +337,7 @@ jobs:
           test "$(gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --json isPrerelease --jq .isPrerelease)" = "${RELEASE_PRERELEASE}"
           expected=(
             SHA256SUMS.txt
-            "TG2Cloud-${RELEASE_TAG}-source.tar.gz"
+            "TGCloud-${RELEASE_TAG}-source.tar.gz"
           )
           mapfile -t actual < <(
             gh release view "${RELEASE_TAG}" \

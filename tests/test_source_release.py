@@ -6,15 +6,14 @@ import gzip
 import hashlib
 import importlib.util
 import io
-import json
 import re
 import tarfile
 import tempfile
 import unittest
 from pathlib import Path
 
-from tg2cloud.deployment.payload import payload_sources
-from tg2cloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.payload import payload_sources
+from tgcloud.deployment.profiles import PRODUCTS
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("source_release", ROOT / ".github/scripts/source_release.py")
@@ -65,8 +64,7 @@ class SourceReleaseTests(unittest.TestCase):
             path = self.root / name
             text = re.sub(r'^(installer_commit\s*=\s*)"[0-9a-f]{40}"$', lambda match: match[1] + f'"{pin}"', path.read_text(encoding="utf-8"), flags=re.MULTILINE)
             path.write_text(text, encoding="utf-8", newline="\n")
-        self.commit()
-        tree = ast.parse((self.root / "src/tg2cloud/version.py").read_text(encoding="utf-8"))
+        tree = ast.parse((self.root / "src/tgcloud/version.py").read_text(encoding="utf-8"))
         version = next(node.value.value for node in tree.body if hasattr(node, "targets"))
         self.tag = "v" + version
         package.git(self.root, "tag", self.tag)
@@ -89,19 +87,19 @@ class SourceReleaseTests(unittest.TestCase):
             self.build()
 
     def test_uncommitted_source_is_rejected(self):
-        with (self.root / "src/tg2cloud/deployment/resources.py").open("a", encoding="utf-8") as writer:
+        with (self.root / "src/tgcloud/deployment/resources.py").open("a", encoding="utf-8") as writer:
             writer.write("\n# changed\n")
         with self.assertRaisesRegex(ValueError, "committed"):
             self.build()
         self.assertFalse(self.output.exists())
 
-    def test_old_online_helper_pin_blocks_release(self):
-        with (self.root / "src/tg2cloud/deployment/resources.py").open("a", encoding="utf-8") as writer:
-            writer.write("\n# changed helper\n")
+    def test_local_source_updates_need_no_online_helper_pin(self):
+        path = self.root / "src/tgcloud/deployment/resources.py"
+        path.write_bytes(path.read_bytes() + b"\n# synthetic source revision\n")
         self.commit()
         commit = package.git(self.root, "rev-parse", "HEAD").decode().strip()
-        with self.assertRaisesRegex(ValueError, "stale bootstrap helper"):
-            package.validate_pins(self.root, commit)
+        package.validate_pins(self.root, commit)
+        self.assertNotIn("installer_commit", (self.root / "install.sh").read_text())
 
     def test_wrong_checkout_or_invalid_tag_stops_before_output(self):
         (self.root / "extra.txt").write_text("fixture", encoding="utf-8")
@@ -133,14 +131,14 @@ class SourceReleaseTests(unittest.TestCase):
                 result = io.BytesIO()
                 with tarfile.open(fileobj=io.BytesIO(original), mode="r:gz") as source, tarfile.open(fileobj=result, mode="w:gz") as dest:
                     for member in source:
-                        if case != "desktop" and member.name.endswith("/src/tg2cloud/storage/rclone.py"):
+                        if case != "desktop" and member.name.endswith("/src/tgcloud/storage/rclone.py"):
                             continue
                         dest.addfile(member, source.extractfile(member) if member.isfile() else None)
                     if case == "unsafe":
-                        member = tarfile.TarInfo(f"TG2Cloud-{self.tag}/../../outside")
+                        member = tarfile.TarInfo(f"TGCloud-{self.tag}/../../outside")
                         dest.addfile(member, io.BytesIO())
                     if case == "desktop":
-                        member = tarfile.TarInfo(f"TG2Cloud-{self.tag}/legacy/desktop/installer.py")
+                        member = tarfile.TarInfo(f"TGCloud-{self.tag}/legacy/desktop/installer.py")
                         dest.addfile(member, io.BytesIO())
                 path.write_bytes(result.getvalue())
                 (self.output / "SHA256SUMS.txt").write_text(hashlib.sha256(result.getvalue()).hexdigest() + "  " + path.name + "\n", encoding="ascii")
@@ -156,16 +154,16 @@ class SourceReleaseTests(unittest.TestCase):
                 result = io.BytesIO()
                 with tarfile.open(fileobj=io.BytesIO(original), mode="r:gz") as source, tarfile.open(fileobj=result, mode="w:gz") as dest:
                     for member in source:
-                        if case == "missing-core" and member.name.endswith("/src/tg2cloud/deployment/uninstall.py"):
+                        if case == "missing-core" and member.name.endswith("/src/tgcloud/deployment/uninstall.py"):
                             continue
                         if case == "unknown-api" and member.name.endswith("/packaging/external-webdav.json"):
-                            body = b'{"api":999,"proxy_schema":2,"owner":"tg2cloud.external_webdav"}'
+                            body = b'{"api":999,"proxy_schema":2,"owner":"tgcloud.external_webdav"}'
                             member.size = len(body)
                             dest.addfile(member, io.BytesIO(body))
                         else:
                             dest.addfile(member, source.extractfile(member) if member.isfile() else None)
                     if case.endswith(".sh"):
-                        member = tarfile.TarInfo(f"TG2Cloud-{self.tag}/" + case)
+                        member = tarfile.TarInfo(f"TGCloud-{self.tag}/" + case)
                         dest.addfile(member, io.BytesIO())
                 path.write_bytes(result.getvalue())
                 (self.output / "SHA256SUMS.txt").write_text(hashlib.sha256(result.getvalue()).hexdigest() + "  " + path.name + "\n", encoding="ascii")
@@ -185,18 +183,12 @@ class SourceReleaseTests(unittest.TestCase):
                     package.validate_pins(self.root, commit)
         path.write_bytes(original)
 
-    def test_live_entries_keep_their_actual_published_helper_contract(self):
-        # Local unreleased additions must not manufacture a remote SHA or make
-        # historical bootstrap tests compare against an unpublished manifest.
-        # validate_pins still rejects these old lists for the NEW release below.
+    def test_current_local_entries_require_no_remote_bootstrap(self):
         for name in ("install.sh", "install-lan.sh"):
             text = (ROOT / name).read_text(encoding="utf-8")
-            pin = re.search(r'^installer_commit\s*=\s*"([0-9a-f]{40})"$', text, re.MULTILINE)[1]
-            block = text.split("<<'PY' &\n", 1)[1].split("\nPY\n", 1)[0]
-            paths = [ast.literal_eval(node.value) for node in ast.walk(ast.parse(block))
-                     if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "files" for t in node.targets)]
-            published = json.loads(package.git(ROOT, "show", f"{pin}:packaging/bootstrap-manifest.json"))["files"]
-            self.assertEqual(paths, [tuple(published)])
+            self.assertIn("scripts/run_source.py", text)
+            for remote in ("installer_commit", "curl", "https://"):
+                self.assertNotIn(remote, text)
 
     def test_unpublished_addon_cannot_ship_with_existing_old_helper_list(self):
         (self.root / "install.sh").write_bytes(package.git(ROOT, "show", "83cabf8c734aa98f8475b0e6cdb18a4bea8469b3:install.sh"))
@@ -205,32 +197,32 @@ class SourceReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "stale bootstrap helper layout"):
             package.validate_pins(self.root, commit)
 
-    def test_old_download_list_cannot_pass_new_layout_release_checks(self):
+    def test_online_fallback_cannot_pass_the_local_entry_contract(self):
         path = self.root / "install.sh"
-        path.write_text(path.read_text(encoding="utf-8").replace(
-            "'src/tg2cloud/cli/vps.py'", "'scripts/vps_installer.py'"), encoding="utf-8", newline="\n")
+        path.write_text(path.read_text(encoding="utf-8") + "\ncurl https://example.invalid/source\n", encoding="utf-8")
         self.commit()
         commit = package.git(self.root, "rev-parse", "HEAD").decode().strip()
-        with self.assertRaisesRegex(ValueError, "stale bootstrap helper layout"):
+        with self.assertRaisesRegex(ValueError, "invalid local-source"):
             package.validate_pins(self.root, commit)
 
 
 class HistoricalSourceReleaseTests(unittest.TestCase):
-    def test_previous_api1_source_still_requires_and_accepts_its_historical_entries(self):
+    def test_original_api1_archive_is_rejected_even_with_valid_checksum(self):
         tag = "v1.4.6"
         commit = "2e18eba718df83beec3a9d0784ca8037125bdd20"
         with tempfile.TemporaryDirectory() as private:
-            archive = gzip.compress(package.git(ROOT, "archive", "--format=tar", f"--prefix=TG2Cloud-{tag}/", commit), mtime=0)
+            archive = gzip.compress(package.git(ROOT, "archive", "--format=tar", f"--prefix=TGCloud-{tag}/", commit), mtime=0)
             root = Path(private)
             name = package.artifact_name(tag)
             (root / name).write_bytes(archive)
             (root / "SHA256SUMS.txt").write_text(hashlib.sha256(archive).hexdigest() + "  " + name + "\n", encoding="ascii")
-            package.verify(root, tag)
+            with self.assertRaisesRegex(ValueError, "missing required"):
+                package.verify(root, tag)
             for omitted in ("uninstall.sh", "install-webdav.sh"):
                 output = io.BytesIO()
                 with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as source, tarfile.open(fileobj=output, mode="w:gz") as target:
                     for member in source:
-                        if member.name == f"TG2Cloud-{tag}/" + omitted:
+                        if member.name == f"TGCloud-{tag}/" + omitted:
                             continue
                         target.addfile(member, source.extractfile(member) if member.isfile() else None)
                 (root / name).write_bytes(output.getvalue())
@@ -238,19 +230,20 @@ class HistoricalSourceReleaseTests(unittest.TestCase):
                 with self.subTest(omitted=omitted), self.assertRaisesRegex(ValueError, "missing required|incomplete external"):
                     package.verify(root, tag)
 
-    def test_immutable_previous_layout_still_verifies(self):
+    def test_original_project_layouts_are_rejected(self):
         tag = "v1.3.0"
         # Both hashes are public main ancestors. The root-layout fixture must
         # not depend on a maintainer-local tag absent from a fresh checkout.
         for commit in ("e673cdb0683e2d02b0c3fd35b96143164392b898",
                        "c07734cab666defb6ae5b5351a06361711d24190"):
             with self.subTest(historical_layout=commit), tempfile.TemporaryDirectory() as private:
-                archive = gzip.compress(package.git(ROOT, "archive", "--format=tar", f"--prefix=TG2Cloud-{tag}/", commit), mtime=0)
+                archive = gzip.compress(package.git(ROOT, "archive", "--format=tar", f"--prefix=TGCloud-{tag}/", commit), mtime=0)
                 root = Path(private)
                 name = package.artifact_name(tag)
                 (root / name).write_bytes(archive)
                 (root / "SHA256SUMS.txt").write_text(hashlib.sha256(archive).hexdigest() + "  " + name + "\n", encoding="ascii")
-                package.verify(root, tag)
+                with self.assertRaisesRegex(ValueError, "missing required"):
+                    package.verify(root, tag)
 
 
 if __name__ == "__main__":

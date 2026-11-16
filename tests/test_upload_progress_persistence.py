@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 from test_scenarios import FakeRclone, make_service, make_settings
 
-from tg2cloud.persistence.sqlite import TaskDB
+from tgcloud.persistence.sqlite import TaskDB
 
 
 class UploadProgressPersistenceTests(unittest.IsolatedAsyncioTestCase):
@@ -31,7 +31,7 @@ class UploadProgressPersistenceTests(unittest.IsolatedAsyncioTestCase):
         return service, db, task, local
 
     async def test_duplicate_reports_skip_writes_but_all_rates_remain_live(self):
-        for backend in ("clouddrive2", "openlist"):
+        for backend in ("clouddrive2",):
             with self.subTest(backend=backend):
                 service, db, task, local = self.setup_transfer(backend)
                 original_upload = service.rclone.upload
@@ -65,7 +65,7 @@ class UploadProgressPersistenceTests(unittest.IsolatedAsyncioTestCase):
             progress(10, 2)
             await original_upload(path, remote)
         service.rclone.upload = upload
-        with patch.object(db, "update", wraps=db.update) as update, patch("tg2cloud.transfer.upload.asyncio.sleep", new=AsyncMock()):
+        with patch.object(db, "update", wraps=db.update) as update, patch("tgcloud.transfer.upload.asyncio.sleep", new=AsyncMock()):
             await service._upload_one(task["id"])
         writes = [c.kwargs["uploaded_bytes"] for c in update.call_args_list if "uploaded_bytes" in c.kwargs]
         self.assertEqual(writes, [4, 4, 10])
@@ -92,7 +92,7 @@ class UploadProgressPersistenceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(local.exists())
 
     async def test_completion_without_progress_callback_is_still_persisted(self):
-        service, db, task, local = self.setup_transfer("openlist")
+        service, db, task, local = self.setup_transfer("clouddrive2")
         await service._upload_one(task["id"])
         self.assertEqual(db.get(task["id"])["uploaded_bytes"], 10)
         self.assertEqual(db.get(task["id"])["state"], "completed")

@@ -8,8 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
-from tg2cloud.persistence import control, features, quotas
-from tg2cloud.persistence.sqlite import TaskDB
+from tgcloud.persistence import control, features, quotas
+from tgcloud.persistence.sqlite import TaskDB
 
 
 class QuotaTests(unittest.TestCase):

@@ -15,12 +15,12 @@ import uuid
 from pathlib import Path
 from unittest.mock import patch
 
-from tg2cloud.addons.external_webdav import config, verification
-from tg2cloud.deployment.proxy.manager import NGINX_IMAGE, render_config_set
+from tgcloud.addons.external_webdav import config, verification
+from tgcloud.deployment.proxy.manager import NGINX_IMAGE, render_config_set
 
 from .test_feature import SECRET, XML, route
 
-ENABLED = (os.name == "posix" and shutil.which("docker") and os.environ.get("TG2CLOUD_TEST_EXTERNAL_WEBDAV_DOCKER") == "1")
+ENABLED = (os.name == "posix" and shutil.which("docker") and os.environ.get("TGCLOUD_TEST_EXTERNAL_WEBDAV_DOCKER") == "1")
 
 
 @unittest.skipUnless(ENABLED, "Requires explicit disposable Linux Docker integration environment")
@@ -91,7 +91,7 @@ class ExternalNginxTests(unittest.TestCase):
             self.docker("pull", NGINX_IMAGE)
             gid = self.docker("run", "--rm", "--entrypoint", "id", NGINX_IMAGE, "-g", "nginx")
             self.assertTrue(gid.isdigit())
-            with tempfile.TemporaryDirectory(prefix="tg2cloud-external-nginx-test-") as private:
+            with tempfile.TemporaryDirectory(prefix="tgcloud-external-nginx-test-") as private:
                 directory = Path(private)
                 directory.chmod(0o755)
                 auth = directory / "auth"
@@ -120,7 +120,7 @@ class ExternalNginxTests(unittest.TestCase):
                                 "-c", f"chown {os.geteuid()}:{gid} /auth /auth/{edition}.htpasswd && chmod 750 /auth && chmod 640 /auth/{edition}.htpasswd")
 
                 rotate(SECRET)
-                name = "tg2cloud-test-external-" + uuid.uuid4().hex
+                name = "tgcloud-test-external-" + uuid.uuid4().hex
                 flags = ["--name", name, "--network", "host", "--read-only", "--tmpfs", "/var/run", "--tmpfs", "/var/cache/nginx", "--tmpfs", "/tmp",
                          "-v", str(directory / "nginx/nginx.conf") + ":/etc/nginx/nginx.conf:ro",
                          "-v", str(directory / "nginx/conf.d") + ":/etc/nginx/conf.d:ro",
@@ -194,6 +194,6 @@ class ExternalNginxTests(unittest.TestCase):
             backend.server_close()
 
     def test_both_editions_readonly_gate_range_encoding_and_rotation(self):
-        for edition in ("clouddrive2", "openlist"):
+        for edition in ("clouddrive2",):
             with self.subTest(edition=edition):
                 self.exercise(edition)

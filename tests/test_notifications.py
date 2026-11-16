@@ -7,9 +7,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from tg2cloud.monitoring import notifications
-from tg2cloud.persistence import features
-from tg2cloud.persistence.sqlite import TaskDB
+from tgcloud.monitoring import notifications
+from tgcloud.persistence import features
+from tgcloud.persistence.sqlite import TaskDB
 
 
 class NotificationTests(unittest.IsolatedAsyncioTestCase):
@@ -25,7 +25,7 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             min_free_disk_bytes=100, control_interval=3, remote_health_interval=30),
             snapshot=SimpleNamespace(sampled_at=10000, disk_free=50, filesystems=()),
             destination_last_checked=10000, destination_failure_kind="", destination_healthy=True,
-            destination_label="OpenList", client=SimpleNamespace(send_message=AsyncMock()),
+            destination_label="CloudDrive2", client=SimpleNamespace(send_message=AsyncMock()),
             log=Mock(),
             rclone=SimpleNamespace(probe=Mock(side_effect=AssertionError("must not probe"))))
 
@@ -88,8 +88,8 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             features.change(self.db._conn, "initial", {"notifications": False})
 
     async def test_member_task_auth_error_alerts_admin_not_member_and_403_probe_is_classified(self):
-        from tg2cloud.domain.actors import user_scope
-        from tg2cloud.storage.rclone import RcloneClient
+        from tgcloud.domain.actors import user_scope
+        from tgcloud.storage.rclone import RcloneClient
         self.configure(notifications=True)
         task, _ = self.db.create_task(chat_id=22, sender_id=22, message_id=1, file_name="PRIVATE_NAME.mp4", file_size=5)
         self.db.update(task["id"], state="upload_failed_retained", failure_kind="authentication")
@@ -98,8 +98,9 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         for call in self.service.client.send_message.await_args_list:
             self.assertEqual(call.args[0], 11)
             self.assertNotIn("PRIVATE_NAME", call.args[1])
-        for label in ("CloudDrive2", "OpenList"):
+        for label in ("CloudDrive2", "WebDAV"):
             for status, kind in ((401, "unauthorized"), (403, "permission"), (429, "rate_limited")):
-                result = RcloneClient._openlist_probe_failure(f"HTTP {status} PRIVATE_SECRET", "target", label=label)
+                result = RcloneClient._probe_failure(f"HTTP {status} PRIVATE_SECRET", "target", label=label)
                 self.assertEqual(result.failure_kind, kind)
+                self.assertIn(label, result.detail)
                 self.assertNotIn("PRIVATE_SECRET", result.detail)

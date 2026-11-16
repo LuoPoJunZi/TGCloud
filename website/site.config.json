@@ -1,13 +1,13 @@
 {
-  "name": "TG2Cloud",
-  "version": "1.5.9",
-  "publishedVersion": "1.5.9",
-  "releaseStatus": "released",
-  "verifiedAt": "2026-11-15",
-  "repo": "https://github.com/LuoPoJunZi/TG2Cloud",
+  "name": "TGCloud",
+  "version": "0.0.1",
+  "publishedVersion": null,
+  "releaseStatus": "unreleased",
+  "verifiedAt": "2026-11-16",
+  "repo": "https://github.com/LuoPoJunZi/TGCloud",
   "upstreamRepo": "https://github.com/whyhhh20/TG115",
-  "siteUrl": "https://tg2cloud.pages.dev",
-  "description": "TG2Cloud 中文文档：通过私人 Telegram Bot，将文件自动转存到 CloudDrive2 或 OpenList 中挂载的云存储。",
+  "siteUrl": "",
+  "description": "TGCloud 0.0.1：将 Telegram 文件通过 CloudDrive2 转存到自己挂载的云存储。当前使用完整本地源码。",
   "navigation": [
     {
       "title": "开始使用",
@@ -17,19 +17,19 @@
           "slug": "guide/introduction"
         },
         {
-          "title": "版本选择",
-          "slug": "guide/editions"
+          "title": "项目与历史",
+          "slug": "guide/project"
         },
         {
           "title": "部署前准备",
           "slug": "guide/prerequisites"
         },
         {
-          "title": "从零开始部署",
+          "title": "从源码开始",
           "slug": "guide/quick-start"
         },
         {
-          "title": "下载与校验",
+          "title": "本地包与发布状态",
           "slug": "download"
         }
       ]
@@ -38,27 +38,27 @@
       "title": "部署与配置",
       "items": [
         {
-          "title": "连接 VPS 与 SSH",
+          "title": "SSH 连接",
           "slug": "deploy/ssh"
-        },
-        {
-          "title": "域名访问与 HTTPS",
-          "slug": "deploy/domain-https"
         },
         {
           "title": "Telegram 配置",
           "slug": "deploy/telegram"
         },
         {
-          "title": "CloudDrive2 部署",
+          "title": "CloudDrive2 配置",
           "slug": "deploy/clouddrive2"
         },
         {
-          "title": "OpenList 部署",
-          "slug": "deploy/openlist"
+          "title": "Docker Compose",
+          "slug": "deploy/compose"
         },
         {
-          "title": "VPS 资源与存储预算",
+          "title": "HTTPS",
+          "slug": "deploy/domain-https"
+        },
+        {
+          "title": "资源预算",
           "slug": "deploy/resources"
         },
         {
@@ -66,108 +66,70 @@
           "slug": "deploy/verification"
         },
         {
-          "title": "外部 WebDAV",
+          "title": "外部只读访问",
           "slug": "deploy/external-webdav"
-        },
-        {
-          "title": "Docker Compose",
-          "slug": "deploy/compose"
-        },
-        {
-          "title": "Compose 管理",
-          "slug": "deploy/compose-management"
         }
       ]
     },
     {
-      "title": "日常使用",
+      "title": "使用与维护",
       "items": [
         {
-          "title": "第一次文件转存",
-          "slug": "usage/first-transfer"
-        },
-        {
-          "title": "Bot 命令速查",
+          "title": "Bot 与用户",
           "slug": "usage/commands"
         },
         {
-          "title": "任务状态与完成边界",
+          "title": "任务状态",
           "slug": "usage/status"
         },
         {
-          "title": "流式传输与速度",
+          "title": "首次转存",
+          "slug": "usage/first-transfer"
+        },
+        {
+          "title": "大文件流式",
           "slug": "usage/streaming"
         },
         {
-          "title": "监听与转存计划",
-          "slug": "usage/listening"
-        }
-      ]
-    },
-    {
-      "title": "运维与升级",
-      "items": [
-        {
-          "title": "状态、日志与重启",
+          "title": "本地管理",
           "slug": "operations/maintenance"
         },
         {
-          "title": "升级与修改配置",
+          "title": "本地源码升级",
           "slug": "operations/update"
         },
         {
-          "title": "备份与恢复边界",
+          "title": "备份与恢复",
           "slug": "operations/backup"
         }
       ]
     },
     {
-      "title": "问题排查",
+      "title": "参考",
       "items": [
         {
-          "title": "常见问题 FAQ",
-          "slug": "faq"
-        },
-        {
-          "title": "SSH 与管理页问题",
-          "slug": "troubleshooting/ssh"
-        },
-        {
-          "title": "WebDAV 错误排查",
-          "slug": "troubleshooting/webdav"
-        },
-        {
-          "title": "排队、空间与上传失败",
-          "slug": "troubleshooting/transfer"
-        }
-      ]
-    },
-    {
-      "title": "项目参考",
-      "items": [
-        {
-          "title": "配置与路径速查",
+          "title": "配置字段",
           "slug": "reference/config"
         },
         {
-          "title": "安全与隐私",
+          "title": "安全边界",
           "slug": "reference/security"
         },
         {
-          "title": "更新日志",
-          "slug": "changelog"
-        },
-        {
-          "title": "开发与贡献",
+          "title": "开发",
           "slug": "reference/development"
         },
         {
-          "title": "项目来源与致谢",
-          "slug": "reference/credits"
+          "title": "常见问题",
+          "slug": "faq"
         },
         {
-          "title": "文档来源与维护",
-          "slug": "reference/sources"
+          "title": "更新记录",
+          "slug": "changelog"
+        },
+        {
+          "title": "来源与档案",
+          "slug": "sources"
         }
       ]
     }

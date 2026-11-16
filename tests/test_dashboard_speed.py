@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock, patch
 
 from test_scenarios import make_service, make_settings
 
-from tg2cloud.domain.actors import user_scope
-from tg2cloud.monitoring.resources import ResourceSnapshot
-from tg2cloud.persistence.sqlite import TaskDB
+from tgcloud.domain.actors import user_scope
+from tgcloud.monitoring.resources import ResourceSnapshot
+from tgcloud.persistence.sqlite import TaskDB
 
 
 class DashboardSpeedTests(unittest.IsolatedAsyncioTestCase):
@@ -100,7 +100,7 @@ class DashboardSpeedTests(unittest.IsolatedAsyncioTestCase):
         self.service.snapshot = replace(self.service.snapshot, network_bytes_per_second=0)
         for backend, label in (("clouddrive2", "CloudDrive2"), ("openlist", "OpenList")):
             self.service.settings = replace(self.settings, storage_backend=backend, destination_label=label)
-            with patch("tg2cloud.telegram.views.time.strftime", return_value="19:03:25"):
+            with patch("tgcloud.telegram.views.time.strftime", return_value="19:03:25"):
                 admin = self.service._format_status()
                 with user_scope(123456789):
                     member = self.service._format_status()
