@@ -102,7 +102,7 @@ jobs:
           python3 .github/scripts/check_native_architecture.py --expected '${{ matrix.arch }}'
           python3 .github/scripts/build_payload.py --edition clouddrive2 --directory build/image-context
           docker build --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" --label "org.opencontainers.image.revision=${COMMIT}" --label "org.opencontainers.image.version=${VERSION}" -t tgcloud-bot:test build/image-context
-      - name: Test direct Compose setup and non-root configuration for both Editions
+      - name: Test CloudDrive2 Compose setup and non-root configuration
         env:
           TGCLOUD_TEST_COMPOSE_DOCKER: '1'
         run: python3 -B -m unittest discover -s tests -p test_compose_docker.py -v

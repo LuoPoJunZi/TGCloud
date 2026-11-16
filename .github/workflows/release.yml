@@ -151,7 +151,7 @@ jobs:
               bash -n install-webdav.sh
               shellcheck install-webdav.sh
             fi
-            shellcheck -x packaging/hooks/clouddrive2/*.sh packaging/hooks/openlist/*.sh tests/manage_harness.sh tests/maintenance_docker_stub.sh
+            shellcheck -x packaging/hooks/clouddrive2/*.sh tests/manage_harness.sh tests/maintenance_docker_stub.sh
           else
             bash -n install.sh
             bash -n install-lan.sh
@@ -213,10 +213,9 @@ jobs:
       - name: Validate edition Compose and build the runtime image
         run: |
           if [[ -f src/tgcloud/version.py ]]; then
-            python .github/scripts/build_payload.py --edition all --directory build/release-contexts
-            touch build/release-contexts/clouddrive2/.env build/release-contexts/openlist/.env
+            python .github/scripts/build_payload.py --edition clouddrive2 --directory build/release-contexts/clouddrive2
+            touch build/release-contexts/clouddrive2/.env
             docker compose -f build/release-contexts/clouddrive2/docker-compose.yml config --quiet
-            OPENLIST_ADMIN_PASSWORD=ci-only-placeholder docker compose -f build/release-contexts/openlist/docker-compose.yml config --quiet
             docker build -t tgcloud-bot:release-test build/release-contexts/clouddrive2
           else
             touch payload_clouddrive2/.env
@@ -226,7 +225,7 @@ jobs:
             docker build -t tgcloud-bot:release-test payload_clouddrive2
           fi
 
-      - name: Run both Edition candidate images as non-root
+      - name: Run CloudDrive2 candidate images as non-root
         timeout-minutes: 20
         env:
           TGCLOUD_TEST_DOCKER: "1"
