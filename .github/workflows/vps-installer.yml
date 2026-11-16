@@ -137,7 +137,21 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install lint tools only
         run: |
-          python -m pip install ruff==0.17.3 bandit==1.9.4
+          python - <<'PY'
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          locked = Path("requirements/dev.lock.txt").read_text(encoding="utf-8")
+          pins = []
+          for name in ("ruff", "bandit"):
+              matches = re.findall(rf"(?m)^{name}==[0-9.]+", locked)
+              if len(matches) != 1:
+                  raise ValueError(f"Expected exactly one locked {name} version")
+              pins.append(matches[0])
+          subprocess.run([sys.executable, "-m", "pip", "install", *pins], check=True)
+          PY
           sudo apt-get update
           sudo apt-get install -y shellcheck
       - name: Shell syntax and lint
