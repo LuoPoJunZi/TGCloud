@@ -579,12 +579,14 @@ class DataSafetyTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "posix", "Linux private ownership and safe directory removal")
     def test_full_cleanup_real_temporary_directories_not_real_docker_or_vps(self):
+        from local_project_fixture import installed
+
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary).resolve()
             products = {}
             for key, product in PRODUCTS.items():
                 products[key] = replace(product, install_dir=str(base / key), backup_dir=str(base / (key + "-backups")))
-                Path(products[key].install_dir).mkdir(mode=0o700)
+                installed(Path(products[key].install_dir))
                 backup = Path(products[key].backup_dir)
                 backup.mkdir(mode=0o700)
                 (backup / "config-abCD1234.tar.gz").touch(mode=0o600)

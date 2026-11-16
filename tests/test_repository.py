@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import re
+import runpy
 import shutil
 import subprocess
 import sys
@@ -180,7 +181,24 @@ class RepositoryContractTests(unittest.TestCase):
         for name in (".github/workflows/vps-installer.yml", ".github/CONTRIBUTING.md"):
             text = (ROOT / name).read_text(encoding="utf-8")
             with self.subTest(path=name):
-                self.assertEqual(re.findall(r"ruff==([0-9.]+)", text), versions)
+                self.assertNotRegex(text, r"ruff==[0-9.]+")
+                self.assertIn("requirements/dev.lock.txt", text)
+        workflow = (ROOT / ".github/workflows/vps-installer.yml").read_text(encoding="utf-8")
+        block = re.search(r"(?ms)^          python - <<'PY'\n(.*?)^          PY$", workflow)
+        self.assertIsNotNone(block, "CI lint tools must come from the lock file")
+        program = "\n".join(line[10:] for line in block[1].splitlines())
+        with tempfile.TemporaryDirectory() as private:
+            script = Path(private) / "ci-lint-tools.py"
+            script.write_text(program, encoding="utf-8")
+            for version in (versions[0], "999.0.0"):
+                synthetic = f"ruff=={version} \\\n    --hash=sha256:synthetic\nbandit==1.9.4\n"
+                with self.subTest(locked_ruff=version), patch.object(Path, "read_text", return_value=synthetic), patch.object(subprocess, "run") as install:
+                    runpy.run_path(str(script))
+                    install.assert_called_once_with([sys.executable, "-m", "pip", "install", f"ruff=={version}", "bandit==1.9.4"], check=True)
+            for invalid in ("bandit==1.9.4\n", "ruff==1.0.0\nruff==2.0.0\nbandit==1.9.4\n"):
+                with patch.object(Path, "read_text", return_value=invalid), patch.object(subprocess, "run") as install, self.assertRaises(ValueError):
+                    runpy.run_path(str(script))
+                install.assert_not_called()
 
     def test_ruff_has_no_parallel_root_configuration(self):
         for name in (".ruff.toml", "ruff.toml"):
