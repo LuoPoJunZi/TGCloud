@@ -45,7 +45,7 @@ def open_menu(manager, instance):
     service = ComposeWebDAV(manager)
     record = service.record()
     if record and record["instance_dir"] != str(instance.directory):
-        raise ValueError("此 Edition 外部 WebDAV 已绑定其他目录；不接管")
+        raise ValueError("此实例外部 WebDAV 已绑定其他目录；不接管")
     config.canonical(manager.root)
     previous = os.environ.get("TGCLOUD_MANAGER_MENU")
     try:

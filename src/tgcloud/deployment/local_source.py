@@ -135,7 +135,7 @@ def _relative(name: str) -> None:
 
 def _managed(name: str) -> bool:
     return (name.startswith("app/") and name.endswith(".py") or name in {
-        ".dockerignore", "Dockerfile", "docker-compose.yml", "requirements.txt", "LICENSE", "NOTICE", "README.md",
+        ".dockerignore", "Dockerfile", "docker-compose.yml", "requirements.txt", "LICENSE", "NOTICE", "README.md", "THIRD_PARTY_NOTICES.md",
         "backup_retention.sh", "preserve_runtime_config.sh", "repair_clouddrive_network.sh", "manage.sh", "remote_install.sh",
     })
 
@@ -185,7 +185,7 @@ def verify_installed(directory: Path, *, mode: str = "shell", expected_version: 
     try:
         value = json.loads(regular_bytes(directory / MARKER, limit=256 * 1024))
     except (OSError, ValueError) as exc:
-        raise ValueError("缺少 TGCloud 有效来源记录；不接管其他项目、TG115、OpenList 或未知实例") from exc
+        raise ValueError("缺少 TGCloud 有效来源记录；停止处理身份未知的实例") from exc
     keys = {"schema", "owner", "project", "mode", "edition", "version", "source_sha256", "files", "state"}
     if (not isinstance(value, dict) or set(value) != keys or type(value["schema"]) is not int or value["schema"] != 1
             or value["owner"] != OWNER or value["project"] != PROJECT_ID or value["mode"] != mode

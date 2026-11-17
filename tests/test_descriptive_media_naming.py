@@ -84,7 +84,7 @@ class DescriptiveMediaIngestionTests(unittest.IsolatedAsyncioTestCase):
                                reply=AsyncMock())
 
     async def test_new_contact_affixes_clean_both_editions_without_rewriting_original_audit(self):
-        for backend, offset in (("clouddrive2", 0), ("openlist", 10)):
+        for backend, offset in (("clouddrive2", 0), ("unsupported", 10)):
             self.service.settings = replace(self.settings, storage_backend=backend)
             for i, kind, suffix in ((1, "video", ".MP4"), (2, "photo", ".jpg"), (3, "document", ".pdf")):
                 original = "489155_com@示例账号【作品】城市旅行_123_net@sample" + suffix
@@ -129,7 +129,7 @@ class DescriptiveMediaIngestionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.db.get(4)["file_name"], "telegram-4.jpg")
 
     async def test_one_cover_and_one_video_share_base_without_kind_counters(self):
-        for backend, offset in (("clouddrive2", 0), ("openlist", 2)):
+        for backend, offset in (("clouddrive2", 0), ("unsupported", 2)):
             with self.subTest(backend=backend):
                 self.service.settings = replace(self.settings, storage_backend=backend)
                 video = self.message(offset + 1, "video", name="processed_www.example.test@sample.MP4", group=123 + offset)

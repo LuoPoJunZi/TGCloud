@@ -48,16 +48,16 @@ class SnapshotTests(unittest.TestCase):
     def fixture(self, key="clouddrive2"):
         product = replace(PRODUCTS[key], install_dir=str(self.root / key))
         directory = Path(product.install_dir)
-        for name in ("data", "config/rclone", "downloads", "logs", "openlist/data" if product.is_openlist else "clouddrive/config"):
+        for name in ("data", "config/rclone", "downloads", "logs", "clouddrive/config"):
             (directory / name).mkdir(parents=True, mode=0o700)
-        for name in ("data/tg115.db", "data/bot.session"):
+        for name in ("data/tgcloud.db", "data/bot.session"):
             with closing(sqlite3.connect(directory / name)) as conn, conn:
                 conn.execute("CREATE TABLE tasks (state TEXT)")
                 conn.execute("INSERT INTO tasks VALUES ('completed')")
         (directory / ".env").write_bytes(b"SYNTHETIC_BACKUP_FIXTURE=true\n")
         (directory / "docker-compose.yml").write_text("services: {}\n")
         (directory / "config/rclone/rclone.conf").write_text("[fixture]\n")
-        gateway = directory / ("openlist/data" if product.is_openlist else "clouddrive/config")
+        gateway = directory / ("clouddrive/config")
         (gateway / "settings.json").write_text("{}")
         (directory / "tgcloud-release.json").write_text('{"tag":"v1.4.2"}')
         (directory / "downloads/keep.bin").write_bytes(b"keep original")
@@ -134,7 +134,7 @@ class SnapshotTests(unittest.TestCase):
 
     def test_busy_task_refuses_before_any_container_mutation(self):
         instance, docker, target = self.fixture()
-        with closing(sqlite3.connect(instance.directory / "data/tg115.db")) as conn, conn:
+        with closing(sqlite3.connect(instance.directory / "data/tgcloud.db")) as conn, conn:
             conn.execute("UPDATE tasks SET state='streaming'")
         with self.assertRaisesRegex(ValueError, "活动传输"):
             self.create(instance, docker, target)
@@ -229,7 +229,7 @@ class SnapshotTests(unittest.TestCase):
         instance, docker, target = self.fixture()
         files = backup.selected_files(instance)
         before = backup.snapshot_bytes(files)
-        wal = instance.directory / "data/tg115.db-wal"
+        wal = instance.directory / "data/tgcloud.db-wal"
         wal.write_bytes(b"synthetic-size-only" * 100)
         self.assertEqual(backup.snapshot_bytes(files), before + wal.stat().st_size)
         wal.unlink()  # Only a synthetic sizing fixture, not a live SQLite WAL.

@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Test-only fake Docker and /opt boundary. All files stay in TG115_TEST_DIR.
+# Test-only fake Docker and /opt boundary. All files stay in TGCLOUD_TEST_DIR.
 set -Eeuo pipefail
 
 realpath() { printf '%s\n' /opt/tgcloud-test; }
-cd() { builtin cd "$TG115_TEST_DIR"; }
+cd() { builtin cd "$TGCLOUD_TEST_DIR"; }
 install() {
   [[ "${1:-}" != -d ]] || return 0
   command install "$@"
 }
-mktemp() { command mktemp "$TG115_TEST_DIR/backup-XXXXXXXX"; }
+mktemp() { command mktemp "$TGCLOUD_TEST_DIR/backup-XXXXXXXX"; }
 python3() { "$TGCLOUD_TEST_PYTHON" "$@"; }
 docker() {
-  printf '%s\n' "$*" >> "$TG115_TEST_DIR/calls"
+  printf '%s\n' "$*" >> "$TGCLOUD_TEST_DIR/calls"
   case "$*" in
     'compose config --quiet')
-      [[ "$TG115_TEST_MODE" != interrupt ]] || kill -TERM "$$"
-      [[ "$TG115_TEST_MODE" != invalid ]] || return 1
+      [[ "$TGCLOUD_TEST_MODE" != interrupt ]] || kill -TERM "$$"
+      [[ "$TGCLOUD_TEST_MODE" != invalid ]] || return 1
       ;;
     'compose config --format json') printf '%s\n' '{}' ;;
     'compose exec -T tgcloud-'*'-bot python -m app.deployment_check'*)
@@ -26,7 +26,7 @@ docker() {
         printf '%s\n' true
         return 0
       fi
-      if [[ "$TG115_TEST_MODE" == unhealthy ]] && [[ "$(<.env)" == new ]]; then
+      if [[ "$TGCLOUD_TEST_MODE" == unhealthy ]] && [[ "$(<.env)" == new ]]; then
         printf '%s\n' unhealthy
       else
         printf '%s\n' healthy
@@ -36,10 +36,10 @@ docker() {
   return 0
 }
 curl() {
-  if [[ "${TG115_TEST_ACTION:-}" == update ]]; then return 0; fi
+  if [[ "${TGCLOUD_TEST_ACTION:-}" == update ]]; then return 0; fi
   command curl "$@"
 }
 
 export INSTALL_DIR=/opt/tgcloud-test
 # shellcheck disable=SC1090
-source "$TG115_TEST_SCRIPT" "${TG115_TEST_ACTION:-apply-config}" "$TG115_TEST_CANDIDATE"
+source "$TGCLOUD_TEST_SCRIPT" "${TGCLOUD_TEST_ACTION:-apply-config}" "$TGCLOUD_TEST_CANDIDATE"

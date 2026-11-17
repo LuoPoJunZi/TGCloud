@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import io
 import json
 import os
 import shlex
@@ -16,7 +15,6 @@ from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
-from payload_fixture import historical_file
 from test_deployment import BASH, bash_path
 
 import tgcloud.cli.terminal as tgdep_terminal
@@ -182,7 +180,7 @@ class StateTests(unittest.TestCase):
                 shutil.rmtree(directory)  # only this test's private fixture
 
     def test_other_edition_https_does_not_block_selected_edition_but_selected_does(self):
-        self.root.joinpath("domains.json").write_text(json.dumps({"domains": {"openlist": {"domain": "files.example.test"}}}))
+        self.root.joinpath("domains.json").write_text(json.dumps({"domains": {"unsupported": {"domain": "files.example.test"}}}))
         self.root.joinpath("domains.json").chmod(0o600)
         lan.reject_https_route(PRODUCTS["clouddrive2"])
         self.root.joinpath("domains.json").write_text(json.dumps({"domains": {"clouddrive2": {"domain": "files.example.test"}}}))
@@ -339,11 +337,11 @@ class GatewayTests(unittest.TestCase):
         response = MagicMock()
         response.__enter__.return_value = response
         response.code = 200
-        response.headers.get.return_value = "openlist"
+        response.headers.get.return_value = "unsupported"
         opener = Mock()
         opener.open.return_value = response
         with patch.object(lan.urllib.request, "build_opener", return_value=opener) as build:
-            self.assertEqual(lan.request_status(PRODUCTS["clouddrive2"], IP, "/"), (200, "openlist"))
+            self.assertEqual(lan.request_status(PRODUCTS["clouddrive2"], IP, "/"), (200, "unsupported"))
         self.assertEqual(build.call_args.args[0].proxies, {})
         self.assertIsInstance(build.call_args.args[1], lan.NoRedirect)
         self.assertEqual(opener.open.call_args.args[0].full_url, f"http://{IP}:19798/")
@@ -678,26 +676,14 @@ class MainBootstrapTests(unittest.TestCase):
             names = set(local_source.content(source.root))
             self.assertIn("src/tgcloud/deployment/proxy/lan.py", names)
             self.assertNotIn(".env", names)
-            self.assertFalse(any("openlist" in name for name in names))
+            self.assertFalse(any("unsupported" in name for name in names))
         online.assert_not_called()
 
-    def test_bootstrap_rejects_failed_or_oversized_downloads_without_fallback(self):
-        content = historical_file("63ebaa37d042c3cb76d006df8e7b4d447cd8ef73", "install-lan.sh").decode("utf-8")
-        embedded = content.split("<<'PY' &\n", 1)[1].split("\nPY\n", 1)[0]
-        for error in (OSError("FAKE_DOWNLOAD_SECRET"), None):
-            with self.subTest(error=error), tempfile.TemporaryDirectory() as private:
-                opener = Mock()
-                if error:
-                    opener.open.side_effect = error
-                else:
-                    opener.open.return_value = io.BytesIO(b"x" * (2 * 1024 * 1024 + 1))
-                errors = io.StringIO()
-                with patch("sys.argv", ["bootstrap", private, "b" * 40]), patch("sys.stderr", errors), patch("urllib.request.build_opener", return_value=opener), self.assertRaises(SystemExit) as stopped:
-                    exec(compile(embedded, "LAN bootstrap", "exec"), {})  # noqa: S102 - repo-owned code, mocked networking
-                self.assertEqual(stopped.exception.code, 2)
-                self.assertEqual(opener.open.call_count, 1)
-                self.assertNotIn("FAKE_DOWNLOAD_SECRET", errors.getvalue())
-                self.assertFalse((Path(private) / "src/tgcloud/deployment/proxy/lan.py").exists())
+    def test_local_entry_rejects_incomplete_source_without_online_fallback(self):
+        from local_project_fixture import check_shell_entry
+        content = (ROOT / "install-lan.sh").read_text(encoding="utf-8")
+        self.assertNotRegex(content, r"https?://|curl|wget|installer_commit")
+        check_shell_entry(self, BASH, "install-lan.sh", "lan", ["--check"])
 
     def test_process_substitution_forwards_arguments_exit_and_cleans_own_directory(self):
         from local_project_fixture import check_shell_entry

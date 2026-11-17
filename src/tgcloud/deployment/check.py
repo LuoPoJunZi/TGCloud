@@ -26,10 +26,9 @@ def main() -> int:
         Settings.from_env(create_directories=False)
         if not args.validate_only:
             services = json.load(sys.stdin)["services"]
-            # Legacy TG115 compatibility for already-written Compose environment.
             service_name = os.getenv(
                 "TGCLOUD_COMPOSE_SERVICE",
-                os.getenv("TG115_COMPOSE_SERVICE", "tgcloud-clouddrive2-bot"),
+                "tgcloud-clouddrive2-bot",
             )
             desired = services[service_name]["environment"]
             changed = mismatched_keys(desired, dict(os.environ))

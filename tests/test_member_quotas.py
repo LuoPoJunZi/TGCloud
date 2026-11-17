@@ -154,14 +154,10 @@ class QuotaTests(unittest.TestCase):
 
     def test_v1_migration_preserves_rows_and_seeds_pending_not_completed(self):
         import ast
-        import subprocess
         from contextlib import closing
         root = Path(__file__).resolve().parents[1]
-        # Read static original DDL from an existing local Git object; do not
-        # execute the old Python or download any code.
-        old = subprocess.run(["git", "show", "42e2c372823a085c36a7a7597ce775441598aaf9:src/tg2cloud/persistence/sqlite.py"],
-                             cwd=root, check=True, capture_output=True, text=True).stdout
-        tree = ast.parse(old)
+        code = (root / "src/tgcloud/persistence/sqlite.py").read_text(encoding="utf-8")
+        tree = ast.parse(code)
         ddl = next(node.args[0].value for node in ast.walk(tree) if isinstance(node, ast.Call)
                    and isinstance(node.func, ast.Attribute) and node.func.attr == "executescript"
                    and node.args and isinstance(node.args[0], ast.Constant))

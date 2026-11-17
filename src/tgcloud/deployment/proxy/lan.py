@@ -103,7 +103,7 @@ def private_directory(path: Path) -> None:
 def container_name(product: ProductProfile) -> str:
     # The stable CD2 discovery helper matches any name containing clouddrive2.
     # Do not let this Nginx be mistaken for a second CloudDrive2 gateway.
-    return "tgcloud-lan-" + ("openlist" if product.is_openlist else "cd2")
+    return "tgcloud-lan-cd2"
 
 
 def state_for(product: ProductProfile, address: str) -> dict:
@@ -226,7 +226,7 @@ def reject_https_route(product: ProductProfile) -> None:
     if not isinstance(state, dict) or not isinstance(state.get("domains"), dict):
         raise ValueError("既有 HTTPS 状态无法核对，不改变访问模式")  # noqa: TRY004 - invalid external state
     if product.key in state["domains"]:
-        raise ValueError("该 Edition 已配置 HTTPS；内网脚本不转换、不移除已有域名路由")
+        raise ValueError("该实例已配置 HTTPS；内网脚本不转换、不移除已有域名路由")
 
 
 def inspect_lan(product: ProductProfile, session: LocalSession, inventory: set[str]) -> dict | None:
@@ -429,7 +429,7 @@ def preview(plan: Plan, release: local_source.LocalSource, log: SafeLog) -> None
         log("内网入口：" + ("本机检查通过" if plan.entry_healthy else "未就绪，需要确认后恢复；不会仅凭预检标记为可用"))
     if plan.action in {"install", "upgrade"}:
         log("复用正式安装器的 APT/Docker 依赖与备份/有限回退；可能更新系统软件包，所选 Bot 可能短暂停止。")
-    log("已有 .env、Session、SQLite、下载和网关数据保留；不改另一 Edition，不接管第三方服务。")
+    log("已有 .env、Session、SQLite、下载和网关数据保留；不改另一实例，不接管第三方服务。")
 
 
 def execute(plan: Plan, release, source, baseline, session, log, ui, *, verify=False) -> None:
@@ -506,9 +506,8 @@ def execute(plan: Plan, release, source, baseline, session, log, ui, *, verify=F
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description="TGCloud 独立局域网/NAS 向导；不改变 EXE/VPS HTTPS 模式")
-    result.add_argument("--source-dir", type=Path, default=Path(__file__).resolve().parents[4], help="完整本地源码目录；不从旧项目下载")
-    result.add_argument("--release", help=argparse.SUPPRESS)
-    result.add_argument("--edition", choices=["clouddrive2"], default="clouddrive2", help="兼容参数；仅支持 CloudDrive2")
+    result.add_argument("--source-dir", type=Path, default=Path(__file__).resolve().parents[4], help="完整 TGCloud 本地源码目录")
+    result.add_argument("--edition", choices=["clouddrive2"], default="clouddrive2", help="存储后端固定为 CloudDrive2")
     result.add_argument("--lan-ip", help="人工指定本机 RFC1918 IPv4；已有实例不隐式换地址")
     result.add_argument("--check", action="store_true", help="只读预检；首次需 --edition 和 --lan-ip")
     result.add_argument("--verify", action="store_true", help="另行确认 WebDAV 真写验收")
@@ -519,7 +518,7 @@ def parser() -> argparse.ArgumentParser:
 def main(argv=None, *, friendly=None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     args = parser().parse_args(arguments)
-    friendly = (not arguments or bool(args.release) and not args.check) if friendly is None else friendly
+    friendly = not arguments if friendly is None else friendly
     log, ui = InstallerLog(SafeLog(), friendly=friendly), None
     try:
         if args.check and (args.verify or args.show_credentials):
@@ -540,8 +539,6 @@ def main(argv=None, *, friendly=None) -> int:
             terminal.show_credentials(ui, product, instance.config, log)
             log("TGCLOUD_LAN_RESULT=NO_CHANGE；未修改配置或密码")
             return 0
-        if args.release:
-            raise ValueError("本地精简版未配置在线发布；请使用 --source-dir 指定完整源码")
         with local_source.snapshot(args.source_dir) as release:
             source = release.root
             baseline = source

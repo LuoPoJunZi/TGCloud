@@ -1,9 +1,7 @@
 """Offline manager bundles work without private archives or Bot dependencies."""
 from __future__ import annotations
 
-import hashlib
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -85,29 +83,18 @@ class HostBundleTests(unittest.TestCase):
             install.assert_called_once_with(source=ROOT)
             self.assertNotIn("本地管理命令已安装", str(output.call_args_list))
 
-    def test_original_project_manager_is_rejected_without_executing_old_code(self):
-        git = shutil.which("git")
-        self.assertIsNotNone(git)
-        commit = "42e2c372823a085c36a7a7597ce775441598aaf9"
-
-        def blob(name):
-            return subprocess.check_output([git, "-C", str(ROOT), "show", commit + ":" + name])
-
-        names = json.loads(blob("packaging/bootstrap-manifest.json"))["files"]
+    def test_foreign_manager_origin_is_rejected_without_executing_candidate(self):
+        from local_project_fixture import host_source
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary).resolve()
-            root.chmod(0o700)
-            hashes = {}
-            for name in names:
-                body = blob(name)
-                path = root / name
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(body)
-                hashes[name] = hashlib.sha256(body).hexdigest()
-            marker = {"schema": 1, "owner": "tgcloud.cli", "version": "1.4.2",
-                      "origin": {"kind": "local-source"}, "files": hashes}
-            (root / "installation.json").write_text(json.dumps(marker))
-            with patch.object(runtime.runpy, "run_path") as execute, self.assertRaisesRegex(ValueError, "不接管旧工具"):
-                runtime.verify(root)
+            directory = Path(temporary).resolve() / "manager"
+            host_source(directory)
+            marker = directory / "installation.json"
+            identity = json.loads(marker.read_text(encoding="utf-8"))
+            identity["origin"]["project"] = "unrelated"
+            marker.write_text(json.dumps(identity), encoding="utf-8")
+            marker.chmod(0o600)
+            before = marker.read_bytes()
+            with patch.object(runtime.runpy, "run_path") as execute, self.assertRaises(ValueError):
+                runtime.verify(directory)
             execute.assert_not_called()
-            self.assertFalse((root / "src/tgcloud/persistence").exists())
+            self.assertEqual(marker.read_bytes(), before)
