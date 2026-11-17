@@ -17,6 +17,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY LICENSE THIRD_PARTY_NOTICES.md /usr/share/doc/tgcloud/
 # Public source must be readable by UID 10001 even from a private CLI staging
 # directory. Keep root ownership: the runtime user must not modify this code.
 RUN chmod -R a+rX app

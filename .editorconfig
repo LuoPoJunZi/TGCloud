@@ -8,7 +8,7 @@ trim_trailing_whitespace = true
 indent_style = space
 indent_size = 4
 
-[*.{yml,yaml,json,js,mjs,css,sh}]
+[*.{yml,yaml,json,sh}]
 indent_size = 2
 
 [*.ps1]
@@ -18,12 +18,3 @@ end_of_line = crlf
 # Markdown may intentionally use two trailing spaces for a hard line break.
 trim_trailing_whitespace = false
 max_line_length = off
-
-[*.{svg,png,ico}]
-# Official brand assets are not formatting inputs.
-charset = unset
-end_of_line = unset
-insert_final_newline = unset
-trim_trailing_whitespace = unset
-indent_style = unset
-indent_size = unset

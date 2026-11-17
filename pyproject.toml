@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tgcloud"
 dynamic = ["version"]
-description = "Self-hosted Telegram to cloud transfers and Linux deployment tools"
+description = "Telegram file automation and management for CloudDrive2"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = []
@@ -34,4 +34,3 @@ pythonpath = ["src"]
 # The host CLI supports Python 3.10 even though the Bot container uses 3.12.
 target-version = "py310"
 respect-gitignore = true
-extend-exclude = ["website"]

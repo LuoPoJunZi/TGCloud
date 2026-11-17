@@ -37,7 +37,7 @@ class RehearsalTests(unittest.TestCase):
         (gateway / "settings.json").write_text("{}")
         with closing(sqlite3.connect(root / "data/bot.session")) as conn:
             conn.execute("CREATE TABLE synthetic_session (value TEXT)")
-        db = TaskDB(root / "data/tg115.db")
+        db = TaskDB(root / "data/tgcloud.db")
         try:
             for number, state in enumerate(("completed", "cancelled", "uploading", "streaming", "upload_failed_retained"), 1):
                 task, _ = db.create_task(chat_id=1, sender_id=1, message_id=number,
@@ -85,19 +85,20 @@ class RehearsalTests(unittest.TestCase):
         self.assertFalse(copy.exists())
         self.assertEqual(before, archive.read_bytes())
 
-    def test_openlist_archive_is_refused_before_database_startup(self):
+    def test_unsupported_archive_is_refused_before_database_startup(self):
         _, archive = self.fixture()
         with tarfile.open(archive, "r:gz") as tar:
             contents = {item.name: tar.extractfile(item).read() for item in tar}
         manifest = json.loads(contents["manifest.json"])
-        manifest["edition"] = "openlist"
+        manifest["edition"] = "unsupported"
         contents["manifest.json"] = json.dumps(manifest).encode()
-        retired = self.root / "retired-openlist.tar.gz"
+        retired = self.root / "retired-unsupported.tar.gz"
         with tarfile.open(retired, "w:gz") as tar:
             for name, content in contents.items():
                 item = tarfile.TarInfo(name)
                 item.size = len(content)
                 tar.addfile(item, io.BytesIO(content))
+        retired.chmod(0o600)
         before = retired.read_bytes()
         with patch.object(rehearsal, "task_count", side_effect=AssertionError("must not open database")), \
                 self.assertRaisesRegex(ValueError, "edition/version incompatible"):
@@ -114,7 +115,7 @@ class RehearsalTests(unittest.TestCase):
 
     def test_edition_future_version_task_limit_and_private_permissions_fail_closed(self):
         _, archive = self.fixture()
-        for edition in ("openlist", "cd2", "", "unknown"):
+        for edition in ("unsupported", "cd2", "", "unknown"):
             with self.subTest(edition=edition), self.assertRaises(ValueError):
                 rehearsal.rehearse(archive, self.root, edition)
         with self.assertRaises(ValueError):
@@ -141,7 +142,7 @@ class RehearsalTests(unittest.TestCase):
 
     def test_future_schema_refused_and_original_archive_preserved(self):
         source, archive = self.fixture()
-        with closing(sqlite3.connect(source / "data/tg115.db")) as conn:
+        with closing(sqlite3.connect(source / "data/tgcloud.db")) as conn:
             conn.execute(f"PRAGMA user_version={SCHEMA_VERSION + 1}")
         future = self.root / "future.tar.gz"
         bundle.pack(source, future, "clouddrive2", VERSION)
@@ -160,7 +161,7 @@ class RehearsalTests(unittest.TestCase):
 
     def test_original_schema_is_migrated_only_in_the_private_copy(self):
         source, _ = self.fixture()
-        original = source / "data/tg115.db"
+        original = source / "data/tgcloud.db"
         original.unlink()  # Only this test's disposable synthetic database.
         with closing(sqlite3.connect(original)) as conn:
             conn.execute("""CREATE TABLE tasks (
@@ -216,7 +217,7 @@ class RehearsalTests(unittest.TestCase):
         _, archive = self.fixture()
         with tarfile.open(archive, "r:gz") as tar:
             content = {item.name: tar.extractfile(item).read() for item in tar}
-        for name in ("data/tg115.db-wal", "data/bot.session-journal", "config/state.db-shm",
+        for name in ("data/tgcloud.db-wal", "data/bot.session-journal", "config/state.db-shm",
                      "downloads/private.bin", "rehearsal-downloads/private.bin", "untrusted.py"):
             with self.subTest(path=name):
                 manifest = json.loads(content["manifest.json"])

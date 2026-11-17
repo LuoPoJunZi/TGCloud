@@ -21,9 +21,9 @@ def contract(root: Path) -> dict:
             raise ValueError
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise ValueError("本地源码缺少受支持的外部 WebDAV 合同；TGCloud 在线发布尚未配置，不回退下载旧项目。") from exc
+        raise ValueError("本地源码缺少受支持的外部 WebDAV 合同；请使用完整 TGCloud 本地源码。") from exc
     if not isinstance(value, dict) or type(value.get("api")) is not int or value != CONTRACT:
-        raise ValueError("本地外部 WebDAV 协议不受支持；不接管旧项目代码。")
+        raise ValueError("本地外部 WebDAV 协议不受支持。")
     return value
 
 
@@ -50,7 +50,7 @@ def origin(value: object) -> dict:
             or value.get("kind") != "local-source" or value.get("project") != PROJECT_ID
             or not isinstance(value.get("source_sha256"), str)
             or not re.fullmatch(r"[0-9a-f]{64}", value["source_sha256"])):
-        raise ValueError("维护代码缺少此独立项目的完整本地来源；不接管旧项目或仅凭版本接管。")
+        raise ValueError("维护代码缺少 TGCloud 完整本地来源，停止处理。")
     return dict(value)
 
 
@@ -105,4 +105,4 @@ def source_identity(root: Path) -> dict:
 
 
 def download(destination: Path) -> tuple[Path, dict]:
-    raise ValueError("TGCloud 在线发布尚未配置；请使用与当前 CloudDrive2 实例同源的完整本地源码，不下载旧项目。")
+    raise ValueError("请使用与当前 CloudDrive2 实例同源的完整 TGCloud 本地源码。")

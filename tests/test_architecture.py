@@ -178,7 +178,7 @@ class CandidateTests(unittest.TestCase):
             build.assert_not_called()
             record.assert_not_called()
 
-    def test_native_ci_and_single_artifact_release_are_not_emulated(self):
+    def test_native_ci_and_release_bundles_are_packaged_once_without_emulation(self):
         tests = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
         cli = (ROOT / ".github/workflows/vps-installer.yml").read_text(encoding="utf-8")
         release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
@@ -187,7 +187,23 @@ class CandidateTests(unittest.TestCase):
             self.assertIn("ubuntu-24.04", text)
             self.assertNotIn("setup-qemu", text)
         self.assertIn('python: ["3.10", "3.13"]', cli)
-        self.assertEqual(release.count("if: matrix.arch == 'amd64'"), 2)
+        steps = {
+            block.splitlines()[0]: block
+            for block in release.split("\n      - name: ")[1:]
+        }
+        package_steps = {
+            "Package immutable source once and verify bootstrap pins and SHA256": "source_release.py build",
+            "Upload validated source package": "build/source-release/SHA256SUMS.txt",
+            "Package and verify the local-source Compose deployment": "compose_release.py bundle",
+            "Upload validated Compose package": "build/compose-release/COMPOSE-SHA256SUMS.txt",
+        }
+        self.assertEqual(
+            {name for name, block in steps.items() if "if: matrix.arch == 'amd64'" in block},
+            set(package_steps),
+        )
+        for name, command_or_asset in package_steps.items():
+            with self.subTest(step=name):
+                self.assertIn(command_or_asset, steps[name])
         self.assertIn("needs.linux-validation.result == 'success'", release)
         self.assertIn("fromJSON(needs.prepare.outputs.native_matrix)", release)
         self.assertIn('TGCLOUD_TEST_NATIVE_DOCKER: "1"', tests)

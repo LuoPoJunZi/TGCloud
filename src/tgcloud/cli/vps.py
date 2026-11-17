@@ -22,10 +22,9 @@ from tgcloud.deployment.profiles import PRODUCTS
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description="TGCloud CloudDrive2 本地源码安装 / 保留配置升级")
-    result.add_argument("--source-dir", type=Path, default=Path(__file__).resolve().parents[3], help="完整本地源码目录；不从旧项目下载")
-    result.add_argument("--release", help=argparse.SUPPRESS)
-    result.add_argument("--edition", choices=["clouddrive2"], default="clouddrive2", help="兼容参数；仅支持 CloudDrive2")
-    result.add_argument("--install-dir", help="仅支持单 Edition 的 /opt 下目录；不搬迁现有实例")
+    result.add_argument("--source-dir", type=Path, default=Path(__file__).resolve().parents[3], help="完整 TGCloud 本地源码目录")
+    result.add_argument("--edition", choices=["clouddrive2"], default="clouddrive2", help="存储后端固定为 CloudDrive2")
+    result.add_argument("--install-dir", help="仅支持单实例的 /opt 下目录；不搬迁现有实例")
     result.add_argument("--check", action="store_true", help="只读实例/版本/HTTPS检查；不收集秘密，不执行安装")
     result.add_argument("--proxy-mode", choices=("managed", "external_docker"), help="显式选择 HTTPS 入口；不隐式迁移已有模式")
     result.add_argument("--nginx-container", help="明确授权复用的外部 Docker Nginx 容器")
@@ -39,7 +38,7 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None, *, friendly: bool | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     args = parser().parse_args(arguments)
-    friendly = (not arguments or bool(args.release) and not args.check) if friendly is None else friendly
+    friendly = not arguments if friendly is None else friendly
     log = InstallerLog(SafeLog(), friendly=friendly)
     ui = None
     try:
@@ -59,8 +58,6 @@ def main(argv: list[str] | None = None, *, friendly: bool | None = None) -> int:
                 terminal.show_credentials(ui, instance.product, instance.config, log)
             log("TGCLOUD_CLI_RESULT=NO_CHANGE；凭据查看结束，未修改实例或配置")
             return 0
-        if args.release:
-            raise ValueError("本地精简版未配置在线发布；请使用 --source-dir 指定完整源码")
         with local_source.snapshot(args.source_dir) as release:
             source = release.root
             log("本地 CloudDrive2 源码：v" + release.version + "；SHA256：" + release.digest)

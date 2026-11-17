@@ -126,10 +126,11 @@ class EntryTests(unittest.TestCase):
         bundle = self.bundle()
         extra = bundle / ".env"
         extra.write_bytes(b"not-a-real-secret")
+        extra.chmod(0o600)
         with self.assertRaisesRegex(ValueError, "未知资源"):
             self.verify()
         extra.unlink()
-        (bundle / "unknown").mkdir()
+        (bundle / "unknown").mkdir(mode=0o700)
         with self.assertRaisesRegex(ValueError, "未知资源"):
             self.verify()
 
@@ -196,8 +197,12 @@ class EntryTests(unittest.TestCase):
         service.preflight = Mock(return_value=(self.instance, {}))
         original = service.install_runtime
         service.install_runtime = lambda source, identity: original(source, identity, launcher=self.command)
-        with patch.object(entry, "installed", side_effect=lambda: installed(launcher=self.command, root=self.root)), patch("tgcloud.addons.external_webdav.service.Service", return_value=service), patch.object(entry.config, "canonical"), patch.object(entry, "_run") as execute, patch.object(entry.releases, "download") as download:
-            entry.open_menu(self.instance, self.ui, self.messages.append)
+        previous = os.umask(0o022)
+        try:
+            with patch.object(entry, "installed", side_effect=lambda: installed(launcher=self.command, root=self.root)), patch("tgcloud.addons.external_webdav.service.Service", return_value=service), patch.object(entry.config, "canonical"), patch.object(entry, "_run") as execute, patch.object(entry.releases, "download") as download:
+                entry.open_menu(self.instance, self.ui, self.messages.append)
+        finally:
+            os.umask(previous)
         bundle = self.verify()
         self.assertIsNotNone(bundle)
         self.assertEqual(json.loads((bundle / "installation.json").read_text())["origin"], project_source().origin)

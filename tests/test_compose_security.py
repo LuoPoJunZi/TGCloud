@@ -28,12 +28,12 @@ class ComposeSecurityTests(unittest.TestCase):
                 rendered = local_bundle_files()["docker-compose.yml"].decode()
                 bot = rendered.split("  tgcloud-" + edition + "-bot:", 1)[1].split("  setup:", 1)[0]
                 self.assertNotIn("env_file:", bot)
-                for name in ("OPENLIST_ADMIN_PASSWORD", "DOCKER_HOST", "PYTHONPATH", "TGCLOUD_BIND_IP"):
+                for name in ("UNRELATED_ADMIN_PASSWORD", "DOCKER_HOST", "PYTHONPATH", "TGCLOUD_BIND_IP"):
                     self.assertNotIn(name + ":", bot)
                 for name in packaging.BOT_ENVIRONMENT:
                     self.assertIn("      " + name + ":", bot)
                 self.assertIn("MEMORY_HARD_MIN_MB: ${MEMORY_HARD_MIN_MB:-512}", bot)
-                self.assertNotIn("OPENLIST_ADMIN_PASSWORD:", rendered)
+                self.assertNotIn("UNRELATED_ADMIN_PASSWORD:", rendered)
 
     def test_legacy_render_refused_and_local_contract_is_versioned(self):
         with self.assertRaises(ValueError):

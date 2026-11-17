@@ -20,7 +20,7 @@ def _decode_b64(name: str, *, required: bool = True, default: str = "") -> str:
 
 
 def _decode_b64_compatible(primary: str, legacy: str, *, required: bool = True) -> str:
-    """Prefer the neutral WebDAV key while accepting v1.6.x CD2 keys."""
+    """Read WebDAV fields with supported CloudDrive2 field aliases."""
     name = primary if os.getenv(primary, "") else legacy
     return _decode_b64(name, required=required)
 
@@ -99,17 +99,16 @@ class Settings:
         ):
             raise RuntimeError("磁盘预算和安全线必须是大于 0 的有限数字")
 
-        # Legacy TG115 compatibility: only use old environment keys when new ones are absent.
         storage_backend = os.getenv(
             "TGCLOUD_STORAGE_BACKEND",
-            os.getenv("TG115_STORAGE_BACKEND", "clouddrive2"),
+            "clouddrive2",
         ).strip()
         if storage_backend != "clouddrive2":
             raise RuntimeError("存储后端仅支持 clouddrive2")
         destination_label, default_remote_name = "CloudDrive2", "cd2"
         rclone_remote_name = os.getenv(
             "TGCLOUD_RCLONE_REMOTE_NAME",
-            os.getenv("TG115_RCLONE_REMOTE_NAME", default_remote_name),
+            default_remote_name,
         ).strip()
         if rclone_remote_name != default_remote_name:
             raise RuntimeError("rclone 远端名称与存储后端不匹配")

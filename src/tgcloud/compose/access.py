@@ -67,7 +67,7 @@ def read_access(root: Path, edition: str, *, private_check: Callable[[Path], Non
 
 def choose_access(ui, edition: str, current: dict | None = None) -> dict:
     if edition not in PRODUCTS:
-        raise ValueError("未知 Edition")
+        raise ValueError("未知实例")
     current = validate_access(current, edition) if current is not None else None
     selected = next((key for key, mode in MODES.items() if current and mode == current["mode"]), "1")
     print("\n── 管理页访问方式 ──")

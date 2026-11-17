@@ -32,7 +32,7 @@ class BundleTests(unittest.TestCase):
             path = self.snapshot / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("private-fixture", encoding="utf-8")
-        for name in ("data/tg115.db", "data/bot.session", "clouddrive/config/data.db"):
+        for name in ("data/tgcloud.db", "data/bot.session", "clouddrive/config/data.db"):
             path = self.snapshot / name
             path.parent.mkdir(parents=True, exist_ok=True)
             with closing(sqlite3.connect(path)) as conn:
@@ -41,11 +41,11 @@ class BundleTests(unittest.TestCase):
         self.archive = self.root / "bundle.tar.gz"
 
     def test_bundle_records_coverage_and_drills_without_changing_source(self):
-        before = (self.snapshot / "data/tg115.db").read_bytes()
+        before = (self.snapshot / "data/tgcloud.db").read_bytes()
         pack(self.snapshot, self.archive, "clouddrive2", "1.2.0")
         result = preflight(self.archive, self.root, "clouddrive2", "1.2.1")
         self.assertEqual(result["files"], 7)
-        self.assertEqual((self.snapshot / "data/tg115.db").read_bytes(), before)
+        self.assertEqual((self.snapshot / "data/tgcloud.db").read_bytes(), before)
         self.assertFalse(list(self.root.glob("tgcloud-restore-check-*")))
         with tarfile.open(self.archive) as tar:
             manifest = json.load(tar.extractfile("manifest.json"))
@@ -71,10 +71,10 @@ class BundleTests(unittest.TestCase):
             pack(self.snapshot,self.archive,"clouddrive2","1.4.8")
 
     def test_corrupt_database_and_live_sidecar_fail_before_bundle(self):
-        (self.snapshot / "data/tg115.db-wal").write_bytes(b"fixture")
+        (self.snapshot / "data/tgcloud.db-wal").write_bytes(b"fixture")
         with self.assertRaises(ValueError):
             pack(self.snapshot, self.archive, "clouddrive2", "1.2.0")
-        (self.snapshot / "data/tg115.db-wal").unlink()
+        (self.snapshot / "data/tgcloud.db-wal").unlink()
         (self.snapshot / "data/bot.session").write_bytes(b"truncated")
         with self.assertRaises(sqlite3.DatabaseError):
             pack(self.snapshot, self.archive, "clouddrive2", "1.2.0")
@@ -82,26 +82,26 @@ class BundleTests(unittest.TestCase):
 
     def test_cross_edition_downgrade_and_low_space_rejected(self):
         pack(self.snapshot, self.archive, "clouddrive2", "1.2.0")
-        for edition, target in (("openlist", "1.2.0"), ("unknown", "1.2.0"), ("clouddrive2", "1.1.0"), ("clouddrive2", "2.0.0")):
+        for edition, target in (("unsupported", "1.2.0"), ("unknown", "1.2.0"), ("clouddrive2", "1.1.0"), ("clouddrive2", "2.0.0")):
             with self.subTest(edition=edition, target=target), self.assertRaises(ValueError):
                 preflight(self.archive, self.root, edition, target)
         with patch("tgcloud.persistence.bundle.shutil.disk_usage", return_value=SimpleNamespace(free=1)), self.assertRaises(ValueError):
             preflight(self.archive, self.root, "clouddrive2", "1.2.0")
 
-    def test_invalid_backends_and_openlist_manifest_are_rejected_without_extraction(self):
-        for edition in ("openlist", "unknown", "", "cd2"):
+    def test_invalid_backends_and_unsupported_manifest_are_rejected_without_extraction(self):
+        for edition in ("unsupported", "unknown", "", "cd2"):
             with self.subTest(edition=edition), self.assertRaises(ValueError):
                 pack(self.snapshot, self.archive, edition, "1.2.0")
             self.assertFalse(self.archive.exists())
         pack(self.snapshot, self.archive, "clouddrive2", "1.2.0")
         with tarfile.open(self.archive) as tar:
             entries = [(member, tar.extractfile(member).read()) for member in tar if member.isfile()]
-        candidate = self.root / "openlist.tar.gz"
+        candidate = self.root / "unsupported.tar.gz"
         with tarfile.open(candidate, "w:gz") as tar:
             for member, data in entries:
                 if member.name == "manifest.json":
                     manifest = json.loads(data)
-                    manifest["edition"] = "openlist"
+                    manifest["edition"] = "unsupported"
                     data = json.dumps(manifest).encode()
                     member.size = len(data)
                 tar.addfile(member, io.BytesIO(data))
@@ -200,7 +200,7 @@ class CloudRollbackTests(unittest.TestCase):
         self.prefix = script.split('[[ "$(id -u)" -eq 0 ]]', 1)[0]
 
     def run_rollback(self, mode="ok", extra=""):
-        before = 'OLD_IMAGE_ID=old-bot\nOLD_IMAGE_TAG=old-bot:latest\nDATABASE_BACKUP="$test_root/good.db"\nDATABASE_NAME=tg115.db\n' + extra
+        before = 'OLD_IMAGE_ID=old-bot\nOLD_IMAGE_TAG=old-bot:latest\nDATABASE_BACKUP="$test_root/good.db"\nDATABASE_NAME=tgcloud.db\n' + extra
         with patch.object(shell_fixture, "PREFIX", self.prefix):
             return self.fixture.execute("rollback_install\n", mode=mode, before=before)
 

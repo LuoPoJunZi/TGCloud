@@ -98,7 +98,7 @@ class DashboardSpeedTests(unittest.IsolatedAsyncioTestCase):
 
     def test_both_editions_share_compact_member_and_admin_text_without_extra_labels(self):
         self.service.snapshot = replace(self.service.snapshot, network_bytes_per_second=0)
-        for backend, label in (("clouddrive2", "CloudDrive2"), ("openlist", "OpenList")):
+        for backend, label in (("clouddrive2", "CloudDrive2"),):
             self.service.settings = replace(self.settings, storage_backend=backend, destination_label=label)
             with patch("tgcloud.telegram.views.time.strftime", return_value="19:03:25"):
                 admin = self.service._format_status()

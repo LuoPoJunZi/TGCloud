@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
 import shutil
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,6 +25,7 @@ def load(name):
 
 
 planning, validation = load("prepare_release"), load("linux_validation")
+compose_release = load("compose_release")
 
 
 class PlanningTests(unittest.TestCase):
@@ -30,8 +33,7 @@ class PlanningTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
-        for name in ("src/tgcloud/version.py", "install.sh", "website/package.json",
-                     "website/package-lock.json", "website/site.config.json"):
+        for name in ("src/tgcloud/version.py", "install.sh"):
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, target)
@@ -52,9 +54,8 @@ class PlanningTests(unittest.TestCase):
         self.assertIn('+VERSION = "' + self.next + '"', diff)
         self.assertNotIn('install.sh', report["mechanical_files"])
         self.assertNotIn('+installer_commit', diff)
-        self.assertIn('"releaseStatus": "unreleased"', diff)
-        self.assertNotIn('+' + '  "publishedVersion": "' + self.next, diff)
-        self.assertEqual(len(report["release_gates"]), 5)
+        self.assertEqual(report["mechanical_files"], ["src/tgcloud/version.py"])
+        self.assertEqual(len(report["release_gates"]), 4)
 
     def test_rejects_same_old_and_invalid_versions(self):
         for value in (self.current, '0.0.0', 'v' + self.next, '01.2.3', '1.2.3; echo secret'):
@@ -107,15 +108,99 @@ class ValidationTests(unittest.TestCase):
         run.assert_called_once()
         self.assertFalse(run.call_args.kwargs['shell'])
 
-    def test_branch_and_release_share_current_checks_keep_historical_fallback(self):
+    def test_branch_and_release_use_current_checks_and_single_gateway(self):
         for name in ('tests.yml', 'release.yml'):
             text = (ROOT / '.github/workflows' / name).read_text(encoding='utf-8')
             for stage in ('shell', 'test', 'quality'):
                 self.assertIn('.github/scripts/linux_validation.py ' + stage, text)
+            # The real Compose integration consumes this local image; a
+            # different tag would silently attempt to pull a nonexistent one.
+            self.assertIn('docker build -t tgcloud-bot:test ', text)
         release = (ROOT / '.github/workflows/release.yml').read_text(encoding='utf-8')
-        self.assertIn('elif [[ -f src/tgcloud/version.py ]]', release)
-        self.assertIn('payload_clouddrive2/requirements.txt', release)
+        self.assertNotIn('payload_clouddrive2/', release)
+        self.assertIn('--edition clouddrive2', release)
         cli = (ROOT / '.github/workflows/vps-installer.yml').read_text(encoding='utf-8')
         for name in ('.github/scripts/prepare_release.py', '.github/scripts/linux_validation.py',
                      'tests/test_release_preparation.py', 'tests/test_proxy_rendering.py'):
             self.assertEqual(cli.count('      - "' + name + '"'), 2)
+
+    def test_release_uploads_both_verified_archives_without_registry_publication(self):
+        release = (ROOT / '.github/workflows/release.yml').read_text(encoding='utf-8')
+        for text in ('compose_release.py bundle', 'compose_release.py verify',
+                     'source_release.py verify', 'COMPOSE-SHA256SUMS.txt',
+                     'TGCloud-${RELEASE_TAG}-compose.tar.gz'):
+            self.assertIn(text, release)
+        bundle = (ROOT / '.github/workflows/compose-bundles.yml').read_text(encoding='utf-8')
+        for text in ('compose_release.py bundle', 'source_release.py verify', 'cmp "$file"'):
+            self.assertIn(text, bundle)
+        for text in ('docker push', 'publish-index', 'packages: write'):
+            self.assertNotIn(text, bundle)
+
+    def test_readme_online_entry_downloads_the_current_immutable_release(self):
+        version = planning.source_version(ROOT)
+        for name in ('README.md', 'README_EN.md', 'docs/install.md'):
+            text = (ROOT / name).read_text(encoding='utf-8')
+            self.assertIn('bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh)', text)
+        online = (ROOT / 'install.sh').read_text(encoding='utf-8')
+        self.assertIn('tgcloud_tag=v' + version, online)
+        self.assertIn('/releases/download/${tgcloud_tag}', online)
+        compose = (ROOT / 'docs/compose-guide.md').read_text(encoding='utf-8')
+        for text in ('TGCloud-v' + version + '-compose.tar.gz', 'sha256sum -c COMPOSE-SHA256SUMS.txt',
+                     '--strip-components=1 -C deployment', 'sudo docker compose run', 'sudo docker compose up'):
+            self.assertIn(text, compose)
+
+
+class ComposeReleaseTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        private = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(private.cleanup)
+        cls.tag = 'v' + planning.source_version(ROOT)
+        cls.original = Path(private.name).resolve() / 'release'
+        cls.metadata = compose_release.build(ROOT, cls.original, cls.tag)
+
+    def setUp(self):
+        private = tempfile.TemporaryDirectory()
+        self.addCleanup(private.cleanup)
+        self.directory = Path(private.name).resolve() / 'assets'
+        shutil.copytree(self.original, self.directory)
+
+    def test_stable_archive_has_complete_local_source_and_required_notices(self):
+        info = compose_release.verify(self.directory, self.tag)
+        self.assertEqual(info, self.metadata)
+        self.assertTrue(info['image'].startswith('tgcloud-local:'))
+        self.assertIn('LICENSE', info['files'])
+        self.assertIn('THIRD_PARTY_NOTICES.md', info['files'])
+        self.assertEqual({p.name for p in self.directory.iterdir()},
+                         {compose_release.artifact_name(self.tag), 'COMPOSE-SHA256SUMS.txt'})
+
+    def test_checksum_mismatch_is_rejected(self):
+        path = self.directory / compose_release.artifact_name(self.tag)
+        with path.open('ab') as writer:
+            writer.write(b'tampered')
+        with self.assertRaisesRegex(ValueError, 'checksum'):
+            compose_release.verify(self.directory, self.tag)
+
+    def test_archive_traversal_is_rejected_even_with_matching_checksum(self):
+        path = self.directory / compose_release.artifact_name(self.tag)
+        with tarfile.open(path, 'w:gz') as archive:
+            member = tarfile.TarInfo('bundle/../outside')
+            member.size = 1
+            archive.addfile(member, io.BytesIO(b'x'))
+        (self.directory / 'COMPOSE-SHA256SUMS.txt').write_text(
+            hashlib.sha256(path.read_bytes()).hexdigest() + '  ' + path.name + '\n', encoding='ascii')
+        with self.assertRaises(ValueError):
+            compose_release.verify(self.directory, self.tag)
+
+    def test_output_and_existing_assets_are_not_overwritten(self):
+        with self.assertRaises(FileExistsError):
+            compose_release.build(ROOT, self.directory, self.tag)
+
+    def test_tag_and_extra_asset_mismatches_are_rejected(self):
+        for tag in ('0.0.1', 'v01.0.1', 'v0.0.1;id', 'v0.0.1-rc.0'):
+            with self.subTest(tag=tag), self.assertRaises(ValueError):
+                compose_release.artifact_name(tag)
+        self.assertEqual(compose_release.tag_version('v0.0.1-rc.1'), '0.0.1')
+        (self.directory / 'unknown.txt').write_text('unexpected', encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'asset set'):
+            compose_release.verify(self.directory, self.tag)

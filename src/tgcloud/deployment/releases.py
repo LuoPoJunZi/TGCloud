@@ -10,7 +10,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from tgcloud.deployment.compatibility import literal_version
+from tgcloud.deployment.versioning import literal_version
 
 API = "https://api.github.com/repos/LuoPoJunZi/TGCloud"
 TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
@@ -24,21 +24,6 @@ class ReleaseLookupError(RuntimeError):
     def __init__(self, message: str, *, status: int | None = None):
         super().__init__(message)
         self.status = status
-
-
-def download_baseline(client, tag: str, destination: Path, log) -> Path:
-    from tgcloud.deployment import baselines
-
-    if not TAG.fullmatch(tag):
-        raise ValueError("历史基线必须是正式版本")
-    record = baselines.CATALOG.get(tag)
-    if record:
-        release = Release(tag, record["commit"])
-        source = client.download(release, destination)
-        baselines.verify(source, tag, release.commit)
-        log("历史源码基线：" + tag + "；本版可信目录核验通过（仍需比对实例文件）")
-        return source
-    return client.download(client.resolve(tag), destination)
 
 
 def validate_public_url(url: str) -> None:

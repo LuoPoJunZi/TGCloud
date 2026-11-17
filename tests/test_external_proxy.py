@@ -77,7 +77,7 @@ class ConfigurationTests(unittest.TestCase):
         from dataclasses import replace
         value = state_with_route(state(), CLOUDDRIVE2_PRODUCT, "cd.example.com")
         with self.assertRaises(ValueError):
-            state_with_route(value, replace(CLOUDDRIVE2_PRODUCT, key="openlist"), "ol.example.com")
+            state_with_route(value, replace(CLOUDDRIVE2_PRODUCT, key="unsupported"), "ol.example.com")
         self.assertEqual(certificate_domains(value), ("cd.example.com",))
         remaining = state_without_route(value, "clouddrive2")
         self.assertEqual(remaining["entry"], value["entry"])
@@ -120,10 +120,10 @@ class ConfigurationTests(unittest.TestCase):
             self.assertFalse(conflicting_names(files, "new.example.com", set(files)))
 
     def test_same_basename_elsewhere_not_trusted(self):
-        files = {"/a/tgcloud-openlist.conf": "own", "/b/tgcloud-openlist.conf": "foreign"}
-        digest = global_digest(files, {"/a/tgcloud-openlist.conf"})
-        files["/b/tgcloud-openlist.conf"] = "changed"
-        self.assertNotEqual(digest, global_digest(files, {"/a/tgcloud-openlist.conf"}))
+        files = {"/a/tgcloud-unsupported.conf": "own", "/b/tgcloud-unsupported.conf": "foreign"}
+        digest = global_digest(files, {"/a/tgcloud-unsupported.conf"})
+        files["/b/tgcloud-unsupported.conf"] = "changed"
+        self.assertNotEqual(digest, global_digest(files, {"/a/tgcloud-unsupported.conf"}))
 
     def test_both_gateway_networks_persist_bot_unchanged(self):
         for edition in ("clouddrive2",):
@@ -312,7 +312,7 @@ class LifecycleTests(unittest.TestCase):
     def test_dav_bootstrap_never_replaces_same_edition_management(self):
         value = self.target()
         value["external_webdav"]["clouddrive2"] = {"kind": "external_webdav", "owner": "tgcloud.external_webdav",
-            "edition": "clouddrive2", "instance_dir": "/opt/tgcloud-clouddrive2", "domain": "dav.example.com", "enabled": True,
+            "edition": "clouddrive2", "instance_dir": "/opt/tgcloud", "domain": "dav.example.com", "enabled": True,
             "backend_port": 19798, "auth_file": "external-auth/clouddrive2.htpasswd"}
         for domain in ("cd.example.com", "dav.example.com"):
             self.adapter.entry["certificates"][domain] = self.adapter.certificate_record(domain)
@@ -328,7 +328,7 @@ class LifecycleTests(unittest.TestCase):
         self.adapter.copy_auth = Mock()
         value = self.target()
         value["external_webdav"]["clouddrive2"] = {"kind": "external_webdav", "owner": "tgcloud.external_webdav",
-            "edition": "clouddrive2", "instance_dir": "/opt/tgcloud-clouddrive2", "domain": "dav.example.com", "enabled": True,
+            "edition": "clouddrive2", "instance_dir": "/opt/tgcloud", "domain": "dav.example.com", "enabled": True,
             "backend_port": 19798, "auth_file": "external-auth/clouddrive2.htpasswd"}
         for domain in ("cd.example.com", "dav.example.com"):
             self.adapter.entry["certificates"][domain] = self.adapter.certificate_record(domain)
