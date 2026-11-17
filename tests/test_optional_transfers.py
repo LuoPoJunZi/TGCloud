@@ -28,7 +28,7 @@ class OptionalTransferTests(unittest.IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.settings = make_settings(Path(self.temp.name))
-        self.db = TaskDB(self.settings.data_dir / "tg115.db")
+        self.db = TaskDB(self.settings.data_dir / "tgcloud.db")
         self.addCleanup(self.db.close)
         self.zone = patch.dict(os.environ, {"TZ": "UTC"})
         self.zone.start()

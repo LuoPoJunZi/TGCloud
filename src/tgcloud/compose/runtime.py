@@ -53,7 +53,7 @@ def metadata(root: Path, *, expected_version: str | None = VERSION) -> dict:
             or not isinstance(value.get("source_sha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", value["source_sha256"])
             or value.get("image") != packaging.image_name(value["source_sha256"])
             or not isinstance(value.get("files"), dict)):
-        raise ComposeError("仅接受当前项目的 CD2 本地源码 Compose format4；不接管旧官方包或 OpenList")
+        raise ComposeError("需要完整的 TGCloud CloudDrive2 本地源码 Compose format4 部署包")
     releases.verify_contents(root, value)
     return value
 
@@ -125,7 +125,7 @@ def validate_config(root, config, edition):
     validate_resources(config)
     if (config.get("TGCLOUD_INSTALL_MODE") != "compose"
             or config.get("TGCLOUD_STORAGE_BACKEND") != edition):
-        raise ComposeError("配置不属于此 Compose Edition，停止")
+        raise ComposeError("配置不属于此 Compose实例，停止")
     lan_address(config.get("TGCLOUD_BIND_IP", "127.0.0.1"))
     with environment(config):
         settings = Settings.from_env(create_directories=False)
@@ -273,7 +273,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="TGCloud Compose 交互初始化与离线维护")
     parser.add_argument("action", choices=("setup", "check", "credentials", "backup"))
     parser.add_argument("--offline-confirmed", action="store_true",
-                        help="已人工停止此 Edition 的 Bot 和网关；仅供离线备份")
+                        help="已人工停止此实例的 Bot 和网关；仅供离线备份")
     args = parser.parse_args(argv)
     try:
         if os.name != "posix" or os.geteuid() != 0:
@@ -299,7 +299,7 @@ def main(argv=None):
                 saved_config(root, info["edition"])
                 if args.action == "backup":
                     if not args.offline_confirmed:
-                        raise ComposeError("先停止此 Edition 的 Bot 和网关，再使用 --offline-confirmed")
+                        raise ComposeError("先停止此实例的 Bot 和网关，再使用 --offline-confirmed")
                     backup = root / "backups"
                     if (backup.is_symlink() or backup.resolve() != backup.absolute()
                             or not os.path.samefile(backup, "/backups")):

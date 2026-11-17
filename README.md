@@ -1,47 +1,79 @@
-<p align="center"><img src="assets/brand/tgcloud-logo.svg" width="560" alt="TGCloud"></p>
-
 # TGCloud
 
-将 Telegram 文件转存到自己挂载的云存储。当前版本 **0.0.1（本地整理版，未发布）**，仅支持 CloudDrive2。
+TGCloud 是面向 **CloudDrive2** 的 Telegram 文件自动化转存与管理工具。将文件发送给 Bot，或授权监听指定频道、群组，再通过 CloudDrive2 的 WebDAV 接口写入挂载的云存储。
 
-Telegram → 私人 Bot / 已授权监听 → rclone → CloudDrive2 WebDAV → 你的云存储
+当前版本为 **0.0.1**。[版本下载](https://github.com/LuoPoJunZi/TGCloud/releases/tag/v0.0.1)提供完整源码包和 Docker Compose 部署包及 SHA256 校验文件；Bot 镜像在部署主机本地构建。
 
-## 开始使用
+## 核心功能
 
-将完整源码放到 Linux 主机的独立目录，在源码目录选择所需入口：
+- 文件下载、队列调度、任务状态持久化与失败恢复，任务持久化到 SQLite。
+- 按规则分类和命名，结合原文件名与说明文字识别标题，提供本地命名预览。
+- 本地暂存与大文件流式传输，按 CPU、内存、磁盘余量调整传输窗口。
+- 管理员与成员权限、独立任务视图和成员配额。
+- 显式授权的频道／群组监听，来源筛选、目录与命名规则、转存计划确认。
+- CloudDrive2 WebDAV 验证、HTTPS 管理入口、可选外部只读访问。
+- 服务管理、脱敏日志、诊断报告、实例快照与隔离恢复演练。
+
+写入成功和远端大小复验不代表内容哈希一致或云盘官方最终入库；重要文件请在云盘官方客户端核对。
+
+## 运行环境
+
+受管部署支持原生 64 位 Debian／Ubuntu 的 AMD64 和 ARM64，使用 Docker Engine、Docker Compose v2；CloudDrive2 挂载需要 `/dev/fuse`。安装与宿主管理入口需要 Python 3.10+，Bot 镜像使用 Python 3.12。
+
+需要 Telegram API ID、API Hash、Bot Token、管理员用户 ID，以及已挂载云存储的 CloudDrive2 和专用 WebDAV 用户。Windows 和 macOS 可编辑源码、运行适用的测试；生产部署使用 Linux。
+
+## 一键启动安装向导
+
+在目标 Linux 主机执行：
 
 ```bash
-sudo bash install.sh       # 公网 HTTPS
-sudo bash install-lan.sh   # 可信内网
+git clone --depth 1 --branch v0.0.1 https://github.com/LuoPoJunZi/TGCloud.git TGCloud && cd TGCloud && sudo bash install.sh
 ```
 
-直接进入 TGCloud 的 CloudDrive2 管理菜单，无需选择版本。当前从完整本地源码安装；尚未发布在线安装脚本、Release 或 Bot 镜像。已有其他项目实例不会自动迁移或接管。
+需要 Git、Python 3.10+ 和 root／sudo，目标 `TGCloud` 源码目录须尚不存在。向导自动识别完整源码，只安装 CloudDrive2，逐项收集配置并展示计划。已有源码直接运行 `sudo bash install.sh`；管理命令为 `sudo tgcloud`。内网场景使用 `sudo bash install-lan.sh`。
 
-独立 Compose 从当前源码生成唯一的 CloudDrive2 部署包：
+完整步骤见[安装指南](docs/install.md)。默认实例目录为 `/opt/tgcloud`，请勿将其放进云挂载目录。
+
+## Docker Compose
+
+脚本安装与独立 Compose 选择一种部署方式即可。独立 Compose 的完整源码部署命令：
 
 ```bash
-python3 -B scripts/build_compose.py --output /absolute/new-compose-output
+git clone --depth 1 --branch v0.0.1 https://github.com/LuoPoJunZi/TGCloud.git TGCloud
+cd TGCloud
+python3 -B scripts/build_compose.py --output "$PWD/build/compose"
+cd build/compose/clouddrive2
+sudo bash manage.sh
 ```
 
-步骤见[安装指南](docs/install.md)、[Compose 指南](docs/compose-guide.md)和[文档目录](docs/README.md)。安装后的本地管理命令为 `tgcloud`。
+输出目录必须尚不存在。也可直接下载版本附件 `TGCloud-v0.0.1-compose.tar.gz` 并核验 `COMPOSE-SHA256SUMS.txt`，详见 [Compose 下载、初始化与启动命令](docs/compose-guide.md)。初始化后先完成 CloudDrive2 挂载与 WebDAV 配置，再启动 Bot。
 
-完成安装后查看 [Bot 与任务](docs/bot-guide.md)及[存储配置](docs/configuration-guide.md)。
+## 基础配置与首次使用
 
-## 保留的能力
+1. 在 Telegram 创建 Bot，并准备自己的 API ID、API Hash 和用户 ID。
+2. 通过安装向导填写身份、WebDAV 地址、账号、目标目录和暂存预算。
+3. 登录 CloudDrive2，完成云挂载并启用专用 WebDAV 用户。
+4. 从管理菜单执行“业务就绪检查”和“WebDAV 验收”。
+5. 私聊 Bot，发送一个小文件，用 `/queue` 或 `/tasks` 查看结果，再到云盘客户端核对。
 
-- 持久队列、去重、失败保留、取消及重启恢复。
-- 普通下载、大文件流式传输、背压和磁盘保护。
-- 私聊鉴权、管理员监听、来源访问检查和用户隔离。
-- 公网 HTTPS、可信内网、独立 Compose、备份与只读附加入口。
+配置由向导写入私有 `.env`。Base64 是编码，不是加密；数据库、Session、密码和备份不应进入公共仓库。
 
-CloudDrive2 接收和大小复验不等于云盘官方最终入库，也不等于内容哈希校验。仅转存你有权保存的内容；账号授权在自己的网关配置，不公开凭据、Session、数据库或备份。
+## 文档导航
 
-## 项目与历史
+- [完整文档索引](docs/README.md)
+- [安装部署](docs/install.md) · [Docker Compose](docs/compose-guide.md) · [配置参考](docs/configuration-guide.md)
+- [Bot 与任务](docs/bot-guide.md) · [分类与智能命名](docs/naming-guide.md) · [监听与筛选](docs/listening-guide.md)
+- [HTTPS 与 WebDAV](docs/network-guide.md) · [维护与卸载](docs/operations-guide.md)
+- [备份与恢复](docs/backup-and-recovery.md) · [安全说明](docs/security.md) · [开发与架构](docs/development.md)
 
-新项目地址为 [LuoPoJunZi/TGCloud](https://github.com/LuoPoJunZi/TGCloud)。当前仓库和文档使用 TGCloud 名称；新仓库上线、CI、发布和实机验收均须另行确认。
+## 常见问题
 
-旧项目教程、发布事实和验收记录保存在[历史档案](archive/README.md)。TGCloud 0.0.1 的本地完整回归检查现已通过；平台条件项和验证范围见[开发说明](docs/development.md)。历史验收不能代替本项目实机验收。
+**为什么安装入口不能单独下载运行？** 它需要同目录的 Python 源码和部署资源，使用完整 Git 工作副本即可。
 
-本项目承接原 [TG2Cloud](https://github.com/LuoPoJunZi/TG2Cloud) 的 CloudDrive2 实现，保留 [whyhhh20/TG115](https://github.com/whyhhh20/TG115) 上游致谢、原版权与 [MIT 许可证](LICENSE)。感谢 Telethon、rclone、Docker 与 CloudDrive2。
+**Bot 在线但任务不能上传？** 先检查 CloudDrive2 挂载、专用用户、目标目录和磁盘余量，再运行管理菜单中的就绪检查与 WebDAV 验收。
 
-[English](README_EN.md) · [更新记录](CHANGELOG.md) · [开发说明](docs/development.md)
+**大文件超过暂存预算怎么办？** 可申请流式传输，但仍受资源窗口、来源访问权限与目的端状态限制。更多问题见 [FAQ](docs/faq.md)。
+
+## 开源许可
+
+源码采用 [MIT 许可证](LICENSE)。第三方组件、原版权及其许可要求见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。CloudDrive2 使用条件以其官方条款为准。

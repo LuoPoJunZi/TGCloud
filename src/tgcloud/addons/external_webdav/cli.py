@@ -129,7 +129,7 @@ def perform(service, args) -> None:
             raise ValueError("尚未安装；请先运行 install。")
         service.preflight(item["instance_dir"], require_running=False)
         log("升级仅更新离线维护代码，不要求输入外部密码；访问状态和后台账号保持原状。")
-        source_path = Path(ui.ask("完整本地源码绝对目录（更新维护工具，不下载旧项目）"))
+        source_path = Path(ui.ask("完整 TGCloud 本地源码绝对目录"))
         if not source_path.is_absolute() or source_path.resolve() != source_path:
             raise ValueError("源码目录必须为不经过链接的绝对路径")
         if ui.confirm("确认核验本地源码并更新离线维护工具？"):

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Linux install/upgrade entry. Windows deployers are frozen at v1.2.1.
+# TGCloud Linux source installation and management entry.
 set -Eeuo pipefail
 umask 077
 
@@ -16,5 +16,5 @@ script_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 if [[ -f "$script_root/src/tgcloud/cli/commands.py" && -f "$script_root/scripts/run_source.py" ]]; then
   exec python3 -B "$script_root/scripts/run_source.py" install "$@"
 fi
-printf '需要本地精简版完整源码。请在源码目录运行此脚本；此入口不会下载旧的双版本项目。\n' >&2
+printf '需要完整的 TGCloud 源码目录，请在该目录运行此脚本。\n' >&2
 exit 2

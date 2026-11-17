@@ -139,7 +139,7 @@ def open_menu(instance, ui, log) -> None:
     from tgcloud.deployment.profiles import PRODUCTS
 
     if instance.product.key not in PRODUCTS or instance.present is not True:
-        raise ValueError("请先安装并核验当前 Edition，再打开外部 WebDAV 管理。")
+        raise ValueError("请先安装并核验当前实例，再打开外部 WebDAV 管理。")
     checked_directory(str(instance.directory))
     if os.name == "posix" and os.geteuid() != 0:
         raise ValueError("外部 WebDAV 管理需要 Linux root 权限。")

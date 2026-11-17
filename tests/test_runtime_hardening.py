@@ -176,7 +176,7 @@ class PrivateFileTests(unittest.TestCase):
     ):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            dbpath = root / "tg115.db"
+            dbpath = root / "tgcloud.db"
             db = TaskDB(dbpath)
             task, _ = db.create_task(
                 chat_id=1,
@@ -193,7 +193,7 @@ class PrivateFileTests(unittest.TestCase):
                 self.assertEqual(db.get(task["id"])["file_name"], "synthetic.bin")
                 self.assertEqual(before, dbpath.stat().st_ino)
                 if os.name == "posix":
-                    for p in (dbpath, root / "tg115.db-wal", root / "tg115.db-shm"):
+                    for p in (dbpath, root / "tgcloud.db-wal", root / "tgcloud.db-shm"):
                         if p.exists():
                             self.assertEqual(p.stat().st_mode & 0o777, 0o600)
             finally:

@@ -1,7 +1,6 @@
 """Stdlib-only src-layout, fingerprint and immutable bootstrap regressions."""
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import subprocess
@@ -13,7 +12,6 @@ from unittest.mock import patch
 
 from local_project_fixture import host_source, installed
 
-from tgcloud.deployment.compatibility import literal_version
 from tgcloud.deployment.fingerprints import (
     V2_PREFIX,
     deployed_fingerprint,
@@ -23,6 +21,7 @@ from tgcloud.deployment.instances import Instance
 from tgcloud.deployment.payload import build_payload, payload_sources
 from tgcloud.deployment.profiles import PRODUCTS
 from tgcloud.deployment.upgrade import assert_unmodified
+from tgcloud.deployment.versioning import literal_version
 from tgcloud.version import VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,19 +65,16 @@ class FingerprintTests(unittest.TestCase):
         second.write_bytes(a)
         self.assertNotEqual(old, fingerprint(self.root / "app"))
 
-    def test_legacy_algorithm_matches_flat_historical_manifest_exactly(self):
+    def test_flat_package_without_tgcloud_identity_is_rejected(self):
         self.write("app/z.py", b"Z = 2\n")
         self.write("app/a.py", b"A = 1\n")
-        manifest = "".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  app/{path.name}\n"
-                           for path in sorted((self.root / "app").glob("*.py")))
-        legacy = hashlib.sha256(manifest.encode()).hexdigest()
-        self.assertEqual(fingerprint(self.root / "app", legacy=True), legacy)
-        self.assertEqual(deployed_fingerprint(self.root / "app"), legacy)
-        self.assertNotEqual(fingerprint(self.root / "app"), legacy)
+        with self.assertRaisesRegex(ValueError, "identity marker missing"):
+            deployed_fingerprint(self.root / "app")
+        self.assertTrue(fingerprint(self.root / "app").startswith(V2_PREFIX))
 
     def test_missing_protocol_marker_does_not_trust_unknown_nested_instance(self):
         self.write("app/unknown/module.py")
-        with self.assertRaisesRegex(ValueError, "nested or unknown"):
+        with self.assertRaisesRegex(ValueError, "identity marker missing"):
             deployed_fingerprint(self.root / "app")
         self.write("app/tgcloud/deployment/fingerprints.py")
         self.assertEqual(deployed_fingerprint(self.root / "app"), fingerprint(self.root / "app"))
@@ -102,10 +98,9 @@ class FingerprintTests(unittest.TestCase):
 
 
 class SourceLayoutTests(unittest.TestCase):
-    def test_static_version_adapters_never_execute_old_or_new_code(self):
+    def test_static_version_reader_never_executes_source(self):
         for name, variable in (("src/tgcloud/version.py", "VERSION"),
-                               ("app/tgcloud/version.py", "VERSION"),
-                               ("app/version.py", "VERSION"), ("app/__init__.py", "__version__")):
+                               ("app/tgcloud/version.py", "VERSION")):
             with self.subTest(path=name), tempfile.TemporaryDirectory() as private:
                 root = Path(private)
                 path = root / name
@@ -120,7 +115,7 @@ class SourceLayoutTests(unittest.TestCase):
         cd2 = payload_sources(ROOT, PRODUCTS["clouddrive2"])
         core = {name for name in cd2 if name.startswith("app/")}
         self.assertEqual(set(PRODUCTS), {"clouddrive2"})
-        self.assertFalse(any("openlist" in name for name in cd2))
+        self.assertFalse(any("unsupported" in name for name in cd2))
         for name in core:
             self.assertTrue(cd2[name].is_file(), name)
         for name in ("app/tgcloud/transfer/streaming.py", "app/tgcloud/persistence/sqlite.py",

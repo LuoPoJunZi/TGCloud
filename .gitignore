@@ -1,9 +1,3 @@
-# Local private archives and maintenance evidence
-archive/local/
-
-# Private pre-0.0.1 history; never include in a future public export
-.local-archive/
-
 # Secrets and local configuration
 .env
 .env.*

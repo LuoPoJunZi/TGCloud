@@ -27,8 +27,6 @@ from tgcloud.config import Settings
 from tgcloud.deployment.profiles import CLOUDDRIVE2_PRODUCT, RELEASE_VERSION
 from tgcloud.deployment.resources import (
     GIB,
-    LEGACY_PROBE_BEGIN,
-    LEGACY_PROBE_END,
     PROBE_BEGIN,
     PROBE_END,
     VpsResources,
@@ -139,13 +137,12 @@ class VpsResourceRecommendationTests(unittest.TestCase):
         self.assertTrue(resources.docker_root_detected)
         self.assertEqual(resources.docker_storage_available_bytes, 42 * GIB)
 
-    def test_probe_prefers_current_boundary_and_accepts_legacy_output(self) -> None:
-        legacy = self.probe_output().replace(PROBE_BEGIN, LEGACY_PROBE_BEGIN).replace(
-            PROBE_END, LEGACY_PROBE_END
-        )
-        self.assertEqual(parse_probe_output(legacy).cpu_cores, 2)
+    def test_probe_rejects_foreign_boundaries_and_reads_current_output(self):
+        foreign = self.probe_output().replace(PROBE_BEGIN, "UNRELATED_BEGIN").replace(PROBE_END, "UNRELATED_END")
+        with self.assertRaises(ValueError):
+            parse_probe_output(foreign)
         current = self.probe_output().replace("CPU_CORES=2", "CPU_CORES=4")
-        self.assertEqual(parse_probe_output(legacy + "\n" + current).cpu_cores, 4)
+        self.assertEqual(parse_probe_output(foreign + "\n" + current).cpu_cores, 4)
 
 
     def test_probe_rejects_missing_or_duplicate_fields(self) -> None:
@@ -159,19 +156,19 @@ class VpsResourceRecommendationTests(unittest.TestCase):
 
     def test_probe_command_accepts_only_safe_install_path(self) -> None:
         command = build_probe_command(
-            "/opt/tgcloud-clouddrive2",
-            "/opt/tgcloud-clouddrive2-backups",
+            "/opt/tgcloud",
+            "/opt/tgcloud-backups",
         )
         self.assertIn(PROBE_BEGIN, command)
         self.assertIn("df -PB1", command)
         self.assertIn("timeout 5s du", command)
         self.assertIn("timeout 5s docker info", command)
-        self.assertIn("/opt/tgcloud-clouddrive2", command)
-        self.assertIn("/opt/tgcloud-clouddrive2-backups", command)
+        self.assertIn("/opt/tgcloud", command)
+        self.assertIn("/opt/tgcloud-backups", command)
         with self.assertRaisesRegex(ValueError, "安装目录"):
             build_probe_command(
-                "/opt/tgcloud-clouddrive2;touch /tmp/pwned",
-                "/opt/tgcloud-clouddrive2-backups",
+                "/opt/tgcloud;touch /tmp/pwned",
+                "/opt/tgcloud-backups",
             )
 
     def test_small_vps_prefers_stream_first_without_changing_defaults(self) -> None:
@@ -380,31 +377,28 @@ class SettingsTests(unittest.TestCase):
         }
 
     def test_only_cloud_drive_backend_and_remote_are_accepted(self) -> None:
-        for key in ("TGCLOUD_STORAGE_BACKEND", "TG115_STORAGE_BACKEND"):
-            for value in ("openlist", "cd2", "CloudDrive2", "", "unknown", "clouddrive2;bad"):
+        for key in ("TGCLOUD_STORAGE_BACKEND",):
+            for value in ("unsupported", "cd2", "CloudDrive2", "", "unknown", "clouddrive2;bad"):
                 with self.subTest(key=key, backend=value), \
                         patch.dict(os.environ, self.environment() | {key: value}, clear=True), \
                         self.assertRaisesRegex(RuntimeError, "clouddrive2"):
                     Settings.from_env(create_directories=False)
-        for key in ("TGCLOUD_RCLONE_REMOTE_NAME", "TG115_RCLONE_REMOTE_NAME"):
-            for value in ("openlist", "", "cd2;bad"):
+        for key in ("TGCLOUD_RCLONE_REMOTE_NAME",):
+            for value in ("unsupported", "", "cd2;bad"):
                 with self.subTest(key=key, remote=value), \
                         patch.dict(os.environ, self.environment() | {key: value}, clear=True), \
                         self.assertRaisesRegex(RuntimeError, "存储后端不匹配"):
                     Settings.from_env(create_directories=False)
 
-    def test_valid_legacy_backend_and_current_key_precedence_remain_compatible(self) -> None:
-        for extra in ({}, {"TG115_STORAGE_BACKEND": "clouddrive2", "TG115_RCLONE_REMOTE_NAME": "cd2"},
-                      {"TGCLOUD_STORAGE_BACKEND": "clouddrive2", "TG115_STORAGE_BACKEND": "openlist",
-                       "TGCLOUD_RCLONE_REMOTE_NAME": "cd2", "TG115_RCLONE_REMOTE_NAME": "openlist"}):
+    def test_backend_defaults_and_explicit_tgcloud_namespace(self):
+        for extra in ({}, {"TGCLOUD_STORAGE_BACKEND": "clouddrive2", "TGCLOUD_RCLONE_REMOTE_NAME": "cd2"},
+                      {"UNRELATED_STORAGE_BACKEND": "other", "UNRELATED_REMOTE_NAME": "other"}):
             with self.subTest(keys=tuple(extra)), patch.dict(os.environ, self.environment() | extra, clear=True):
                 settings = Settings.from_env(create_directories=False)
             self.assertEqual(settings.storage_backend, "clouddrive2")
             self.assertEqual(settings.destination_label, "CloudDrive2")
             self.assertEqual(settings.rclone_remote_name, "cd2")
-        with patch.dict(os.environ, self.environment() | {
-                "TGCLOUD_STORAGE_BACKEND": "openlist", "TG115_STORAGE_BACKEND": "clouddrive2"}, clear=True), \
-                self.assertRaises(RuntimeError):
+        with patch.dict(os.environ, self.environment() | {"TGCLOUD_STORAGE_BACKEND": "other"}, clear=True), self.assertRaises(RuntimeError):
             Settings.from_env(create_directories=False)
 
     def test_neutral_webdav_keys_prefer_current_nonempty_values_then_legacy(self) -> None:
@@ -430,7 +424,7 @@ class SettingsTests(unittest.TestCase):
     def test_policy_only_accepts_cloud_drive_or_missing_legacy_attribute(self) -> None:
         self.assertIsInstance(policy_for(SimpleNamespace()), CloudDrive2Commit)
         self.assertIsInstance(policy_for(SimpleNamespace(storage_backend="clouddrive2")), CloudDrive2Commit)
-        for backend in ("openlist", "unknown", "cd2", "", None, False):
+        for backend in ("unsupported", "unknown", "cd2", "", None, False):
             with self.subTest(backend=backend), self.assertRaises(ValueError):
                 policy_for(SimpleNamespace(storage_backend=backend))
 
@@ -546,7 +540,7 @@ class DatabaseTests(unittest.TestCase):
 
     def test_online_database_backup_includes_wal_and_passes_integrity_check(self) -> None:
         task = self.make_task(77, 10)
-        destination = self.root / "backups" / "tg115.db"
+        destination = self.root / "backups" / "tgcloud.db"
         backup_database(self.db.path, destination)
         with closing(sqlite3.connect(destination)) as copied:
             self.assertEqual(copied.execute("PRAGMA quick_check").fetchone()[0], "ok")
@@ -1223,7 +1217,7 @@ class DestinationVerificationTests(unittest.TestCase):
 
     def test_destination_verification_rejects_invalid_backend_before_any_io(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
-            for backend in ("openlist", "unknown", "", None):
+            for backend in ("unsupported", "unknown", "", None):
                 settings = SimpleNamespace(data_dir=Path(temp), storage_backend=backend)
                 client = self.FakeRclone()
                 with self.subTest(backend=backend), self.assertRaises(ValueError):
@@ -1508,7 +1502,7 @@ class PayloadTests(unittest.TestCase):
         self.assertIn("WORKDIR /opt/tgcloud", dockerfile)
         self.assertIn("groupadd --system --gid 10001 tgcloud", dockerfile)
         self.assertIn("--shell /usr/sbin/nologin tgcloud", dockerfile)
-        self.assertNotIn("tg115", dockerfile)
+        self.assertNotIn("unrelated", dockerfile)
         self.assertLess(dockerfile.index("COPY app ./app"), dockerfile.index("RUN chmod -R a+rX app"))
         self.assertLess(dockerfile.index("RUN chmod -R a+rX app"), dockerfile.index("USER 10001:10001"))
         self.assertNotIn("chmod -R 777", dockerfile)
@@ -1532,7 +1526,7 @@ class PayloadTests(unittest.TestCase):
     def test_new_log_name_does_not_rename_or_delete_old_logs(self) -> None:
         with tempfile.TemporaryDirectory() as private:
             directory = Path(private)
-            legacy = directory / "tg115.log"
+            legacy = directory / "unrelated.log"
             legacy.write_text("retained old log", encoding="utf-8")
             with patch("tgcloud.transfer.service.logging.getLogger"), patch("tgcloud.logging_setup.RotatingFileHandler") as handler:
                 setup_logging(SimpleNamespace(log_dir=directory))
@@ -1586,40 +1580,18 @@ class PayloadTests(unittest.TestCase):
         self.assertNotIn("get.docker.com", remote_install)
         self.assertIn("download.docker.com/linux/${ID}", remote_install)
 
-    def test_existing_clouddrive_is_migrated_and_hard_checked(self) -> None:
-        remote_install = (PAYLOAD / "remote_install.sh").read_text(encoding="utf-8")
-        repair = (PAYLOAD / "repair_clouddrive_network.sh").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("sed -i 's/\\r$//'", remote_install)
-        self.assertIn("{{.Names}}|{{.Image}}|{{.Ports}}", remote_install)
-        self.assertIn("tolower($2) ~ /cloudnas\\/clouddrive2", remote_install)
-        self.assertIn("拒绝自动修改", remote_install)
-        self.assertNotIn(
-            "tolower($0) ~ /clouddrive2/ || $0 ~ /:19798->/",
-            remote_install,
-        )
-        self.assertIn("repair_clouddrive_network.sh", remote_install)
-        self.assertLess(
-            repair.index("{{.Names}}|{{.Image}}|{{.Ports}}"),
-            repair.index("当前配置没有启用由 VPS 管理 CloudDrive2"),
-        )
-        self.assertIn('DEPLOY_CLOUDDRIVE2="${DEPLOY_CLOUDDRIVE2%$\'\\r\'}"', repair)
-        self.assertIn('CD2_NETWORK_MODE="$(', repair)
-        self.assertIn("{{.HostConfig.NetworkMode}}", repair)
-        self.assertIn('network_mode: " network_mode', repair)
-        self.assertIn("http://127.0.0.1:19798/dav", repair)
-        self.assertIn("for url_key in WEBDAV_URL_B64 CD2_WEBDAV_URL_B64", repair)
-        self.assertIn('CD2_ENDPOINT_HOST="127.0.0.1"', repair)
-        self.assertIn("recover_webdav_credentials", repair)
-        self.assertIn("/opt/tgcloud-clouddrive2-backups", repair)
-        self.assertIn("保留当前根目录设置", repair)
-        self.assertIn('docker network connect --alias "$CD2_MANAGED_CONTAINER"', repair)
-        self.assertNotIn("docker network connect --alias clouddrive2 tg115", repair)
-        self.assertIn("socket.create_connection((h,19798),5)", repair)
-        self.assertIn("python -m app.verify_destination", repair)
-        self.assertIn("TGCLOUD_REPAIR=SUCCESS", repair)
-        self.assertIn("remove_program_files", remote_install)
+    def test_managed_clouddrive_reuse_keeps_network_and_destination_checks(self):
+        remote = (PAYLOAD / "remote_install.sh").read_text(encoding="utf-8")
+        repair = (PAYLOAD / "repair_clouddrive_network.sh").read_text(encoding="utf-8")
+        self.assertIn("com.docker.compose.project.working_dir", remote)
+        self.assertIn("com.docker.compose.project.working_dir", repair)
+        self.assertLess(repair.index("com.docker.compose.project.working_dir"), repair.index('docker network create'))
+        self.assertNotIn("mapfile -t CD2_MATCHES", remote + repair)
+        for value in ('{{.HostConfig.NetworkMode}}', 'CD2_ENDPOINT_HOST="127.0.0.1"',
+                      'docker network connect --alias "$CD2_MANAGED_CONTAINER"',
+                      'socket.create_connection((h,19798),5)', 'python -m app.verify_destination', 'TGCLOUD_REPAIR=SUCCESS'):
+            self.assertIn(value, repair)
+        self.assertIn("remove_program_files", remote)
 
     def test_bot_container_is_non_root_and_restricted(self) -> None:
         compose = (PAYLOAD / "docker-compose.yml").read_text(encoding="utf-8")
@@ -1632,24 +1604,17 @@ class PayloadTests(unittest.TestCase):
         self.assertIn("USER 10001:10001", dockerfile)
         self.assertIn("chown -R 10001:10001", remote_install)
         self.assertIn("umask 077", remote_install)
-        self.assertIn('BACKUP_DIR="/opt/tgcloud-clouddrive2-backups"', remote_install)
+        self.assertIn('BACKUP_DIR="/opt/tgcloud-backups"', remote_install)
         self.assertIn('install -d -m 700 "$BACKUP_DIR"', remote_install)
 
-    def test_legacy_tg115_runtime_is_detected_without_destructive_migration(self) -> None:
-        remote_install = (PAYLOAD / "remote_install.sh").read_text(encoding="utf-8")
-        repair = (PAYLOAD / "repair_clouddrive_network.sh").read_text(
-            encoding="utf-8"
-        )
-        for script in (remote_install, repair):
-            self.assertIn("/opt/tg115", script)
-            self.assertIn("tg115-bot", script)
-            self.assertIn("tg115-clouddrive2", script)
-            self.assertIn("保留不动", script)
-            self.assertIn("重新检测", script)
-            self.assertNotIn("docker network connect --alias clouddrive2 tg115", script)
-            self.assertNotIn("docker network disconnect tg115", script)
-        self.assertIn("不会静默覆盖", remote_install)
-        self.assertIn("不会迁移、覆盖或修复", repair)
+    def test_gateway_hooks_target_current_names_and_reject_foreign_ownership(self):
+        remote = (PAYLOAD / "remote_install.sh").read_text(encoding="utf-8")
+        repair = (PAYLOAD / "repair_clouddrive_network.sh").read_text(encoding="utf-8")
+        for script in (remote, repair):
+            self.assertIn("com.docker.compose.project.working_dir", script)
+            self.assertIn("tgcloud-clouddrive2", script)
+            self.assertIn("固定端口 19798 被其他容器占用", script)
+        self.assertNotIn("mapfile -t CD2_MATCHES", remote + repair)
 
 
     def test_docker_build_context_excludes_secrets_and_runtime_data(self) -> None:

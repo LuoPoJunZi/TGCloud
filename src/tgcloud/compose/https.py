@@ -300,9 +300,9 @@ class ComposeProxyManager(DomainProxyManager):
                 raise runtime.ComposeError("共享路由与 Compose 归属清单不一致；停止")
         current = registry["instances"].get(self.product.key)
         if current and current["root"] != str(self.instance.root):
-            raise runtime.ComposeError("该 Edition 的共享路由属于另一 Compose 部署目录；不会接管")
+            raise runtime.ComposeError("该实例的共享路由属于另一 Compose 部署目录；不会接管")
         if self.product.key in state["domains"] and not current:
-            raise runtime.ComposeError("该 Edition 已有未登记给此 Compose 实例的路由；不会替换脚本或未知归属")
+            raise runtime.ComposeError("该实例已有未登记给此 Compose 实例的路由；不会替换脚本或未知归属")
         compose = root / "docker-compose.yml"
         if compose.exists() or compose.is_symlink():
             expected = render_compose(certificate_domains(state), external_auth=state["version"] == 2)
@@ -470,7 +470,7 @@ def configure(instance, manager, ui):
     current = read_access(instance.root, instance.product.key)
     plan = choose_access(ui, instance.product.key, current=current)
     if plan["mode"] == "local":
-        instance.log("此次未配置 HTTPS；已有 HTTPS 路由保持原状，需要关闭时请选择“移除本 Edition 路由”。")
+        instance.log("此次未配置 HTTPS；已有 HTTPS 路由保持原状，需要关闭时请选择“移除本实例路由”。")
         return
     if plan["mode"] == "external":
         if export_existing(instance, ui, domain=plan["domain"]) is not None:
@@ -480,7 +480,7 @@ def configure(instance, manager, ui):
     manager.guard()
     environment = manager.confirm_nat(domain, manager.probe(domain))
     manager._validate_environment(environment)
-    instance.log("将配置共享 Nginx + Certbot：" + domain + "；仅变更此 Edition 路由，保留其他域名和证书。")
+    instance.log("将配置共享 Nginx + Certbot：" + domain + "；仅变更此实例路由，保留其他域名和证书。")
     if ui.confirm("确认公开此管理页域名并申请 Let's Encrypt 证书"):
         instance.log(manager.configure(domain, email).message)
         atomic_private(instance.root / ACCESS_FILE, plan)
@@ -497,13 +497,13 @@ def run_action(action, instance, manager, ui):
         if report.state not in {"healthy", "not_configured"}:
             raise runtime.ComposeError("HTTPS 运行检查未通过；请核对上述结果")
     elif action == "renewal-dry-run":
-        if ui.confirm("确认执行此 Edition 的续期 dry-run（不会替换正式证书）"):
+        if ui.confirm("确认执行此实例的续期 dry-run（不会替换正式证书）"):
             instance.log(manager.renewal_dry_run())
     elif action == "proxy-backup":
         if ui.confirm("确认创建共享代理私密备份（包含证书私钥，仅保存在宿主机）"):
             instance.log(manager.proxy_backup())
     elif action == "remove":
-        if ui.confirm("确认仅移除此 Edition 的管理域名路由；保留证书及全部业务数据"):
+        if ui.confirm("确认仅移除此实例的管理域名路由；保留证书及全部业务数据"):
             instance.log(manager.remove().message)
     elif action == "export-existing":
         export_existing(instance, ui)

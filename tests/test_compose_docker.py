@@ -34,7 +34,7 @@ assert setup(Path('/workspace'),UI()) is False
 """
 CHECK = """import os;from pathlib import Path;from tgcloud.config import Settings
 assert os.geteuid()==10001
-assert 'OPENLIST_ADMIN_PASSWORD' not in os.environ
+assert 'UNRELATED_ADMIN_PASSWORD' not in os.environ
 assert 'DOCKER_HOST' not in os.environ
 s=Settings.from_env()
 p=s.data_dir/'synthetic-write-test';p.write_text('test');p.unlink()
@@ -78,7 +78,7 @@ class ComposeDockerTests(unittest.TestCase):
             if created:
                 self.run_command(["docker", "rm", identifier])
 
-    def test_both_bundles_setup_offline_and_bot_nonroot(self):
+    def test_clouddrive2_bundle_setup_offline_and_bot_nonroot(self):
         self.assertEqual(os.name, "posix")
         self.run_command(["docker", "info"])
         for edition, mode in ((edition, mode) for edition in PRODUCTS for mode in ("local", "managed")):
@@ -88,7 +88,8 @@ class ComposeDockerTests(unittest.TestCase):
                 setup = setup.replace("'任务暂存预算 GB':'1'", "'任务暂存预算 GB':'1','选择访问方式':'2','管理页域名（只填域名）':'panel.example.com'")
             setup += "\nimport json;assert json.loads(Path('/workspace/compose-access.json').read_text())['mode']==" + repr(mode)
             with self.subTest(edition=edition, mode=mode), tempfile.TemporaryDirectory(prefix="tgcloud-compose-ci-") as temp:
-                root = Path(temp)
+                root = Path(temp) / "bundle"
+                root.mkdir(mode=0o700)
                 if mode == "local":
                     self.check_actual_log_template(root, product)
                 from local_project_fixture import source
@@ -100,8 +101,9 @@ class ComposeDockerTests(unittest.TestCase):
                 override = {"services": {"setup": {"image": IMAGE}, product.bot_service: {
                     "image": IMAGE, "container_name": identifier, "mem_limit": "1g", "pids_limit": 128, "cpus": 0.5}},
                             "networks": {product.docker_network: {"name": identifier}}}
-                (root / "override.json").write_text(json.dumps(override))
-                compose = ["docker", "compose", "-p", identifier, "-f", str(root / "docker-compose.yml"), "-f", str(root / "override.json")]
+                override_path = Path(temp) / "override.json"
+                override_path.write_text(json.dumps(override))
+                compose = ["docker", "compose", "-p", identifier, "-f", str(root / "docker-compose.yml"), "-f", str(override_path)]
                 try:
                     self.run_command([*compose, "config", "--quiet"])
                     self.assertIn("HTTPS", self.run_command(["bash", str(root / "https.sh"), "--help"]))

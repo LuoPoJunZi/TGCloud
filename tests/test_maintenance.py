@@ -358,7 +358,7 @@ class ReleaseMetadataTests(unittest.TestCase):
             self.assertEqual(metadata["release_artifact"], "TGCloud-v9.0.0-source")
             self.assertFalse((root / "legacy").exists())
 
-    def test_release_rejects_online_fallback_and_disabled_old_pin(self):
+    def test_release_requires_local_dispatch_without_online_fallback(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             for name in ("install.sh", "install-lan.sh", "packaging/external-webdav.json"):
@@ -372,7 +372,7 @@ class ReleaseMetadataTests(unittest.TestCase):
                 release.linux_entries(root, RELEASE_VERSION)
             entry.write_bytes((ROOT / "install.sh").read_bytes())
             (root / "install-lan.sh").write_text('installer_commit=""\n', encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "immutable Linux entry pin"):
+            with self.assertRaisesRegex(ValueError, "invalid local-source Linux entry"):
                 release.linux_entries(root, RELEASE_VERSION)
 
     def test_workflow_uses_validated_tag_and_reuses_one_build(self):

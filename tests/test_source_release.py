@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import ast
-import gzip
 import hashlib
 import importlib.util
 import io
@@ -167,7 +166,7 @@ class SourceReleaseTests(unittest.TestCase):
                         dest.addfile(member, io.BytesIO())
                 path.write_bytes(result.getvalue())
                 (self.output / "SHA256SUMS.txt").write_text(hashlib.sha256(result.getvalue()).hexdigest() + "  " + path.name + "\n", encoding="ascii")
-                with self.assertRaisesRegex(ValueError, "retired|missing required|unsupported"):
+                with self.assertRaisesRegex(ValueError, "unexpected standalone|missing required|unsupported"):
                     package.verify(self.output, self.tag)
 
     def test_helper_manifest_cannot_omit_nested_code_or_escape_root(self):
@@ -190,11 +189,11 @@ class SourceReleaseTests(unittest.TestCase):
             for remote in ("installer_commit", "curl", "https://"):
                 self.assertNotIn(remote, text)
 
-    def test_unpublished_addon_cannot_ship_with_existing_old_helper_list(self):
-        (self.root / "install.sh").write_bytes(package.git(ROOT, "show", "83cabf8c734aa98f8475b0e6cdb18a4bea8469b3:install.sh"))
+    def test_download_only_entry_is_rejected_before_packaging(self):
+        (self.root / "install.sh").write_text('#!/bin/bash\ncurl https://example.invalid/bootstrap\n', encoding="utf-8")
         self.commit()
         commit = package.git(self.root, "rev-parse", "HEAD").decode().strip()
-        with self.assertRaisesRegex(ValueError, "stale bootstrap helper layout"):
+        with self.assertRaisesRegex(ValueError, "invalid local-source Linux entry"):
             package.validate_pins(self.root, commit)
 
     def test_online_fallback_cannot_pass_the_local_entry_contract(self):
@@ -206,44 +205,37 @@ class SourceReleaseTests(unittest.TestCase):
             package.validate_pins(self.root, commit)
 
 
-class HistoricalSourceReleaseTests(unittest.TestCase):
-    def test_original_api1_archive_is_rejected_even_with_valid_checksum(self):
-        tag = "v1.4.6"
-        commit = "2e18eba718df83beec3a9d0784ca8037125bdd20"
-        with tempfile.TemporaryDirectory() as private:
-            archive = gzip.compress(package.git(ROOT, "archive", "--format=tar", f"--prefix=TGCloud-{tag}/", commit), mtime=0)
-            root = Path(private)
-            name = package.artifact_name(tag)
-            (root / name).write_bytes(archive)
-            (root / "SHA256SUMS.txt").write_text(hashlib.sha256(archive).hexdigest() + "  " + name + "\n", encoding="ascii")
-            with self.assertRaisesRegex(ValueError, "missing required"):
-                package.verify(root, tag)
-            for omitted in ("uninstall.sh", "install-webdav.sh"):
-                output = io.BytesIO()
-                with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as source, tarfile.open(fileobj=output, mode="w:gz") as target:
-                    for member in source:
-                        if member.name == f"TGCloud-{tag}/" + omitted:
-                            continue
-                        target.addfile(member, source.extractfile(member) if member.isfile() else None)
-                (root / name).write_bytes(output.getvalue())
-                (root / "SHA256SUMS.txt").write_text(hashlib.sha256(output.getvalue()).hexdigest() + "  " + name + "\n", encoding="ascii")
-                with self.subTest(omitted=omitted), self.assertRaisesRegex(ValueError, "missing required|incomplete external"):
-                    package.verify(root, tag)
+class SourceContractRejectionTests(unittest.TestCase):
+    def candidate(self, directory, files):
+        tag = "v0.0.1"
+        output = io.BytesIO()
+        with tarfile.open(fileobj=output, mode="w:gz") as archive:
+            for name, body in files.items():
+                member = tarfile.TarInfo(f"TGCloud-{tag}/" + name)
+                member.size = len(body)
+                archive.addfile(member, io.BytesIO(body))
+        body = output.getvalue()
+        name = package.artifact_name(tag)
+        (directory / name).write_bytes(body)
+        (directory / "SHA256SUMS.txt").write_text(hashlib.sha256(body).hexdigest() + "  " + name + "\n", encoding="ascii")
+        return tag
 
-    def test_original_project_layouts_are_rejected(self):
-        tag = "v1.3.0"
-        # Both hashes are public main ancestors. The root-layout fixture must
-        # not depend on a maintainer-local tag absent from a fresh checkout.
-        for commit in ("e673cdb0683e2d02b0c3fd35b96143164392b898",
-                       "c07734cab666defb6ae5b5351a06361711d24190"):
-            with self.subTest(historical_layout=commit), tempfile.TemporaryDirectory() as private:
-                archive = gzip.compress(package.git(ROOT, "archive", "--format=tar", f"--prefix=TGCloud-{tag}/", commit), mtime=0)
-                root = Path(private)
-                name = package.artifact_name(tag)
-                (root / name).write_bytes(archive)
-                (root / "SHA256SUMS.txt").write_text(hashlib.sha256(archive).hexdigest() + "  " + name + "\n", encoding="ascii")
+    def test_unsupported_contract_is_rejected_even_with_matching_checksum(self):
+        with tempfile.TemporaryDirectory() as private:
+            directory = Path(private)
+            files = {name: b"" for name in package.REQUIRED}
+            files["packaging/external-webdav.json"] = b'{"api":999,"proxy_schema":2,"owner":"tgcloud.external_webdav"}'
+            tag = self.candidate(directory, files)
+            with self.assertRaisesRegex(ValueError, "unsupported"):
+                package.verify(directory, tag)
+
+    def test_unrecognized_source_layout_is_rejected_before_code_execution(self):
+        for location in ("app/version.py", "other_package/version.py"):
+            with self.subTest(location=location), tempfile.TemporaryDirectory() as private:
+                directory = Path(private)
+                tag = self.candidate(directory, {location: b'VERSION="0.0.1"\nraise RuntimeError("must not run")'})
                 with self.assertRaisesRegex(ValueError, "missing required"):
-                    package.verify(root, tag)
+                    package.verify(directory, tag)
 
 
 if __name__ == "__main__":

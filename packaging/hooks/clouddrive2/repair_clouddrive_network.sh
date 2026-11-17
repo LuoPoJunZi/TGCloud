@@ -2,8 +2,8 @@
 set -Eeuo pipefail
 umask 077
 
-INSTALL_DIR="${INSTALL_DIR:-/opt/tgcloud-clouddrive2}"
-BACKUP_DIR="/opt/tgcloud-clouddrive2-backups"
+INSTALL_DIR="${INSTALL_DIR:-/opt/tgcloud}"
+BACKUP_DIR="/opt/tgcloud-backups"
 BOT_SERVICE="tgcloud-clouddrive2-bot"
 BOT_CONTAINER="tgcloud-clouddrive2-bot"
 CD2_MANAGED_CONTAINER="tgcloud-clouddrive2"
@@ -76,30 +76,9 @@ trap 'fail "修复在第 ${LINENO} 行失败。请保留完整日志。"' ERR
   || fail "安装目录必须是 /opt/ 下的安全绝对路径"
 [[ "/$INSTALL_DIR/" != *"/../"* && "/$INSTALL_DIR/" != *"/./"* ]] \
   || fail "安装目录不能包含 . 或 .. 路径段"
-[[ "$INSTALL_DIR" != /opt/tg115 ]] \
-  || fail "检测到旧 TG115 安装目录 /opt/tg115；TGCloud 不会迁移、覆盖或修复该部署"
 [[ -f "$INSTALL_DIR/docker-compose.yml" ]] || fail "找不到现有 TGCloud 部署"
 [[ -f "$INSTALL_DIR/.env" ]] || fail "找不到现有 TGCloud 配置"
 command -v docker >/dev/null 2>&1 || fail "Docker 不可用"
-
-[[ ! -e /opt/tg115 ]] || log "检测到旧目录 /opt/tg115；保留不动"
-for legacy_container in tg115-bot tg115-clouddrive2; do
-  if docker container inspect "$legacy_container" >/dev/null 2>&1; then
-    log "检测到旧容器 $legacy_container；保留不动，不参与修复"
-  fi
-done
-if docker network inspect tg115 >/dev/null 2>&1; then
-  log "检测到旧 TG115 Network tg115；本次修复不会使用或修改它"
-fi
-if [[ "$(docker inspect --format '{{.State.Running}}' tg115-clouddrive2 2>/dev/null || true)" == true \
-  && "$(docker inspect --format '{{.HostConfig.NetworkMode}}' tg115-clouddrive2 2>/dev/null || true)" == host ]]; then
-  if command -v ss >/dev/null 2>&1; then
-    [[ -z "$(ss -H -ltn '( sport = :19798 )')" ]] \
-      || fail "旧 TG115 正在占用固定端口 19798；请自行处理后重新检测，不会自动停用"
-  elif timeout 2 bash -c 'echo >/dev/tcp/127.0.0.1/19798' >/dev/null 2>&1; then
-    fail "旧 TG115 正在占用固定端口 19798；请自行处理后重新检测，不会自动停用"
-  fi
-fi
 
 cd "$INSTALL_DIR"
 docker compose config --quiet
@@ -107,33 +86,29 @@ docker compose config --quiet
 DEPLOY_CLOUDDRIVE2="$(awk -F= '$1=="DEPLOY_CLOUDDRIVE2" {print $2; exit}' .env)"
 DEPLOY_CLOUDDRIVE2="${DEPLOY_CLOUDDRIVE2%$'\r'}"
 
-docker network inspect "$DOCKER_NETWORK" >/dev/null 2>&1 \
-  || docker network create "$DOCKER_NETWORK" >/dev/null
-
-mapfile -t CD2_MATCHES < <(
-  docker ps --format '{{.Names}}|{{.Image}}|{{.Ports}}' \
-    | awk -F'|' -v bot_container="$BOT_CONTAINER" '
-        (tolower($1) ~ /clouddrive2/ && tolower($1) !~ /^tg115-/) ||
-        tolower($2) ~ /(^|\/)clouddrive2([:@]|$)/ ||
-        tolower($2) ~ /cloudnas\/clouddrive2([:@]|$)/ {
-          if (tolower($1) ~ /^tg115-/ || tolower($1) == tolower(bot_container)) next
-          print $1
-        }
-      '
-)
-[[ "${#CD2_MATCHES[@]}" -le 1 ]] \
-  || fail "发现多个正在运行的 CloudDrive2 容器，请只保留目标容器后重试"
-CD2_CONTAINER="${CD2_MATCHES[0]:-}"
+CD2_CONTAINER=""
+for target_container in "$BOT_CONTAINER" "$CD2_MANAGED_CONTAINER"; do
+  if docker container inspect "$target_container" >/dev/null 2>&1; then
+    owner="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$target_container" 2>/dev/null || true)"
+    [[ "$owner" == "$INSTALL_DIR" ]] || fail "同名容器不属于当前 TGCloud 目录；停止修复"
+  fi
+done
+if [[ "$(docker inspect --format '{{.State.Running}}' "$CD2_MANAGED_CONTAINER" 2>/dev/null || true)" == true ]]; then
+  CD2_CONTAINER="$CD2_MANAGED_CONTAINER"
+fi
 PORT_19798_CONTAINER="$(
   docker ps --format '{{.Names}}|{{.Ports}}' \
     | awk -F'|' '$2 ~ /:19798->/ {print $1; exit}'
 )"
-if [[ "$PORT_19798_CONTAINER" == tg115-clouddrive2 ]]; then
-  fail "旧 TG115 容器正在占用固定端口 19798；请自行处理后重新检测，不会自动停用或改端口"
+if [[ -n "$PORT_19798_CONTAINER" && "$PORT_19798_CONTAINER" != "$CD2_MANAGED_CONTAINER" ]]; then
+  fail "固定端口 19798 被其他容器占用；不会接管或修改该容器"
 fi
 if [[ -z "$CD2_CONTAINER" && -n "$PORT_19798_CONTAINER" ]]; then
   fail "容器 $PORT_19798_CONTAINER 占用 19798 端口，但无法确认它是 CloudDrive2；拒绝自动修改"
 fi
+docker network inspect "$DOCKER_NETWORK" >/dev/null 2>&1 \
+  || docker network create "$DOCKER_NETWORK" >/dev/null
+
 if [[ -z "$CD2_CONTAINER" ]]; then
   [[ "${DEPLOY_CLOUDDRIVE2:-true}" == "true" ]] \
     || fail "当前配置没有启用由 VPS 管理 CloudDrive2，且没有发现现有容器"

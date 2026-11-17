@@ -59,7 +59,7 @@ from tgcloud.persistence.sqlite import TaskDB
 from tgcloud.persistence.plans import Plans
 with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
-    db = TaskDB(root / 'tg115.db')
+    db = TaskDB(root / 'tgcloud.db')
     assert db._conn.execute('PRAGMA user_version').fetchone()[0] == 3
     assert state(db)['enabled'] is False and state(db)['account'] is None
     assert Plans(db, 42).preferences(42)['confirmation'] is False

@@ -104,10 +104,10 @@ def normalize_state(raw: str | bytes | None) -> dict[str, Any]:
             or value.get("version") not in {STATE_VERSION, EXTERNAL_STATE_VERSION, DOCKER_ENTRY_STATE_VERSION}):
         raise ValueError("共享代理状态版本无法识别；不会自动覆盖。")
     if value.get("project") != PROJECT_ID:
-        raise ValueError("共享代理不属于此独立项目；不会接管旧项目或覆盖状态。")
+        raise ValueError("共享代理缺少 TGCloud 归属标记；停止覆盖状态。")
     domains = value.get("domains")
     if not isinstance(domains, dict) or set(domains) - set(SUPPORTED_EDITIONS):
-        raise ValueError("共享代理状态包含未知 Edition；不会自动覆盖。")
+        raise ValueError("共享代理状态包含未知实例；不会自动覆盖。")
     normalized = empty_state()
     if value["version"] in {EXTERNAL_STATE_VERSION, DOCKER_ENTRY_STATE_VERSION}:
         expected = {"version", "project", "domains", "external_webdav"}
@@ -129,7 +129,7 @@ def normalize_state(raw: str | bytes | None) -> dict[str, Any]:
             raise ValueError("管理路由含未知字段；拒绝丢弃资源。")
         domain = validate_domain(str(item.get("domain", "")))
         if domain in seen:
-            raise ValueError("同一个域名不能同时分配给两个 Edition。")
+            raise ValueError("同一个域名不能同时分配给两个实例。")
         port = int(item.get("backend_port", 0))
         expected_port = EDITION_BACKEND_PORTS[edition]
         if port != expected_port:
@@ -168,12 +168,12 @@ def state_with_route(
     state: dict[str, Any], product: ProductProfile, domain: str
 ) -> dict[str, Any]:
     if product.key not in SUPPORTED_EDITIONS:
-        raise ValueError("此独立项目仅支持 CloudDrive2；不管理其他 Edition。")
+        raise ValueError("此独立项目仅支持 CloudDrive2；不管理其他实例。")
     result = normalize_state(json.dumps(state))
     domain = validate_domain(domain)
     for edition, item in result["domains"].items():
         if edition != product.key and item["domain"] == domain:
-            raise ValueError("该域名已分配给另一个 TGCloud Edition。")
+            raise ValueError("该域名已分配给另一个 TGCloud实例。")
     if any(item["domain"] == domain for item in result.get("external_webdav", {}).values()):
         raise ValueError("该域名已由外部 WebDAV 使用。")
     result["domains"][product.key] = {
@@ -184,7 +184,7 @@ def state_with_route(
 
 def state_without_route(state: dict[str, Any], edition: str) -> dict[str, Any]:
     if edition not in SUPPORTED_EDITIONS:
-        raise ValueError("此独立项目仅支持 CloudDrive2；不移除其他 Edition。")
+        raise ValueError("此独立项目仅支持 CloudDrive2；不移除其他实例。")
     result = normalize_state(json.dumps(state))
     result["domains"].pop(edition, None)
     return result
