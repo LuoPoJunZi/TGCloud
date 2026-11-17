@@ -1,0 +1,50 @@
+{
+  "provenance": "TGCloud 0.0.1 CloudDrive2 environment protocol; synthetic values only",
+  "values": {
+    "api_id": "123456",
+    "user_id": "123456789",
+    "api_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "bot_token": "123456789:FAKE_LOCAL_TEST_VALUE_NOT_A_REAL_TOKEN",
+    "webdav_user": "tgcloud",
+    "webdav_password": "FAKE $() #@ secret",
+    "target": "Telegram",
+    "budget": "20",
+    "reserve": "8",
+    "timezone": "Asia/Shanghai",
+    "admin_password": "FAKE_ADMIN_SECRET"
+  },
+  "expected": {
+    "clouddrive2": {
+      "TELEGRAM_API_ID": "123456",
+      "TELEGRAM_API_HASH_B64": "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=",
+      "BOT_TOKEN_B64": "MTIzNDU2Nzg5OkZBS0VfTE9DQUxfVEVTVF9WQUxVRV9OT1RfQV9SRUFMX1RPS0VO",
+      "ALLOWED_USER_ID": "123456789",
+      "CD2_WEBDAV_URL_B64": "aHR0cDovL3RnY2xvdWQtY2xvdWRkcml2ZTI6MTk3OTgvZGF2",
+      "CD2_WEBDAV_USERNAME_B64": "dGdjbG91ZA==",
+      "CD2_WEBDAV_PASSWORD_B64": "RkFLRSAkKCkgI0Agc2VjcmV0",
+      "CD2_TARGET_PATH_B64": "VGVsZWdyYW0=",
+      "WEBDAV_URL_B64": "aHR0cDovL3RnY2xvdWQtY2xvdWRkcml2ZTI6MTk3OTgvZGF2",
+      "WEBDAV_USERNAME_B64": "dGdjbG91ZA==",
+      "WEBDAV_PASSWORD_B64": "RkFLRSAkKCkgI0Agc2VjcmV0",
+      "WEBDAV_TARGET_PATH_B64": "VGVsZWdyYW0=",
+      "TGCLOUD_STORAGE_BACKEND": "clouddrive2",
+      "TGCLOUD_DESTINATION_LABEL": "CloudDrive2",
+      "TGCLOUD_RCLONE_REMOTE_NAME": "cd2",
+      "LOCAL_TEMP_BUDGET_GB": "20",
+      "MIN_FREE_DISK_GB": "8",
+      "CONTROL_INTERVAL_SECONDS": "3",
+      "CPU_TARGET_LOW_PERCENT": "60",
+      "CPU_TARGET_HIGH_PERCENT": "80",
+      "CPU_PRESSURE_PERCENT": "90",
+      "MEMORY_SOFT_MIN_MB": "1024",
+      "MEMORY_HARD_MIN_MB": "512",
+      "RAMP_UP_STEP": "1",
+      "RAMP_DOWN_FACTOR": "0.5",
+      "MAX_RETRIES": "3",
+      "REMOTE_HEALTH_INTERVAL_SECONDS": "30",
+      "TZ": "Asia/Shanghai",
+      "DEPLOY_CLOUDDRIVE2": "true",
+      "TGCLOUD_REDEPLOY_APPLY_CONFIG": "false"
+    }
+  }
+}

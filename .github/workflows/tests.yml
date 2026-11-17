@@ -1,0 +1,99 @@
+name: tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**/*.md"
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - "**/*.md"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: src
+
+jobs:
+  linux-products:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck rclone fuse3 kmod
+          python3 -B .github/scripts/linux_validation.py shell
+
+      - name: Set up runtime Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.12"
+
+      - name: Linux runtime regression and real WebDAV integration
+        run: |
+          python -m pip install -r requirements/dev.lock.txt
+          python -B .github/scripts/linux_validation.py test
+
+      - name: Python quality, syntax, version and dependency audit
+        run: |
+          python -B .github/scripts/linux_validation.py quality
+
+      - name: Validate Compose
+        run: |
+          python .github/scripts/build_payload.py --edition clouddrive2 --directory build/ci-contexts/clouddrive2
+          touch build/ci-contexts/clouddrive2/.env
+          docker compose -f build/ci-contexts/clouddrive2/docker-compose.yml config --quiet
+
+      - name: Verify native daemon and exact gateway and base images
+        run: python .github/scripts/check_native_architecture.py --expected '${{ matrix.arch }}'
+
+      - name: Build Linux Bot image
+        run: docker build -t tgcloud-bot:test build/ci-contexts/clouddrive2
+
+      - name: Direct Compose initialization and non-root checks
+        env:
+          TGCLOUD_TEST_COMPOSE_DOCKER: "1"
+        run: python -B -m unittest discover -s tests -p test_compose_docker.py -v
+
+      - name: Isolated external WebDAV Nginx, authentication and Range
+        env:
+          TGCLOUD_TEST_EXTERNAL_WEBDAV_DOCKER: "1"
+        run: python -B -m unittest discover -s tests -p test_docker.py -v
+
+      - name: Isolated existing Nginx single-hop, reload and original-site preservation
+        env:
+          TGCLOUD_TEST_EXTERNAL_NGINX_DOCKER: "1"
+        run: python -B -m unittest discover -s tests -p test_external_nginx_docker.py -v
+
+      - name: Run CloudDrive2 candidate images as non-root
+        timeout-minutes: 20
+        env:
+          TGCLOUD_TEST_DOCKER: "1"
+        run: python -m unittest discover -s tests -p test_runtime_namespace.py -v
+
+      - name: Native gateway HTTP, FUSE and proxy executable smoke
+        timeout-minutes: 10
+        env:
+          TGCLOUD_TEST_NATIVE_DOCKER: "1"
+        run: |
+          sudo modprobe fuse
+          test -c /dev/fuse
+          python -B -m unittest discover -s tests -p test_native_gateways_docker.py -v

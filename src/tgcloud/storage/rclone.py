@@ -1,0 +1,595 @@
+from __future__ import annotations
+
+import asyncio
+import configparser
+import io
+import json
+import logging
+import math
+import os
+import re
+import tempfile
+from collections.abc import Callable
+from pathlib import Path
+
+from tgcloud.config import Settings
+from tgcloud.domain.errors import STAGING_PATTERN, StagingScan, safe_failure
+from tgcloud.persistence.private import private_file
+from tgcloud.transfer.ports import DestinationProbe
+
+
+class RcloneError(RuntimeError):
+    pass
+
+
+class MoveUncertainError(RcloneError):
+    """A MOVE may have happened, but its final state could not be verified."""
+
+
+def parse_progress(line: bytes) -> tuple[int, float | None] | None:
+    try:
+        stats = json.loads(line).get("stats", {})
+        if "bytes" in stats:
+            active = stats.get("transferring") or []
+            item = active[0] if active else stats
+            raw_count = item.get("bytes", stats["bytes"])
+            if isinstance(raw_count, bool):
+                return None
+            count = int(raw_count)
+            if count < 0:
+                return None
+            # rclone documents speedAvg as current EWMA, speed as an average.
+            # One file per copyto process: aggregate speed is a safe fallback.
+            # A present, valid zero is real data and must not be overwritten.
+            candidates = (item.get("speedAvg"), item.get("speed"), stats.get("speed"))
+            for candidate in candidates:
+                if candidate is None or isinstance(candidate, bool):
+                    continue
+                try:
+                    speed = float(candidate)
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if math.isfinite(speed) and speed >= 0:
+                    return count, speed
+            if any(candidate is not None for candidate in candidates):
+                return None  # Reject malformed rates; never manufacture zero.
+            return count, None  # Caller may derive a rate from successive bytes.
+    except (ValueError, TypeError, AttributeError, KeyError, IndexError, OverflowError):
+        pass
+    return None
+
+
+async def _read_progress_tail(
+    stream: asyncio.StreamReader | None, progress: Callable[[int, float | None], None],
+) -> str:
+    if stream is None:
+        return ""
+    tail = bytearray()
+    pending = bytearray()
+    while chunk := await stream.read(8192):
+        tail.extend(chunk)
+        del tail[:-65536]
+        pending.extend(chunk)
+        while b"\n" in pending:
+            line, _, rest = pending.partition(b"\n")
+            pending = bytearray(rest)
+            parsed = parse_progress(line)
+            if parsed is not None:
+                progress(*parsed)
+        if len(pending) > 65536:
+            pending.clear()
+    if pending:
+        parsed = parse_progress(pending)
+        if parsed is not None:
+            progress(*parsed)
+    return tail.decode("utf-8", errors="replace").strip()
+
+
+async def _read_process_tail(
+    stream: asyncio.StreamReader | None, limit: int = 64 * 1024
+) -> str:
+    if stream is None:
+        return ""
+    tail = bytearray()
+    while True:
+        chunk = await stream.read(8192)
+        if not chunk:
+            break
+        tail.extend(chunk)
+        if len(tail) > limit:
+            del tail[:-limit]
+    return tail.decode("utf-8", errors="replace").strip()
+
+
+class RcloneUploadStream:
+    """Async file-like sink that applies subprocess backpressure to Telethon."""
+
+    def __init__(self, process: asyncio.subprocess.Process):
+        if process.stdin is None:
+            raise RuntimeError("rclone 流式进程没有标准输入")
+        self.process = process
+        self.stdin = process.stdin
+        self.bytes_written = 0
+        self._stdout_task = asyncio.create_task(
+            _read_process_tail(process.stdout), name="rclone-stream-stdout"
+        )
+        self._stderr_task = asyncio.create_task(
+            _read_process_tail(process.stderr), name="rclone-stream-stderr"
+        )
+        self._finished = False
+
+    async def write(self, data: bytes) -> int:
+        if self._finished:
+            raise RcloneError("rclone 流式写入已经结束")
+        self.stdin.write(data)
+        await self.stdin.drain()
+        self.bytes_written += len(data)
+        return len(data)
+
+    def tell(self) -> int:
+        return self.bytes_written
+
+    def flush(self) -> None:
+        # Telethon calls flush synchronously after all awaited writes.
+        return None
+
+    async def finish(self) -> None:
+        if self._finished:
+            return
+        self._finished = True
+        self.stdin.close()
+        try:
+            await self.stdin.wait_closed()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        return_code = await self.process.wait()
+        stdout, stderr = await asyncio.gather(
+            self._stdout_task, self._stderr_task
+        )
+        if return_code != 0:
+            raise RcloneError(
+                f"rclone 流式上传退出码 {return_code}："
+                f"{stderr or stdout or '未知错误'}"
+            )
+
+    async def abort(self) -> None:
+        if self.process.returncode is None:
+            try:
+                self.process.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(self.process.wait(), timeout=10)
+            except TimeoutError:
+                try:
+                    self.process.kill()
+                except ProcessLookupError:
+                    pass
+                await self.process.wait()
+        self._finished = True
+        await asyncio.gather(
+            self._stdout_task, self._stderr_task, return_exceptions=True
+        )
+
+
+class RcloneClient:
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self.log = logging.getLogger("tgcloud.rclone")
+        self._config_lock = asyncio.Lock()
+        self._config_ready = False
+
+    @property
+    def remote_name(self) -> str:
+        return getattr(self.settings, "rclone_remote_name", "cd2")
+
+    @property
+    def destination_label(self) -> str:
+        return getattr(self.settings, "destination_label", "CloudDrive2")
+
+    async def _run(
+        self,
+        *args: str,
+        timeout: float | None = None,
+        check: bool = True,
+        progress: Callable[[int, float | None], None] | None = None,
+        input_data: bytes | None = None,
+    ) -> tuple[int, str, str]:
+        if input_data is not None and progress is not None:
+            raise ValueError("凭据标准输入不能与传输进度通道混用")
+        command = [
+            "rclone",
+            "--config",
+            str(self.settings.rclone_config_path),
+            *args,
+        ]
+        self.log.debug("运行 rclone：%s", " ".join(self._redact(command)))
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            **({"stdin": asyncio.subprocess.PIPE} if input_data is not None else {}),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        readers: list[asyncio.Task[str]] = []
+        try:
+            if progress is None:
+                pending = process.communicate(input_data) if input_data is not None else process.communicate()
+                stdout, stderr = await asyncio.wait_for(pending, timeout=timeout)
+                out = stdout.decode("utf-8", errors="replace").strip()
+                err = stderr.decode("utf-8", errors="replace").strip()
+            else:
+                readers = [asyncio.create_task(_read_process_tail(process.stdout)),
+                           asyncio.create_task(_read_progress_tail(process.stderr, progress))]
+                result = await asyncio.wait_for(asyncio.gather(process.wait(), *readers), timeout=timeout)
+                out, err = result[1], result[2]
+        except asyncio.CancelledError:
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(process.wait(), timeout=10)
+            except TimeoutError:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.wait()
+            raise
+        except TimeoutError as exc:
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+            await process.wait()
+            raise RcloneError(f"rclone 超时：{' '.join(args[:2])}") from exc
+        finally:
+            if readers:
+                if process.returncode is None:
+                    try:
+                        process.kill()
+                    except ProcessLookupError:
+                        pass
+                    await process.wait()
+                await asyncio.gather(*readers, return_exceptions=True)
+        if check and process.returncode != 0:
+            raise RcloneError(
+                f"rclone 退出码 {process.returncode}：{err or out or '未知错误'}"
+            )
+        return int(process.returncode or 0), out, err
+
+    def _redact(self, command: list[str]) -> list[str]:
+        redacted = []
+        for item in command:
+            if item == self.settings.cd2_password:
+                redacted.append("***")
+            else:
+                redacted.append(item)
+        return redacted
+
+    async def ensure_config(self) -> None:
+        if self._config_ready:
+            return
+        async with self._config_lock:
+            if self._config_ready:
+                return
+            path = self.settings.rclone_config_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            values = {"type": "webdav", "url": self.settings.cd2_url,
+                      "vendor": "other", "user": self.settings.cd2_user}
+            if any(any(c in value for c in "\r\n\0") for value in (*values.values(), self.settings.cd2_password)):
+                raise RcloneError("WebDAV 配置不能含换行或空字符")
+            private_file(path)
+            parser = configparser.RawConfigParser(interpolation=None)
+            parser.optionxform = str
+            original = path.read_bytes() if path.exists() else None
+            try:
+                if original:
+                    parser.read_string(original.decode("utf-8-sig"))
+            except (UnicodeError, configparser.Error):
+                raise RcloneError("rclone 配置无法安全读取；保留原文件") from None
+            # Official rclone stdin input: neither plaintext nor reversible
+            # obscured credentials enter argv. Obscuring is not encryption.
+            code, obscured, _ = await self._run(
+                "obscure", "-", input_data=(self.settings.cd2_password + "\n").encode("utf-8"),
+                timeout=30, check=False,
+            )
+            if code or not re.fullmatch(r"[A-Za-z0-9_-]{22,}", obscured):
+                raise RcloneError("rclone 凭据处理失败；保留原配置")
+            if not parser.has_section(self.remote_name):
+                parser.add_section(self.remote_name)
+            for key, value in (values | {"pass": obscured}).items():
+                parser.set(self.remote_name, key, value)
+            buffer = io.StringIO()
+            parser.write(buffer)
+            descriptor, name = tempfile.mkstemp(prefix=".rclone-", dir=path.parent)
+            candidate = Path(name)
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as writer:
+                    writer.write(buffer.getvalue())
+                    writer.flush()
+                    os.fsync(writer.fileno())
+                private_file(path)
+                if (path.read_bytes() if path.exists() else None) != original:
+                    raise RcloneError("rclone 配置已变化；保留现有文件并稍后重试")
+                os.replace(candidate, path)
+            finally:
+                candidate.unlink(missing_ok=True)
+            self._config_ready = True
+
+    def remote(self, relative_path: str = "") -> str:
+        if (relative_path and (relative_path.startswith(("/", "\\"))
+                or any(p in {".", ".."} for p in relative_path.split("/"))
+                or "\\" in relative_path or any(ord(c) < 32 for c in relative_path))):
+            raise ValueError("远端相对路径不安全")
+        target = self.settings.cd2_target.strip("/")
+        relative = relative_path.strip("/")
+        path = "/".join(part for part in (target, relative) if part)
+        return f"{self.remote_name}:{path}"
+
+    async def verify_authentication(self) -> None:
+        """Authenticate against the WebDAV user's own root before target checks."""
+        await self.ensure_config()
+        await self._run(
+            "lsd", f"{self.remote_name}:", "--max-depth", "1", timeout=45
+        )
+
+    async def prepare_destination(self) -> None:
+        await self.ensure_config()
+        if self.settings.cd2_target.strip("/"):
+            await self._run("mkdir", self.remote(), timeout=45)
+        await self._run("lsd", self.remote(), "--max-depth", "1", timeout=45)
+
+    async def ensure_directory(self, relative_path: str) -> None:
+        from tgcloud.domain.classification import safe_directory
+        safe_directory(relative_path)
+        await self.ensure_config()
+        await self._run("mkdir", self.remote(relative_path), timeout=45)
+
+    async def probe(self) -> DestinationProbe:
+        try:
+            await self.ensure_config()
+            code, out, err = await self._run(
+                "lsd", self.remote(), "--max-depth", "1",
+                timeout=20, check=False,
+            )
+            if code != 0:
+                failure = self._probe_failure(out + "\n" + err, "target", label=self.destination_label)
+                if failure is not None:
+                    return failure
+            if code in {3, 4} and self.settings.cd2_target:
+                # A not-yet-created target is prepared only by an explicit upload/verify.
+                root_code, root_out, root_err = await self._run(
+                    "lsd",
+                    f"{self.remote_name}:",
+                    "--max-depth",
+                    "1",
+                    timeout=20,
+                    check=False,
+                )
+                if root_code == 0:
+                    return DestinationProbe(
+                        True, "root_fallback", "WebDAV 根目录可访问；配置的目标目录尚未创建，不代表可写",
+                    )
+                failure = self._probe_failure(root_out + "\n" + root_err, "root_fallback", label=self.destination_label)
+                if failure is not None:
+                    return failure
+                return DestinationProbe(
+                    False, "root_fallback", f"WebDAV 根目录访问失败（退出码 {root_code}）"
+                )
+            if code != 0:
+                return DestinationProbe(False, "target", f"目标目录访问失败（退出码 {code}）")
+            scope = "target" if self.settings.cd2_target else "root"
+            label = "目标目录" if scope == "target" else "WebDAV 根目录"
+            return DestinationProbe(True, scope, f"{label}可访问；只读探测不代表可写")
+        except Exception as exc:  # noqa: BLE001 - health boundary for external CLI
+            self.log.warning(
+                "%s WebDAV 健康检查失败：%s",
+                self.destination_label,
+                safe_failure(exc),
+            )
+            return DestinationProbe(False, "unknown", "目录探测异常；请查看 VPS 最近日志")
+
+    @staticmethod
+    def _probe_failure(output: str, scope: str, *, label: str = "WebDAV") -> DestinationProbe | None:
+        # Emit only fixed messages: rclone stderr may contain URLs/credentials.
+        if re.search(r"\b429\b|too many requests", output, re.IGNORECASE):
+            return DestinationProbe(
+                False, scope, f"{label} 返回 HTTP 429；请等待探测冷却，勿反复验收",
+                "rate_limited",
+            )
+        if re.search(r"\b401\b|unauthorized", output, re.IGNORECASE):
+            return DestinationProbe(
+                False, scope, f"{label} 返回 HTTP 401；请核对当前运行的 WebDAV 凭据",
+                "unauthorized",
+            )
+        if re.search(r"\b403\b|forbidden", output, re.IGNORECASE):
+            return DestinationProbe(False, scope, f"{label} 返回 HTTP 403；请核对 WebDAV 目录权限", "permission")
+        return None
+
+    async def healthy(self) -> bool:
+        return (await self.probe()).accessible
+
+    async def list_staging_objects(self) -> StagingScan:
+        """Stream the complete top-level listing within explicit time/memory bounds."""
+        await self.ensure_config()
+        process = await asyncio.create_subprocess_exec(
+            "rclone", "--config", str(self.settings.rclone_config_path),
+            "lsjson", self.remote(), "--files-only", "--max-depth", "1",
+            "--retries", "1", "--low-level-retries", "1",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        scan = StagingScan()
+        stderr = asyncio.create_task(_read_process_tail(process.stderr))
+        try:
+            await asyncio.wait_for(self._read_staging(process, scan), timeout=40)
+        except (TimeoutError, ValueError, UnicodeError):
+            scan.complete, scan.reason = False, "扫描超时、超过资源上限或清单不完整"
+        finally:
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+            await process.wait()
+            await stderr
+        return scan
+
+    @staticmethod
+    async def _read_staging(process: asyncio.subprocess.Process, scan: StagingScan) -> None:
+        import codecs
+
+        decoder = codecs.getincrementaldecoder("utf-8")()
+        parser = json.JSONDecoder()
+        buffer, phase = "", "start"
+        while True:
+            chunk = await process.stdout.read(8192)
+            buffer += decoder.decode(chunk, final=not chunk)
+            while True:
+                buffer = buffer.lstrip()
+                if not buffer:
+                    break
+                if phase == "start":
+                    if buffer[0] != "[":
+                        raise ValueError("array required")
+                    buffer, phase = buffer[1:], "first"
+                elif phase in {"first", "item"}:
+                    if phase == "first" and buffer[0] == "]":
+                        buffer, phase = buffer[1:], "done"
+                        continue
+                    try:
+                        item, offset = parser.raw_decode(buffer)
+                    except ValueError:
+                        break
+                    if not isinstance(item, dict) or not isinstance(item.get("Name"), str):
+                        raise ValueError("invalid item")
+                    scan.checked += 1
+                    name = item["Name"]
+                    matched = STAGING_PATTERN.fullmatch(name)
+                    if matched and item.get("IsDir") is not True and item.get("Path", name) == name:
+                        scan.found += 1
+                        if len(scan.objects) >= 20000:
+                            raise ValueError("candidate limit")
+                        scan.objects.append((int(matched[1]), name))
+                    if scan.checked > 1000000:
+                        raise ValueError("listing limit")
+                    buffer, phase = buffer[offset:], "separator"
+                elif phase == "separator":
+                    if buffer[0] not in ",]":
+                        raise ValueError("invalid separator")
+                    phase = "item" if buffer[0] == "," else "done"
+                    buffer = buffer[1:]
+                else:
+                    raise ValueError("trailing content")
+            if len(buffer) > 1024 * 1024:
+                raise ValueError("entry limit")
+            if not chunk:
+                if phase != "done" or buffer.strip() or await process.wait() != 0:
+                    raise ValueError("incomplete listing")
+                return
+
+    async def upload(
+        self, local_path: Path, remote_temp: str, *,
+        progress: Callable[[int, float | None], None] | None = None,
+    ) -> None:
+        await self.prepare_destination()
+        await self._run(
+            "copyto",
+            str(local_path),
+            self.remote(remote_temp),
+            "--transfers",
+            "1",
+            "--checkers",
+            "2",
+            "--retries",
+            "2",
+            "--low-level-retries",
+            "5",
+            "--contimeout",
+            "20s",
+            "--timeout",
+            "5m",
+            "--stats",
+            "1s",
+            "--stats-log-level", "NOTICE",
+            "--use-json-log",
+            timeout=None,
+            progress=progress,
+        )
+
+    async def open_upload_stream(
+        self, remote_temp: str, exact_size: int
+    ) -> RcloneUploadStream:
+        await self.prepare_destination()
+        command = [
+            "rclone",
+            "--config",
+            str(self.settings.rclone_config_path),
+            "rcat",
+            self.remote(remote_temp),
+            "--size",
+            str(exact_size),
+            "--contimeout",
+            "20s",
+            "--timeout",
+            "5m",
+            "--retries",
+            "1",
+            "--low-level-retries",
+            "5",
+            "--stats",
+            "0",
+        ]
+        self.log.debug("运行 rclone 流式写入：%s", " ".join(self._redact(command)))
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        return RcloneUploadStream(process)
+
+    async def remote_size(self, relative_path: str) -> int:
+        _, out, _ = await self._run(
+            "size", self.remote(relative_path), "--json", timeout=60
+        )
+        try:
+            size = int(json.loads(out)["bytes"])
+        except (ValueError, KeyError, TypeError) as exc:
+            raise RcloneError(f"无法解析远端大小：{out!r}") from exc
+        return size
+
+    async def exists(self, relative_path: str) -> bool:
+        code, out, err = await self._run(
+            "lsjson",
+            self.remote(relative_path),
+            "--stat",
+            timeout=45,
+            check=False,
+        )
+        if code == 0:
+            return True
+        if code in {3, 4}:
+            return False
+        raise RcloneError(
+            f"无法确认远端文件是否存在（rclone 退出码 {code}）："
+            f"{err or out or '未知错误'}"
+        )
+
+    async def move(self, source: str, destination: str) -> None:
+        await self._run(
+            "moveto", self.remote(source), self.remote(destination),
+            "--retries", "3", timeout=120,
+        )
+
+    async def remove(self, relative_path: str) -> None:
+        code, out, err = await self._run(
+            "deletefile", self.remote(relative_path), timeout=60, check=False
+        )
+        if code not in {0, 3, 4}:
+            self.log.warning(
+                "清理远端临时文件失败（rclone 退出码 %s）：%s",
+                code,
+                safe_failure(err or out or "未知错误"),
+            )

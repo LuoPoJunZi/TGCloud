@@ -1,0 +1,162 @@
+"""Synthetic native-account records and loopback metadata; never real gateways."""
+from __future__ import annotations
+
+import base64
+import io
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from tgcloud.addons.external_webdav import cli, config, scope
+from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.proxy.state import validate_domain, validate_email
+
+
+class ScopeTests(unittest.TestCase):
+    def setUp(self):
+        self.private = tempfile.TemporaryDirectory()
+        self.addCleanup(self.private.cleanup)
+        self.directory = Path(self.private.name).resolve()
+        self.native = self.directory / "clouddrive/config/webdav_config.json"
+        self.native.parent.mkdir(parents=True)
+        values = {"URL": "http://tgcloud-clouddrive2:19798/dav", "USERNAME": "bot-reader",
+                  "PASSWORD": "SYNTHETIC_BOT_ONLY", "TARGET_PATH": "电影/家庭"}
+        self.settings = {"WEBDAV_" + key + "_B64": base64.b64encode(value.encode()).decode()
+                         for key, value in values.items()}
+        self.instance = SimpleNamespace(directory=self.directory, config=self.settings, gateway_image="fixture-image")
+        actual = os.fstat
+        def owned(fd):
+            info = actual(fd)
+            return SimpleNamespace(st_mode=info.st_mode, st_uid=0, st_size=info.st_size)
+        # Only temporary fixture ownership is normalized for non-root CI.
+        owner = patch.object(scope.os, "fstat", side_effect=owned)
+        owner.start()
+        self.addCleanup(owner.stop)
+
+    def write(self, users, **extra):
+        item = dict(enabled=True, dav_users=users, **extra)
+        self.native.write_text(json.dumps(item), encoding="utf-8")
+        self.native.chmod(0o600)
+
+    def test_exact_native_username_and_unicode_root_are_read_without_writing(self):
+        self.write([{"user_name": "another", "root_path": "/other", "enabled": True},
+                    {"user_name": "bot-reader", "root_path": "/资料/家庭", "enabled": True}])
+        original = self.native.read_bytes()
+        result = scope.resolve(self.instance, PRODUCTS["clouddrive2"])
+        self.assertEqual(result.path, "/资料/家庭")
+        self.assertEqual(result.source, "网关账号配置")
+        self.assertEqual(self.native.read_bytes(), original)
+        self.assertNotIn("SYNTHETIC_BOT_ONLY", repr(result))
+
+    def test_unknown_encrypted_disabled_duplicate_and_unsafe_native_users_require_input(self):
+        fixtures = [[], [{"username_encrypt": "opaque", "root_path": "/guess", "enabled": True}],
+                    [{"user_name": "bot-reader", "root_path": "/root", "enabled": False}],
+                    [{"user_name": "bot-reader", "root_path": "/a", "enabled": True}]*2,
+                    [{"user_name": "bot-reader", "root_path": "/safe/../outside", "enabled": True}]]
+        for users in fixtures:
+            with self.subTest(users=users):
+                self.write(users)
+                result = scope.resolve(self.instance, PRODUCTS["clouddrive2"])
+                self.assertEqual(result.path, "")
+                self.assertIn("首次补充一次", result.reason)
+                self.assertNotIn("opaque", result.reason)
+
+    def test_root_is_not_inferred_from_a_relative_bot_subdirectory(self):
+        self.write([])
+        result = scope.resolve(self.instance, PRODUCTS["clouddrive2"])
+        self.assertEqual(result.path, "")
+        self.assertNotIn("电影", result.reason)
+
+    def test_live_account_scope_takes_priority_over_saved_root(self):
+        self.write([{"user_name": "bot-reader", "root_path": "/current", "enabled": True}])
+        previous = {"instance_dir": str(self.directory), "binding": config.binding(self.settings),
+                    "backend_image": self.instance.gateway_image, "bot_root": "/old"}
+        self.assertEqual(scope.resolve(self.instance, PRODUCTS["clouddrive2"], previous).path, "/current")
+        self.write([])
+        self.assertEqual(scope.resolve(self.instance, PRODUCTS["clouddrive2"], previous).path, "/old")
+        for field in ("instance_dir", "binding", "backend_image"):
+            changed = dict(previous, **{field: "changed"})
+            self.assertEqual(scope.resolve(self.instance, PRODUCTS["clouddrive2"], changed).path, "")
+
+    def test_bad_json_extra_large_file_and_symlink_are_not_accepted(self):
+        for text in ('{"enabled":true,"enabled":false}', 'not JSON', 'x'*(scope.LIMIT+1)):
+            self.native.write_text(text, encoding="utf-8")
+            self.assertEqual(scope.resolve(self.instance, PRODUCTS["clouddrive2"]).path, "")
+        with (patch.object(Path, "resolve", return_value=self.directory / "elsewhere"),
+              patch.object(scope.os, "open") as opened):
+            self.assertEqual(scope.resolve(self.instance, PRODUCTS["clouddrive2"]).path, "")
+            opened.assert_not_called()
+
+    @unittest.skipUnless(os.name == "posix", "POSIX owner/mode check; production protection remains enabled")
+    def test_unowned_or_group_writable_native_configuration_is_rejected(self):
+        self.write([{"user_name": "bot-reader", "root_path": "/a", "enabled": True}])
+        for uid, mode in ((1000, 0o100600), (0, 0o100620)):
+            info = SimpleNamespace(st_uid=uid, st_mode=mode, st_size=100)
+            with patch.object(scope.os, "fstat", return_value=info):
+                self.assertEqual(scope.resolve(self.instance, PRODUCTS["clouddrive2"]).path, "")
+
+    def test_unknown_product_scope_rejected_before_reading_credentials(self):
+        with patch.object(Path, "read_bytes", side_effect=AssertionError("must not read credentials")), self.assertRaises(ValueError):
+            scope.resolve(self.instance, SimpleNamespace(key="unsupported"))
+
+    def test_retired_scope_cannot_reuse_a_previous_confirmed_root(self):
+        previous = {"instance_dir": str(self.directory), "bot_root": "/private"}
+        with patch.object(scope, "clouddrive2_root") as native, self.assertRaises(ValueError):
+            scope.resolve(self.instance, SimpleNamespace(key="unsupported"), previous)
+        native.assert_not_called()
+
+    def test_unknown_product_management_never_connects_or_echoes_tokens(self):
+        with patch("socket.create_connection") as connect, self.assertRaises(ValueError) as error:
+            scope.management_address(self.instance, SimpleNamespace(key="unsupported", token="PRIVATE_TOKEN"), {})
+        connect.assert_not_called()
+        self.assertNotIn("PRIVATE_TOKEN", str(error.exception))
+
+    def test_management_link_uses_selected_edition_and_cannot_be_external_dav_domain(self):
+        state = {"domains": {"clouddrive2": {"domain": "manage.example.test"},
+                              "unsupported": {"domain": "list.example.test"}}}
+        self.assertEqual(scope.management_address(self.instance, PRODUCTS["clouddrive2"], state),
+                         "https://manage.example.test")
+        with self.assertRaises(ValueError):
+            scope.management_address(self.instance, SimpleNamespace(key="unsupported"), state)
+        from tgcloud.deployment.proxy import lan
+        with patch.object(lan, "load_state", return_value={"install_dir": str(self.directory), "bind_ip": "192.168.26.5"}):
+            self.assertEqual(scope.management_address(self.instance, PRODUCTS["clouddrive2"], {"domains": {}}),
+                             "http://192.168.26.5:19798")
+
+
+class InputFeedbackTests(unittest.TestCase):
+    def terminal(self):
+        ui = cli.WebDAVTerminal.__new__(cli.WebDAVTerminal)
+        ui.output = io.StringIO()
+        return ui
+
+    def test_blank_email_is_accepted_on_first_enter_with_no_error(self):
+        ui = self.terminal()
+        with patch.object(cli.Terminal, "ask", return_value="") as read:
+            self.assertEqual(ui.ask("邮箱", validate=validate_email), "")
+        self.assertEqual(read.call_count, 1)
+        self.assertEqual(ui.output.getvalue(), "")
+        self.assertFalse(read.call_args.kwargs["secret"])
+
+    def test_domain_and_email_show_specific_reasons_but_never_repeat_raw_input(self):
+        for validate, bad, good, hint in ((validate_domain, "https://dav.example.test", "dav.example.test", "只填写域名"),
+                                         (validate_email, "bad-mail", "family@example.test", "邮箱格式不正确")):
+            ui = self.terminal()
+            with patch.object(cli.Terminal, "ask", side_effect=[bad, good]):
+                self.assertEqual(ui.ask("PUBLIC", validate=validate), good)
+            self.assertIn(hint, ui.output.getvalue())
+            self.assertNotIn("不显示输入值", ui.output.getvalue())
+            self.assertNotIn(bad, ui.output.getvalue())
+
+    def test_unknown_validator_exception_never_leaks_a_password(self):
+        ui = self.terminal()
+        def invalid(value):
+            raise ValueError("PRIVATE_SECRET: " + value)
+        with patch.object(cli.Terminal, "ask", side_effect=["private", EOFError]), self.assertRaises(EOFError):
+            ui.ask("PUBLIC", validate=invalid)
+        self.assertNotIn("private", ui.output.getvalue())
+        self.assertNotIn("PRIVATE_SECRET", ui.output.getvalue())

@@ -1,0 +1,295 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing immutable version tag to publish (for example v0.0.1)"
+        required: false
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.release_tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.preflight.outputs.publish }}
+      release_tag: ${{ steps.metadata.outputs.release_tag }}
+      release_title: ${{ steps.metadata.outputs.release_title }}
+      release_artifact: ${{ steps.metadata.outputs.release_artifact }}
+      is_prerelease: ${{ steps.metadata.outputs.is_prerelease }}
+      native_matrix: ${{ steps.platforms.outputs.matrix }}
+    steps:
+      - name: Resolve an existing version tag (including manual retry)
+        id: target
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == tag ]]; then
+            release_tag="${GITHUB_REF_NAME}"
+          elif [[ "${GITHUB_EVENT_NAME}" == workflow_dispatch && -n "${REQUESTED_TAG}" ]]; then
+            release_tag="${REQUESTED_TAG}"
+          else
+            echo "Select an existing version tag; branch publishing is not allowed." >&2
+            exit 1
+          fi
+          [[ "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[1-9][0-9]*)?$ ]]
+          printf 'release_tag=%s\n' "${release_tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout immutable release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/tags/${{ steps.target.outputs.release_tag }}
+          fetch-depth: 0
+
+      - name: Validate tag, version and release documents
+        id: metadata
+        env:
+          RELEASE_TAG: ${{ steps.target.outputs.release_tag }}
+        run: python3 .github/scripts/release_metadata.py --tag "${RELEASE_TAG}" --github-output "${GITHUB_OUTPUT}"
+
+      - name: Select validation platforms from the immutable tag capability
+        id: platforms
+        run: |
+          echo 'matrix={"include":[{"runner":"ubuntu-24.04","arch":"amd64"},{"runner":"ubuntu-24.04-arm","arch":"arm64"}]}' >> "${GITHUB_OUTPUT}"
+
+      - name: Check public repository inputs before packaging
+        run: python3 -B .github/scripts/check_repository.py
+
+      - name: Check immutable tag and release state
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --silent
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists; nothing will be replaced."
+            echo "publish=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "publish=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Validate GitHub Release notes layout
+        if: steps.preflight.outputs.publish == 'true'
+        run: python3 .github/scripts/validate_release_notes.py RELEASE_NOTES.md
+
+  linux-validation:
+    needs: prepare
+    if: needs.prepare.outputs.publish == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.native_matrix) }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    env:
+      PYTHONPATH: src
+      QT_QPA_PLATFORM: offscreen
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      RELEASE_ARTIFACT: ${{ needs.prepare.outputs.release_artifact }}
+    steps:
+      - name: Checkout the same immutable release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Set up runtime Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.12"
+
+      - name: Install Linux validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck rclone fuse3 kmod
+          python -m pip install -r requirements/dev.lock.txt
+
+      - name: ShellCheck
+        run: |
+          python3 -B .github/scripts/linux_validation.py shell
+
+      - name: Linux runtime, gateway and real WebDAV regression
+        run: |
+          command -v bash shellcheck rclone docker
+          docker info >/dev/null
+          python -B .github/scripts/linux_validation.py test
+          python -B .github/scripts/linux_validation.py quality
+
+      - name: Verify native platform before candidate builds
+        if: hashFiles('.github/scripts/check_native_architecture.py') != ''
+        run: python .github/scripts/check_native_architecture.py --expected '${{ matrix.arch }}'
+
+      - name: Validate edition Compose and build the runtime image
+        run: |
+          python .github/scripts/build_payload.py --edition clouddrive2 --directory build/release-contexts/clouddrive2
+          touch build/release-contexts/clouddrive2/.env
+          docker compose -f build/release-contexts/clouddrive2/docker-compose.yml config --quiet
+          docker build -t tgcloud-bot:release-test build/release-contexts/clouddrive2
+
+      - name: Run CloudDrive2 candidate images as non-root
+        timeout-minutes: 20
+        env:
+          TGCLOUD_TEST_DOCKER: "1"
+        run: python -m unittest discover -s tests -p test_runtime_namespace.py -v
+
+      - name: Native platform, gateway HTTP and FUSE validation
+        if: hashFiles('.github/scripts/check_native_architecture.py') != ''
+        timeout-minutes: 15
+        env:
+          TGCLOUD_TEST_NATIVE_DOCKER: "1"
+        run: |
+          sudo modprobe fuse
+          test -c /dev/fuse
+          python -B -m unittest discover -s tests -p test_native_gateways_docker.py -v
+
+      - name: Isolated LAN Nginx checks (no product deployment)
+        env:
+          TGCLOUD_TEST_LAN_DOCKER: "1"
+        run: python -m unittest discover -s tests -p test_lan_gateway_docker.py -v
+
+      - name: Direct Compose setup and non-root runtime checks
+        env:
+          TGCLOUD_TEST_COMPOSE_DOCKER: "1"
+        run: python -B -m unittest discover -s tests -p test_compose_docker.py -v
+
+      - name: Isolated external WebDAV Nginx, authentication and Range
+        if: hashFiles('packaging/external-webdav.json') != ''
+        env:
+          TGCLOUD_TEST_EXTERNAL_WEBDAV_DOCKER: "1"
+        run: python -B -m unittest discover -s tests -p test_docker.py -v
+
+      - name: Isolated existing Nginx single-hop, reload and original-site preservation
+        if: hashFiles('tests/test_external_nginx_docker.py') != ''
+        env:
+          TGCLOUD_TEST_EXTERNAL_NGINX_DOCKER: "1"
+        run: python -B -m unittest discover -s tests -p test_external_nginx_docker.py -v
+
+      - name: Package immutable source once and verify bootstrap pins and SHA256
+        if: matrix.arch == 'amd64'
+        run: python .github/scripts/source_release.py build --tag "${RELEASE_TAG}" --directory build/source-release
+
+      - name: Upload validated source package
+        if: matrix.arch == 'amd64'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.RELEASE_ARTIFACT }}
+          path: |
+            build/source-release/TGCloud-*-source.tar.gz
+            build/source-release/SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Package and verify the local-source Compose deployment
+        if: matrix.arch == 'amd64'
+        run: python .github/scripts/compose_release.py bundle --tag "${RELEASE_TAG}" --directory build/compose-release
+
+      - name: Upload validated Compose package
+        if: matrix.arch == 'amd64'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: TGCloud-${{ env.RELEASE_TAG }}-compose
+          path: |
+            build/compose-release/TGCloud-*-compose.tar.gz
+            build/compose-release/COMPOSE-SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  release:
+    needs:
+      - prepare
+      - linux-validation
+    if: >-
+      needs.prepare.outputs.publish == 'true' &&
+      needs.linux-validation.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      RELEASE_TITLE: ${{ needs.prepare.outputs.release_title }}
+      RELEASE_ARTIFACT: ${{ needs.prepare.outputs.release_artifact }}
+      RELEASE_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}
+    steps:
+      - name: Checkout release notes from the immutable tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Download the validated Linux source artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ env.RELEASE_ARTIFACT }}
+          path: release-assets/source
+
+      - name: Download the validated Compose artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: TGCloud-${{ env.RELEASE_TAG }}-compose
+          path: release-assets/compose
+
+      - name: Verify downloaded package without rebuilding
+        run: |
+          python3 .github/scripts/source_release.py verify --tag "${RELEASE_TAG}" --directory release-assets/source
+          python3 .github/scripts/compose_release.py verify --tag "${RELEASE_TAG}" --directory release-assets/compose
+
+      - name: Create GitHub release from the same package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} appeared after preflight; refusing to replace it." >&2
+            exit 1
+          fi
+          prerelease_args=()
+          if [[ "${RELEASE_PRERELEASE}" == true ]]; then
+            prerelease_args+=(--prerelease)
+          fi
+          gh release create "${RELEASE_TAG}" \
+            "release-assets/source/TGCloud-${RELEASE_TAG}-source.tar.gz" \
+            release-assets/source/SHA256SUMS.txt \
+            "release-assets/compose/TGCloud-${RELEASE_TAG}-compose.tar.gz" \
+            release-assets/compose/COMPOSE-SHA256SUMS.txt \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --title "${RELEASE_TITLE}" \
+            --notes-file RELEASE_NOTES.md "${prerelease_args[@]}"
+
+      - name: Verify published release and exact asset set
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --json tagName --jq .tagName)" = "${RELEASE_TAG}"
+          test "$(gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --json name --jq .name)" = "${RELEASE_TITLE}"
+          test "$(gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft)" = false
+          test "$(gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --json isPrerelease --jq .isPrerelease)" = "${RELEASE_PRERELEASE}"
+          expected=(
+            COMPOSE-SHA256SUMS.txt
+            SHA256SUMS.txt
+            "TGCloud-${RELEASE_TAG}-compose.tar.gz"
+            "TGCloud-${RELEASE_TAG}-source.tar.gz"
+          )
+          mapfile -t actual < <(
+            gh release view "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --json assets \
+              --jq '.assets[].name' | sort
+          )
+          diff <(printf '%s\n' "${expected[@]}") <(printf '%s\n' "${actual[@]}")
+          gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --json url --jq .url

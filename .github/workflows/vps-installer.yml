@@ -1,0 +1,178 @@
+name: VPS installer checks
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "install.sh"
+      - "install-lan.sh"
+      - "tests/addons/**"
+      - "scripts/**"
+      - "src/**"
+      - "pyproject.toml"
+      - "requirements/**"
+      - "tests/test_vps_installer.py"
+      - "tests/test_architecture.py"
+      - "tests/test_lan*.py"
+      - "tests/test_uninstaller.py"
+      - "tests/test_proxy_host_compat.py"
+      - "tests/test_external_proxy.py"
+      - "tests/test_source_identity.py"
+      - "tests/test_restore_rehearsal.py"
+      - "tests/test_management_pages.py"
+      - ".github/scripts/maintenance_preflight.py"
+      - ".github/scripts/prepare_release.py"
+      - ".github/scripts/linux_validation.py"
+      - "tests/test_release_preparation.py"
+      - "tests/test_proxy_rendering.py"
+      - "tests/test_proxy_certbot_startup.py"
+      - "tests/test_webdav_entry.py"
+      - "tests/test_listening_host.py"
+      - "tests/test_webdav_upgrade.py"
+      - "tests/test_listening_login.py"
+      - "tests/test_instance_backup.py"
+      - "tests/test_readiness.py"
+      - "tests/naming/test_naming_preview.py"
+      - "tests/test_feature_settings.py"
+      - "tests/test_install_feedback.py"
+      - "tests/test_installer_ui.py"
+      - "tests/test_host_bundle.py"
+      - "tests/test_notifications.py"
+      - "tests/test_diagnostic_report.py"
+      - "tests/test_classification.py"
+      - "tests/test_member_quotas.py"
+      - "tests/test_progress_metrics.py"
+      - "tests/fixtures/naming*.json"
+      - "tests/test_repository.py"
+      - "tests/test_storage_wizard.py"
+      - "tests/test_family_management.py"
+      - "tests/test_source_release.py"
+      - ".github/scripts/source_release.py"
+      - ".github/scripts/check_python.py"
+      - ".github/scripts/check_repository.py"
+      - "tests/test_compose*.py"
+      - ".github/scripts/compose_release.py"
+      - "packaging/**"
+      - ".github/workflows/vps-installer.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "install.sh"
+      - "install-lan.sh"
+      - "tests/addons/**"
+      - "scripts/**"
+      - "src/**"
+      - "pyproject.toml"
+      - "requirements/**"
+      - "tests/test_vps_installer.py"
+      - "tests/test_architecture.py"
+      - "tests/test_lan*.py"
+      - "tests/test_uninstaller.py"
+      - "tests/test_proxy_host_compat.py"
+      - "tests/test_external_proxy.py"
+      - "tests/test_source_identity.py"
+      - "tests/test_restore_rehearsal.py"
+      - "tests/test_management_pages.py"
+      - ".github/scripts/maintenance_preflight.py"
+      - ".github/scripts/prepare_release.py"
+      - ".github/scripts/linux_validation.py"
+      - "tests/test_release_preparation.py"
+      - "tests/test_proxy_rendering.py"
+      - "tests/test_proxy_certbot_startup.py"
+      - "tests/test_webdav_entry.py"
+      - "tests/test_listening_host.py"
+      - "tests/test_webdav_upgrade.py"
+      - "tests/test_listening_login.py"
+      - "tests/test_instance_backup.py"
+      - "tests/test_readiness.py"
+      - "tests/naming/test_naming_preview.py"
+      - "tests/test_feature_settings.py"
+      - "tests/test_install_feedback.py"
+      - "tests/test_installer_ui.py"
+      - "tests/test_host_bundle.py"
+      - "tests/test_notifications.py"
+      - "tests/test_diagnostic_report.py"
+      - "tests/test_classification.py"
+      - "tests/test_member_quotas.py"
+      - "tests/test_progress_metrics.py"
+      - "tests/fixtures/naming*.json"
+      - "tests/test_repository.py"
+      - "tests/test_storage_wizard.py"
+      - "tests/test_family_management.py"
+      - "tests/test_source_release.py"
+      - ".github/scripts/source_release.py"
+      - ".github/scripts/check_python.py"
+      - ".github/scripts/check_repository.py"
+      - "tests/test_compose*.py"
+      - ".github/scripts/compose_release.py"
+      - "packaging/**"
+      - ".github/workflows/vps-installer.yml"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: src
+
+jobs:
+  offline-linux:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.13"]
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONIOENCODING: utf-8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install lint tools only
+        run: |
+          python - <<'PY'
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          locked = Path("requirements/dev.lock.txt").read_text(encoding="utf-8")
+          pins = []
+          for name in ("ruff", "bandit"):
+              matches = re.findall(rf"(?m)^{name}==[0-9.]+", locked)
+              if len(matches) != 1:
+                  raise ValueError(f"Expected exactly one locked {name} version")
+              pins.append(matches[0])
+          subprocess.run([sys.executable, "-m", "pip", "install", *pins], check=True)
+          PY
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+      - name: Shell syntax and lint
+        run: |
+          bash -n install.sh
+          bash -n install-lan.sh
+          shellcheck install.sh install-lan.sh
+      - name: Offline tests (no VPS or Docker calls)
+        run: |
+          python .github/scripts/check_python.py test --scope cli
+      - name: Isolated LAN Nginx checks (no product deployment)
+        if: matrix.python == '3.13'
+        env:
+          TGCLOUD_TEST_LAN_DOCKER: "1"
+        run: |
+          python -B -m tgcloud.deployment.architecture docker
+          python -B -m unittest discover -s tests -p test_lan_gateway_docker.py -v
+      - name: Python lint and syntax
+        run: |
+          python .github/scripts/check_python.py lint --scope cli
+          python .github/scripts/check_python.py compile --scope cli
+          bandit -q -r scripts
+      - name: Whitespace check
+        run: git diff --check

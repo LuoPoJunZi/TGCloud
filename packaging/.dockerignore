@@ -1,0 +1,7 @@
+*
+!Dockerfile
+!requirements.txt
+!LICENSE
+!THIRD_PARTY_NOTICES.md
+!app/
+!app/**

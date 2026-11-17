@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tgcloud"
+dynamic = ["version"]
+description = "Telegram file automation and management for CloudDrive2"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = []
+
+[project.optional-dependencies]
+bot = ["Telethon==1.45.0", "cryptg==0.6.0", "psutil==7.2.2", "pyasn1==0.6.5"]
+# Pin audit transport dependencies and the lock generator; filelock is dev-only.
+dev = ["pytest==9.2.0", "ruff==0.17.3", "bandit==1.9.4", "cryptography==50.0.2", "pip-audit==2.10.1", "certifi==2026.10.19", "filelock==4.2.1", "uv==0.13.6"]
+
+[project.scripts]
+tgcloud = "tgcloud.cli.commands:main"
+tgcloud-webdav = "tgcloud.addons.external_webdav.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "tgcloud.version.VERSION"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+# Preserve the existing implicit rule selection; do not opt into more rule groups.
+# The host CLI supports Python 3.10 even though the Bot container uses 3.12.
+target-version = "py310"
+respect-gitignore = true

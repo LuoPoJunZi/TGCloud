@@ -1,0 +1,28 @@
+FROM python:3.12-slim-trixie@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/opt/tgcloud:/opt/tgcloud/app
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates rclone tini tzdata \
+    && groupadd --system --gid 10001 tgcloud \
+    && useradd --system --uid 10001 --gid 10001 --home-dir /nonexistent \
+        --shell /usr/sbin/nologin tgcloud \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/tgcloud
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app ./app
+COPY LICENSE THIRD_PARTY_NOTICES.md /usr/share/doc/tgcloud/
+# Public source must be readable by UID 10001 even from a private CLI staging
+# directory. Keep root ownership: the runtime user must not modify this code.
+RUN chmod -R a+rX app
+
+USER 10001:10001
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["python", "-m", "tgcloud.app"]
