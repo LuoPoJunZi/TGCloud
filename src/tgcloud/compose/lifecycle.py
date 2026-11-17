@@ -268,8 +268,8 @@ def uninstall(manager, instance):
     action = choose(manager.ui, "卸载方式", ("0", "1", "2"), "0")
     if action == "0":
         return False
-    manager.log("仅当前 " + manager.product.display_name + "；保留其他 Edition、云端文件、独立导出备份及系统 Docker/Nginx。")
-    if action == "2" and manager.ui.ask("删除当前实例数据不可恢复，请输入 Edition 名称确认") != manager.product.key:
+    manager.log("仅当前 " + manager.product.display_name + "；保留其他实例、云端文件、独立导出备份及系统 Docker/Nginx。")
+    if action == "2" and manager.ui.ask("删除当前实例数据不可恢复，请输入实例名称确认") != manager.product.key:
         raise ValueError("确认不匹配；未删除任何内容")
     if not manager.ui.confirm("确认执行上述卸载计划？不会执行全项目 compose down"):
         return False

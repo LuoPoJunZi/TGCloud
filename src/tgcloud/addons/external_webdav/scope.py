@@ -1,12 +1,11 @@
 """Bounded, read-only account-scope discovery; never infer a root from TARGET_PATH.
 
 CloudDrive2's webdav_config.json is read only in the verified /Config bind.
-Encrypted/unknown account layouts require one manual confirmation. Retired
-gateway entry points reject before reading credentials or making requests.
+Encrypted/unknown account layouts require one manual confirmation. Only verified
+CloudDrive2 profiles may reach account configuration reads.
 """
 from __future__ import annotations
 
-import http.client
 import json
 import os
 import stat
@@ -62,12 +61,8 @@ def clouddrive2_root(instance) -> str:
     return config.logical_path(matches[0].get("root_path"), allow_root=True)
 
 
-def openlist_json(port: int, method: str, path: str, *, payload=None, token: str = "") -> dict:
-    raise ValueError("TGCloud 仅支持 CloudDrive2，不请求已退休网关。")
 
 
-def openlist_root(instance, product) -> str:
-    raise ValueError("TGCloud 仅支持 CloudDrive2，不读取已退休网关凭据。")
 
 
 def resolve(instance, product, previous=None) -> Root:
@@ -75,7 +70,7 @@ def resolve(instance, product, previous=None) -> Root:
     try:
         root = clouddrive2_root(instance)
         return Root(root, "网关账号配置")
-    except (ValueError, TypeError, OSError, http.client.HTTPException):
+    except (ValueError, TypeError, OSError):
         # Raw backend JSON, error messages, token and configuration are private.
         # A previous confirmation is reusable only for this exact binding.
         if (previous and previous["instance_dir"] == str(instance.directory)

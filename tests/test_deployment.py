@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -15,7 +14,7 @@ from payload_fixture import payload
 SOURCE = Path(__file__).resolve().parents[1]
 git = shutil.which("git")
 git_bash = Path(git).resolve().parents[1] / "bin/bash.exe" if git else None
-BASH = os.getenv("TG115_TEST_BASH") or (
+BASH = os.getenv("TGCLOUD_TEST_BASH") or (
     str(git_bash) if os.name == "nt" and git_bash and git_bash.is_file()
     else shutil.which("bash") if os.name != "nt" else None
 )
@@ -28,55 +27,14 @@ def bash_path(path: Path) -> str:
 
 @unittest.skipUnless(BASH, "需要 Bash；Linux CI 必须运行脚本故障测试")
 class DeploymentShellTests(unittest.TestCase):
-    def test_clouddrive_discovery_ignores_bot_but_detects_other_gateways(self) -> None:
-        gateway = "tgcloud-clouddrive2|cloudnas/clouddrive2:latest|127.0.0.1:19798->19798/tcp"
-        bot = "tgcloud-clouddrive2-bot|tgcloud-clouddrive2-bot:latest|"
-        legacy = "tg115-clouddrive2|cloudnas/clouddrive2:legacy|"
-        other_gateway = "other-clouddrive2|cloudnas/clouddrive2:latest|"
-        image_matched_gateway = "storage|cloudnas/clouddrive2:latest|"
-        cases = (
-            ("bot_only", (bot, legacy), ()),
-            ("managed_gateway_and_bot", (gateway, bot, legacy), ("tgcloud-clouddrive2",)),
-            ("gateway_detected_by_image", (bot, image_matched_gateway), ("storage",)),
-            (
-                "multiple_real_gateways",
-                (gateway, bot, legacy, other_gateway),
-                ("tgcloud-clouddrive2", "other-clouddrive2"),
-            ),
-        )
-        for script_name in ("remote_install.sh", "repair_clouddrive_network.sh"):
-            script = (SOURCE / "packaging/hooks/clouddrive2" / script_name).read_text(
-                encoding="utf-8"
-            )
-            match = re.search(
-                r"mapfile -t CD2_MATCHES < <\(\n(.*?)\n\s*\)", script, re.DOTALL
-            )
-            self.assertIsNotNone(match, script_name)
-            discovery = match.group(1)
-            harness = (
-                'docker() { printf "%s\\n" "$TGCLOUD_TEST_PS"; }\n'
-                'BOT_CONTAINER="tgcloud-clouddrive2-bot"\n'
-                "mapfile -t CD2_MATCHES < <(\n"
-                + discovery
-                + '\n)\nif ((${#CD2_MATCHES[@]})); then '
-                'printf "%s\\n" "${CD2_MATCHES[@]}"; fi\n'
-            )
-            for scenario, containers, expected in cases:
-                with self.subTest(script=script_name, scenario=scenario):
-                    result = subprocess.run(
-                        [BASH, "-c", harness],
-                        env=os.environ | {"TGCLOUD_TEST_PS": "\n".join(containers)},
-                        capture_output=True,
-                        timeout=20,
-                        check=False,
-                        **(
-                            {"creationflags": subprocess.CREATE_NO_WINDOW}
-                            if os.name == "nt"
-                            else {}
-                        ),
-                    )
-                    self.assertEqual(result.returncode, 0, result.stderr.decode())
-                    self.assertEqual(tuple(result.stdout.decode().splitlines()), expected)
+    def test_gateway_discovery_queries_only_the_managed_container(self):
+        script = (SOURCE / "packaging/hooks/clouddrive2/remote_install.sh").read_text(encoding="utf-8")
+        discovery = 'EXISTING_CD2=""\n' + script.split('EXISTING_CD2=""\n', 1)[1].split('  PORT_19798_CONTAINER=', 1)[0]
+        for running in ("true", "false"):
+            harness = 'running="$1"; docker() { [[ "${@: -1}" == tgcloud-clouddrive2 ]] || exit 9; printf "%s\\n" "$running"; }; ' + discovery + '\nprintf "%s" "$EXISTING_CD2"'
+            result = subprocess.run([BASH, "-c", harness, "fixture", running], capture_output=True, text=True, timeout=10, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "tgcloud-clouddrive2" if running == "true" else "")
 
     def test_clouddrive_diagnostic_logs_redact_secrets(self) -> None:
         script = (SOURCE / "packaging/hooks/clouddrive2/manage.sh").read_text(
@@ -115,7 +73,7 @@ class DeploymentShellTests(unittest.TestCase):
             "WEBDAV_USERNAME_B64=old-user\nWEBDAV_PASSWORD_B64=old-password\n"
             "WEBDAV_TARGET_PATH_B64=custom/target\n"
             "LOCAL_TEMP_BUDGET_GB=34\nMIN_FREE_DISK_GB=11\n"
-            "OPENLIST_ADMIN_PASSWORD=old-admin\n"
+            "UNRELATED_ADMIN_PASSWORD=old-admin\n"
         )
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -185,46 +143,18 @@ class DeploymentShellTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
 
-    def test_legacy_directory_and_stopped_container_only_warn(self) -> None:
-        for edition, legacy_path in (
-            ("clouddrive2", "/opt/tg115"),
-        ):
-            with self.subTest(edition=edition), tempfile.TemporaryDirectory() as temp:
-                legacy_dir = Path(temp) / "legacy"
-                legacy_dir.mkdir()
-                script = (SOURCE / f"packaging/hooks/{edition}/remote_install.sh").read_text(
-                    encoding="utf-8"
-                )
-                snippet = script.split(f"[[ ! -e {legacy_path} ]]", 1)[1].split(
-                    'if [[ -d "$INSTALL_DIR"', 1
-                )[0]
-                snippet = f"[[ ! -e {bash_path(legacy_dir)} ]]" + snippet.replace(
-                    legacy_path, bash_path(legacy_dir)
-                )
-                harness = (
-                    'log() { printf "%s\\n" "$*"; }; '
-                    'fail() { printf "%s\\n" "$*" >&2; exit 3; }; '
-                    'docker() { [[ "$1 $2" == "container inspect" ]]; }; '
-                    + snippet
-                )
-                result = subprocess.run(
-                    [BASH, "-c", harness],
-                    capture_output=True,
-                    timeout=20,
-                    check=False,
-                    **(
-                        {"creationflags": subprocess.CREATE_NO_WINDOW}
-                        if os.name == "nt"
-                        else {}
-                    ),
-                )
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn("检测到旧目录".encode(), result.stdout)
-                self.assertIn("检测到旧容器".encode(), result.stdout)
+    def test_foreign_container_ownership_is_refused_before_host_mutation(self):
+        script = (SOURCE / "packaging/hooks/clouddrive2/remote_install.sh").read_text(encoding="utf-8")
+        preflight = "for target_container in " + script.split("for target_container in ", 1)[1].split("PORT_19798_OWNER=", 1)[0]
+        harness = 'INSTALL_DIR=/opt/tgcloud; BOT_CONTAINER=tgcloud-clouddrive2-bot; fail() { printf "%s\\n" "$*" >&2; exit 3; }; docker() { if [[ "$1 $2" == "container inspect" ]]; then return 0; fi; if [[ "$1" == inspect ]]; then printf "%s\\n" /opt/unrelated-service; return 0; fi; printf UNEXPECTED_MUTATION; exit 9; }; ' + preflight
+        result = subprocess.run([BASH, "-c", harness], capture_output=True, text=True, timeout=10, check=False)
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn("目标容器名", result.stderr)
+        self.assertNotIn("UNEXPECTED_MUTATION", result.stdout)
 
     def test_runtime_port_preflight_keeps_stopped_legacy_and_blocks_conflicts(self) -> None:
         for edition, port, legacy in (
-            ("clouddrive2", 19798, "tg115-clouddrive2"),
+            ("clouddrive2", 19798, "unrelated-clouddrive2"),
         ):
             script = (SOURCE / f"packaging/hooks/{edition}/remote_install.sh").read_text(
                 encoding="utf-8"
@@ -235,7 +165,7 @@ class DeploymentShellTests(unittest.TestCase):
             harness = (
                 'INSTALL_DIR="/opt/tgcloud-' + edition + '"; '
                 'BOT_CONTAINER="tgcloud-' + edition + '-bot"; '
-                'OPENLIST_CONTAINER="tgcloud-openlist"; '
+                'UNRELATED_CONTAINER="tgcloud-unsupported"; '
                 'log() { :; }; fail() { printf "%s\\n" "$*" >&2; exit 3; }; '
                 'ss() { :; }; '
                 'docker() { '
@@ -281,7 +211,7 @@ class DeploymentShellTests(unittest.TestCase):
             "DOCKER_ROOT_DIR=", 1
         )[0]
         harness = (
-            'OPENLIST_CONTAINER="tgcloud-clouddrive2"\n'
+            'UNRELATED_CONTAINER="tgcloud-clouddrive2"\n'
             'docker() { if [[ "$1" == ps ]]; then printf "%s\\n" "$TGCLOUD_TEST_PS"; else printf "fake-bot:1\\n"; fi; }\n'
             'ss() { :; }\n'
             'fail() { printf "%s\\n" "$*" >&2; exit 3; }\n'
@@ -309,14 +239,14 @@ class DeploymentShellTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode == 0, allowed, result.stderr)
 
-    def run_openlist_admin_reset(
+    def run_unsupported_admin_reset(
         self, command_output: str
     ) -> subprocess.CompletedProcess[bytes]:
         command = (
-            'realpath() { printf "%s\\n" /opt/tgcloud-openlist; }; '
+            'realpath() { printf "%s\\n" /opt/tgcloud-unsupported; }; '
             'cd() { :; }; '
-            'docker() { printf "%s\\n" "$TG115_TEST_ADMIN_OUTPUT"; }; '
-            'export INSTALL_DIR=/opt/tgcloud-openlist; '
+            'docker() { printf "%s\\n" "$TGCLOUD_TEST_ADMIN_OUTPUT"; }; '
+            'export INSTALL_DIR=/opt/tgcloud-unsupported; '
             'source "$1" reset-random I_UNDERSTAND_THIS_RESETS_THE_ADMIN_PASSWORD'
         )
         return subprocess.run(
@@ -325,9 +255,9 @@ class DeploymentShellTests(unittest.TestCase):
                 "-c",
                 command,
                 "--",
-                bash_path(SOURCE / "packaging/hooks/openlist/openlist_admin.sh"),
+                bash_path(SOURCE / "packaging/hooks/unsupported/unsupported_admin.sh"),
             ],
-            env=os.environ | {"TG115_TEST_ADMIN_OUTPUT": command_output},
+            env=os.environ | {"TGCLOUD_TEST_ADMIN_OUTPUT": command_output},
             capture_output=True,
             timeout=20,
             check=False,
@@ -342,9 +272,9 @@ class DeploymentShellTests(unittest.TestCase):
         from unittest.mock import patch
 
         from tgcloud.cli import vps
-        self.assertFalse((SOURCE / "packaging/hooks/openlist/openlist_admin.sh").exists())
+        self.assertFalse((SOURCE / "packaging/hooks/unsupported/unsupported_admin.sh").exists())
         with patch.object(vps.terminal, "Terminal") as terminal, self.assertRaises(SystemExit):
-            vps.main(["--edition", "openlist", "--show-credentials"])
+            vps.main(["--edition", "unsupported", "--show-credentials"])
         terminal.assert_not_called()
 
     def test_cd2_redeploy_preserves_config_without_logging_secrets(
@@ -363,8 +293,8 @@ class DeploymentShellTests(unittest.TestCase):
                 "CD2_WEBDAV_PASSWORD_B64=new-password\n"
                 "WEBDAV_TARGET_PATH_B64=new-target\n"
                 "CD2_TARGET_PATH_B64=new-target\n"
-                "OPENLIST_ADMIN_PASSWORD=new-admin\n"
-                "TG115_PRESERVE_WEBDAV=true\n",
+                "UNRELATED_ADMIN_PASSWORD=new-admin\n"
+                "UNRELATED_PRESERVE_WEBDAV=true\n",
                 encoding="utf-8",
             )
             existing.write_text(
@@ -372,7 +302,7 @@ class DeploymentShellTests(unittest.TestCase):
                 "CD2_WEBDAV_USERNAME_B64=old-user\n"
                 "CD2_WEBDAV_PASSWORD_B64=old-password\n"
                 "CD2_TARGET_PATH_B64=old-target\n"
-                "OPENLIST_ADMIN_PASSWORD=old-admin\n",
+                "UNRELATED_ADMIN_PASSWORD=old-admin\n",
                 encoding="utf-8",
             )
             result = subprocess.run(
@@ -401,7 +331,7 @@ class DeploymentShellTests(unittest.TestCase):
         self.assertEqual(result.stdout, b"TGCLOUD_CONFIG=PRESERVED\n")
         self.assertNotIn(b"old-password", result.stdout + result.stderr)
         self.assertIn("CD2_WEBDAV_PASSWORD_B64=old-password", merged)
-        self.assertIn("OPENLIST_ADMIN_PASSWORD=old-admin", merged)
+        self.assertIn("UNRELATED_ADMIN_PASSWORD=old-admin", merged)
         self.assertNotIn("new-password", merged)
 
     def run_backup_action(
@@ -447,12 +377,12 @@ class DeploymentShellTests(unittest.TestCase):
                 root / "backup_retention.sh",
             )
             env = os.environ | {
-                "TG115_TEST_DIR": bash_path(root), "TG115_TEST_MODE": mode,
+                "TGCLOUD_TEST_DIR": bash_path(root), "TGCLOUD_TEST_MODE": mode,
                 "TGCLOUD_TEST_PYTHON": bash_path(Path(sys.executable)),
-                "TG115_TEST_SCRIPT": bash_path(
+                "TGCLOUD_TEST_SCRIPT": bash_path(
                     SOURCE / "packaging/hooks/clouddrive2/manage.sh"
                 ),
-                "TG115_TEST_CANDIDATE": bash_path(candidate),
+                "TGCLOUD_TEST_CANDIDATE": bash_path(candidate),
             }
             result = subprocess.run(
                 [BASH, (SOURCE / "tests/manage_harness.sh").as_posix()],
@@ -474,7 +404,7 @@ class DeploymentShellTests(unittest.TestCase):
                 (root / ".env").write_text(old_config, encoding="utf-8")
                 shutil.copytree(payload(edition) / "app", root / "app")
                 (root / "data").mkdir()
-                (root / "data/tg115.db").write_bytes(b"database-stays")
+                (root / "data/tgcloud.db").write_bytes(b"database-stays")
                 (root / "config/rclone").mkdir(parents=True)
                 (root / "config/rclone/rclone.conf").write_bytes(b"rclone-stays")
                 shutil.copyfile(
@@ -490,14 +420,14 @@ class DeploymentShellTests(unittest.TestCase):
                             [BASH, (SOURCE / "tests/manage_harness.sh").as_posix()],
                             env=os.environ
                             | {
-                                "TG115_TEST_DIR": bash_path(root),
+                                "TGCLOUD_TEST_DIR": bash_path(root),
                                 "TGCLOUD_TEST_PYTHON": bash_path(Path(sys.executable)),
-                                "TG115_TEST_MODE": mode,
-                                "TG115_TEST_ACTION": "update",
-                                "TG115_TEST_SCRIPT": bash_path(
+                                "TGCLOUD_TEST_MODE": mode,
+                                "TGCLOUD_TEST_ACTION": "update",
+                                "TGCLOUD_TEST_SCRIPT": bash_path(
                                     SOURCE / "packaging/hooks" / edition / "manage.sh"
                                 ),
-                                "TG115_TEST_CANDIDATE": bash_path(root / ".env"),
+                                "TGCLOUD_TEST_CANDIDATE": bash_path(root / ".env"),
                             },
                             capture_output=True,
                             timeout=20,
@@ -514,7 +444,7 @@ class DeploymentShellTests(unittest.TestCase):
                             b"TGCLOUD_UPDATE=OK" in result.stdout, mode == "ok"
                         )
                         self.assertEqual((root / ".env").read_text(encoding="utf-8"), old_config)
-                        self.assertEqual((root / "data/tg115.db").read_bytes(), b"database-stays")
+                        self.assertEqual((root / "data/tgcloud.db").read_bytes(), b"database-stays")
                         self.assertEqual(
                             (root / "config/rclone/rclone.conf").read_bytes(),
                             b"rclone-stays",
@@ -522,7 +452,7 @@ class DeploymentShellTests(unittest.TestCase):
                         self.assertIn(f"tgcloud-{edition}-bot", calls)
                         if mode == "ok":
                             self.assertIn("--expected-code tgcloud-code-v2:sha256:", calls)
-                        self.assertNotIn("tg115-", calls)
+                        self.assertNotIn("unrelated-", calls)
                         self.assertNotIn("compose down", calls)
 
 

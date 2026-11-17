@@ -83,11 +83,11 @@ class ManagementTests(unittest.TestCase):
         manager.recheck.assert_called_once_with(instance)
         requests = [json.loads(shlex.split(call.args[0])[2]) for call in session.run.call_args_list]
         self.assertEqual(requests[1], {"admin_id": 123, "action": "add", "id": 456, "name": "家人", "revision": "initial"})
-        self.assertTrue(all("openlist" not in call.args[0] for call in session.run.call_args_list))
+        self.assertTrue(all("unsupported" not in call.args[0] for call in session.run.call_args_list))
 
     def test_endpoint_works_without_bot_dependencies_and_never_creates_missing_db(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "tg115.db"
+            path = Path(directory) / "tgcloud.db"
             environment = dict(os.environ, PYTHONPATH=str(ROOT / "src"), DATA_DIR=directory, ALLOWED_USER_ID="123")
             command = [sys.executable, "-S", "-B", "-m", "tgcloud.persistence.users"]
             def run(request):

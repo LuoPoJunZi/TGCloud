@@ -26,7 +26,7 @@ class LocalSourceInstallTests(unittest.TestCase):
         values = local_source.content(ROOT)
         self.assertNotIn(".env", values)
         self.assertFalse(any(name.startswith((".git/", "data/", "downloads/", "legacy/")) for name in values))
-        self.assertNotIn("src/tgcloud/storage/openlist.py", values)
+        self.assertNotIn("src/tgcloud/storage/unsupported.py", values)
         self.assertIn("src/tgcloud/deployment/local_source.py", values)
         self.assertIn("docs/install.md", values)
         changed = dict(values, **{"README.md": values["README.md"] + b"\nchanged\n"})
@@ -89,7 +89,7 @@ class LocalSourceInstallTests(unittest.TestCase):
         from tgcloud.addons.external_webdav import cli
         for parser in (vps.parser(), lan.parser(), cli.parser()):
             self.assertEqual(parser.parse_args([]).edition, "clouddrive2")
-            self.assertNotIn("openlist", parser.format_help().lower())
+            self.assertNotIn("unsupported", parser.format_help().lower())
             self.assertNotIn("both", parser.format_help().lower())
 
     def test_public_check_uses_real_local_snapshot_without_release_downloads_or_terminal(self):

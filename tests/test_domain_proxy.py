@@ -54,7 +54,7 @@ def external_state(domain, base=None):
     state = json.loads(json.dumps(base if base is not None else empty_state()))
     state.update(version=2, external_webdav={"clouddrive2": {
         "kind": "external_webdav", "owner": "tgcloud.external_webdav", "edition": "clouddrive2",
-        "instance_dir": "/opt/tgcloud-clouddrive2", "domain": domain, "enabled": True,
+        "instance_dir": "/opt/tgcloud", "domain": domain, "enabled": True,
         "backend_port": 19798, "auth_file": "external-auth/clouddrive2.htpasswd"}})
     return normalize_state(json.dumps(state))
 
@@ -891,7 +891,7 @@ class RegressionBoundaryTests(unittest.TestCase):
             '"127.0.0.1:19798:19798"',
             (root / "packaging/compose/docker-compose.clouddrive2.yml").read_text(encoding="utf-8"),
         )
-        self.assertFalse((root / "packaging/compose/docker-compose.openlist.yml").exists())
+        self.assertFalse((root / "packaging/compose/docker-compose.unsupported.yml").exists())
 
     def test_templates_do_not_contain_credentials_or_private_keys(self) -> None:
         rendered = render_compose() + render_route_conf(

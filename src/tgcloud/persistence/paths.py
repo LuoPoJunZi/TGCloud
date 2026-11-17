@@ -11,8 +11,7 @@ import sys
 from pathlib import Path
 
 DATABASE_NAME = "tgcloud.db"
-LEGACY_DATABASE_NAME = "tg115.db"
-DATABASE_NAMES = (DATABASE_NAME, LEGACY_DATABASE_NAME)
+DATABASE_NAMES = (DATABASE_NAME,)
 SIDECARS = ("-wal", "-shm", "-journal")
 
 
@@ -20,6 +19,13 @@ def database_path(directory: Path, *, require_existing: bool = False) -> Path:
     directory = directory.absolute()
     if directory.resolve() != directory or directory.is_symlink():
         raise ValueError("数据库目录经过链接；停止，不创建或移动数据库")
+    if directory.exists():
+        for entry in directory.iterdir():
+            name = entry.name
+            for suffix in SIDECARS:
+                name = name.removesuffix(suffix)
+            if name.endswith((".db", ".sqlite", ".sqlite3")) and name != DATABASE_NAME:
+                raise ValueError("发现其他数据库或旁文件；停止，不选择、移动或创建替代数据库")
     present = []
     for name in DATABASE_NAMES:
         path = directory / name
@@ -35,7 +41,7 @@ def database_path(directory: Path, *, require_existing: bool = False) -> Path:
                 if sidecar.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or path not in present:
                     raise ValueError("数据库旁文件归属不明确；停止，不创建替代数据库")
     if len(present) > 1:
-        raise ValueError("同时发现 tgcloud.db 和旧数据库；请先核对备份与任务记录，不自动选择或合并")
+        raise ValueError("数据库身份不唯一；停止自动选择")
     if present:
         return present[0]
     if require_existing:
@@ -44,6 +50,11 @@ def database_path(directory: Path, *, require_existing: bool = False) -> Path:
 
 
 def database_entry(names) -> str:
+    names = set(names)
+    for name in names:
+        path = Path(name)
+        if path.parent.as_posix() == "data" and path.suffix in {".db", ".sqlite", ".sqlite3"} and path.name != DATABASE_NAME:
+            raise ValueError("备份含其他数据库；停止自动选择")
     selected = {"data/" + name for name in DATABASE_NAMES} & set(names)
     if len(selected) != 1:
         raise ValueError("备份必须包含唯一的业务数据库；不接受缺失或多个数据库")
@@ -51,7 +62,7 @@ def database_entry(names) -> str:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="只读核对 TGCloud 数据库文件名，不创建或迁移")
+    parser = argparse.ArgumentParser(description="只读核对 TGCloud 数据库文件名，不创建或移动数据")
     parser.add_argument("directory", type=Path)
     args = parser.parse_args(argv)
     try:

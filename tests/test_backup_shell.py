@@ -33,14 +33,14 @@ OLD_IMAGE_ID=old-bot
 OLD_IMAGE_TAG="$TGCLOUD_TEST_DIGEST"
 ROLLBACK_ARMED=true
 DATABASE_BACKUP=""
-DATABASE_NAME="${TGCLOUD_TEST_DB_NAME:-tg115.db}"
+DATABASE_NAME="${TGCLOUD_TEST_DB_NAME:-tgcloud.db}"
 RELEASE_STAGE="$TGCLOUD_TEST_PAYLOAD"
 
 # All Docker operations are simulated. SQLite and tar use real implementations.
 python3() { "$TGCLOUD_TEST_PYTHON" "$@"; }
 chown() { :; }
-wait_openlist_http() { :; }
-wait_openlist() { :; }
+wait_unsupported_http() { :; }
+wait_unsupported() { :; }
 wait_container_healthy() { :; }
 wait_healthy() { :; }
 docker() {
@@ -106,7 +106,7 @@ PY
   command install "$@"
 }
 tar() {
-  if [[ "$*" == *'openlist/data'* ]]; then
+  if [[ "$*" == *'unsupported/data'* ]]; then
     [[ -f "$test_root/gateway-stopped" ]] || return 7
     if [[ "$TGCLOUD_TEST_MODE" == archive-fail ]]; then return 1; fi
   fi
@@ -127,7 +127,7 @@ class CloudDriveBackupTests(unittest.TestCase):
         helper = self.installation / "app/tgcloud/persistence/paths.py"
         helper.parent.mkdir(parents=True, exist_ok=True)
         helper.write_bytes((ROOT / "src/tgcloud/persistence/paths.py").read_bytes())
-        self.database = self.installation / "data/tg115.db"
+        self.database = self.installation / "data/tgcloud.db"
         self.snapshot = self.root / "good.db"
         self.make_database(self.database, 1)
         self.make_database(self.snapshot, 2)
@@ -170,7 +170,7 @@ class CloudDriveBackupTests(unittest.TestCase):
             self.assertEqual(database.execute("SELECT value FROM fixture").fetchone(), (value,))
 
     def preserve_sidecars(self):
-        return {self.installation / f"data/tg115.db-{kind}": kind.encode() for kind in ("wal", "shm")}
+        return {self.installation / f"data/tgcloud.db-{kind}": kind.encode() for kind in ("wal", "shm")}
 
     def test_digest_image_is_reused_and_old_bot_is_restarted(self):
         result, calls = self.execute("rollback_install\n")
@@ -223,7 +223,7 @@ class CloudDriveBackupTests(unittest.TestCase):
         for path, data in sidecars.items():
             path.write_bytes(data)
         result, calls = self.execute(
-            "rollback_install\n", "restore-copy-fail", 'DATABASE_BACKUP="$test_root/good.db"\nDATABASE_NAME=tg115.db\n',
+            "rollback_install\n", "restore-copy-fail", 'DATABASE_BACKUP="$test_root/good.db"\nDATABASE_NAME=tgcloud.db\n',
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("compose rm", calls)
@@ -238,7 +238,7 @@ class CloudDriveBackupTests(unittest.TestCase):
         for path, data in sidecars.items():
             path.write_bytes(data)
         result, calls = self.execute(
-            "rollback_install\n", "cannot-stop-bot", 'DATABASE_BACKUP="$test_root/good.db"\nDATABASE_NAME=tg115.db\n',
+            "rollback_install\n", "cannot-stop-bot", 'DATABASE_BACKUP="$test_root/good.db"\nDATABASE_NAME=tgcloud.db\n',
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("compose up", calls)
@@ -249,7 +249,7 @@ class CloudDriveBackupTests(unittest.TestCase):
     def test_valid_snapshot_restores_database_and_restarts_bot(self):
         for path, data in self.preserve_sidecars().items():
             path.write_bytes(data)
-        result, calls = self.execute("rollback_install\n", before='DATABASE_BACKUP="$test_root/good.db"\nDATABASE_NAME=tg115.db\n')
+        result, calls = self.execute("rollback_install\n", before='DATABASE_BACKUP="$test_root/good.db"\nDATABASE_NAME=tgcloud.db\n')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assert_database(self.database, 2)
         self.assertFalse(any(path.exists() for path in self.preserve_sidecars()))
@@ -281,7 +281,7 @@ class CloudDriveBackupTests(unittest.TestCase):
 
     def gateway_fixture(self):
         for name in ("data.db", "config.json", "log/log.log", "temp/upload-part", "temporary-keep/user-file"):
-            path = self.installation / "openlist/data" / name
+            path = self.installation / "unsupported/data" / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"fixture")
 

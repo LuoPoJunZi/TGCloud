@@ -95,8 +95,6 @@ class InstallationUITests(unittest.TestCase):
             self.assertEqual(base64.b64decode(config["WEBDAV_TARGET_PATH_B64"]), b"")
             self.assertEqual(config["TZ"], "Asia/Shanghai")
             self.assertFalse(any("时区" in prompt for prompt, *_ in ui.prompts))
-            if product.is_openlist:
-                self.assertGreater(len(config["OPENLIST_ADMIN_PASSWORD"]), 8)
 
     def test_manual_password_and_relative_subdir_preserved_no_native_root_guess(self):
         config = terminal.collect_config(InputUI(**{"WebDAV 密码": "my own $password", "Bot 保存子目录": "视频/本周"}), PRODUCTS["clouddrive2"], storage=("20", "8"))
@@ -115,7 +113,7 @@ class InstallationUITests(unittest.TestCase):
         log.register(config)
         terminal.show_setup_credentials(ui, PRODUCTS["clouddrive2"], config, log)
         self.assertEqual(ui.private.call_count, 2)
-        self.assertNotIn("OPENLIST_ADMIN_PASSWORD", config)
+        self.assertNotIn("UNRELATED_ADMIN_PASSWORD", config)
         public = "\n".join(messages)
         private = str(ui.private.call_args_list)
         for key in ("WEBDAV_PASSWORD_B64", "BOT_TOKEN_B64", "TELEGRAM_API_HASH_B64"):
@@ -167,9 +165,9 @@ class InstallationUITests(unittest.TestCase):
                 self.assertEqual(commands.main([command]), 0)
             menu.assert_called_once_with([], mode_hint=mode)
         with patch.object(management, "main") as menu, patch.object(vps, "main", return_value=0) as installer:
-            self.assertEqual(commands.main(["install", "--edition", "openlist", "--check"]), 0)
+            self.assertEqual(commands.main(["install", "--edition", "unsupported", "--check"]), 0)
         menu.assert_not_called()
-        installer.assert_called_once_with(["--edition", "openlist", "--check"])
+        installer.assert_called_once_with(["--edition", "unsupported", "--check"])
 
     def test_management_selects_only_cd2_without_a_gateway_prompt(self):
         ui = Mock()
@@ -668,14 +666,14 @@ class ManagerCleanupTests(unittest.TestCase):
         self.assertEqual(session.read_text(), "FAKE_KEEP_SESSION")
 
     def test_stopped_partial_container_or_managed_network_keeps_command(self):
-        for value in (({"tgcloud-openlist": {"running": False}}, {}), ({}, {"tgcloud-openlist-net": {}})):
+        for value in (({"tgcloud-unsupported": {"running": False}}, {}), ({}, {"tgcloud-unsupported-net": {}})):
             self.snapshot.return_value = value
             management.uninstall.cleanup_manager(self.session, self.log)
             self.assertTrue(self.command.exists())
             self.assertTrue(self.root.exists())
 
     def test_addon_route_and_unknown_proxy_state_keep_command(self):
-        self.state.return_value = {"domains": {}, "external_webdav": {"openlist": {}}}
+        self.state.return_value = {"domains": {}, "external_webdav": {"unsupported": {}}}
         management.uninstall.cleanup_manager(self.session, self.log)
         self.assertTrue(self.command.exists())
         self.state.side_effect = ValueError("unsupported state")

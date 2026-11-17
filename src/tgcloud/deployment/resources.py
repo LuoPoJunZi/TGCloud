@@ -12,9 +12,6 @@ from tgcloud.deployment.architecture import ALIASES
 GIB = 1024**3
 PROBE_BEGIN = "TGCLOUD_VPS_PROBE_BEGIN"
 PROBE_END = "TGCLOUD_VPS_PROBE_END"
-# Legacy TG115 compatibility for output from an older remote probe.
-LEGACY_PROBE_BEGIN = "TG115_VPS_PROBE_BEGIN"
-LEGACY_PROBE_END = "TG115_VPS_PROBE_END"
 SAFE_INSTALL_DIR = re.compile(r"/opt/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*")
 SUPPORTED_ARCHITECTURES = set(ALIASES)
 
@@ -199,8 +196,6 @@ def _parse_non_negative(name: str, values: dict[str, str]) -> int:
 def parse_probe_output(output: str) -> VpsResources:
     if PROBE_BEGIN in output and PROBE_END in output:
         begin, end = PROBE_BEGIN, PROBE_END
-    elif LEGACY_PROBE_BEGIN in output and LEGACY_PROBE_END in output:
-        begin, end = LEGACY_PROBE_BEGIN, LEGACY_PROBE_END
     else:
         raise ValueError("VPS 资源探测结果缺少完整边界")
     block = output.rsplit(begin, 1)[1].split(end, 1)[0]

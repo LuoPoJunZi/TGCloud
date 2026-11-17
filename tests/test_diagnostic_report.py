@@ -18,7 +18,7 @@ class ReportTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.db = TaskDB(self.root / "tg115.db")
+        self.db = TaskDB(self.root / "tgcloud.db")
         self.addCleanup(self.db.close)
 
     def test_readonly_whitelist_contains_no_names_credentials_raw_errors(self):
@@ -35,7 +35,7 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(value["configuration"], "incomplete")
 
     def test_retired_or_invalid_backend_is_never_reported_as_supported(self):
-        for backend in ("openlist", "unknown", "", "cd2"):
+        for backend in ("unsupported", "unknown", "", "cd2"):
             with self.subTest(backend=backend):
                 report = collect(self.root, environment={"TGCLOUD_STORAGE_BACKEND": backend})
                 self.assertEqual(report["edition"], "unknown")
@@ -115,10 +115,10 @@ class ReportTests(unittest.TestCase):
                 commands = "\n".join(call.args[0] for call in session.run.call_args_list)
                 for forbidden in (" restart ", " stop ", " rm ", "curl", "verify_destination"):
                     self.assertNotIn(forbidden, commands)
-                self.assertNotIn("tgcloud-openlist-bot", commands)
+                self.assertNotIn("tgcloud-unsupported-bot", commands)
 
     def test_malformed_snapshot_types_never_leak_or_raise(self):
-        for bad in ([], None, {"schema": True}, {"schema": 1, "edition": "openlist", "version": []}):
+        for bad in ([], None, {"schema": True}, {"schema": 1, "edition": "unsupported", "version": []}):
             with self.subTest(value=bad):
                 _, instance, session = self.report_fixture()
                 session.run.side_effect = None

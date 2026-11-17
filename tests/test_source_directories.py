@@ -96,7 +96,7 @@ class SourceDirectoryTests(unittest.IsolatedAsyncioTestCase):
         zone.start()
         self.addCleanup(zone.stop)
         self.settings = make_settings(Path(self.temp.name))
-        self.path = self.settings.data_dir / "tg115.db"
+        self.path = self.settings.data_dir / "tgcloud.db"
         self.db = TaskDB(self.path)
         self.addCleanup(self.db.close)
         self.owner = make_service(self.settings, self.db)

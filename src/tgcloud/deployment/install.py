@@ -102,9 +102,7 @@ def make_plan(
             raise ValueError("缺少当前版本的官方源码基线，无法安全升级")
         upgrade.assert_unmodified(instance, old_source)
         if action == "upgrade" and payload.gateway_image(source, instance.product) != instance.gateway_image:
-            raise ValueError("此升级涉及云网关镜像变化；停止自动升级。请先备份，按发布说明在隔离环境验证迁移；不要用旧 EXE 覆盖新实例")
-    elif any(name in instances.docker_inventory(session) for name in instance.product.legacy_containers):
-        raise ValueError("发现旧 TG115 容器，停止首次安装")
+            raise ValueError("此升级涉及云网关镜像变化；停止自动升级。请先备份，在隔离环境验收候选网关后再安排升级")
     if action in {"upgrade", "install"}:
         # The stable repair helper can adopt foreign CD2 containers; refuse them.
         instances.check_foreign_gateway(instance.product, session)
@@ -133,7 +131,7 @@ def make_plan(
             from tgcloud.cli.proxy import select_entry
             select_entry(manager, ui, plan.domain, proxy_options)
             if any(item["domain"] == plan.domain for key, item in state["domains"].items() if key != instance.product.key):
-                raise ValueError("该域名已由另一个 Edition 使用")
+                raise ValueError("该域名已由另一个实例使用")
             if instance.present:
                 detection = manager.detect(plan.domain)
                 if detection.state != "detected":

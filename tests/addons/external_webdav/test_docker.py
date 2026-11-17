@@ -17,10 +17,26 @@ from unittest.mock import patch
 
 from tgcloud.addons.external_webdav import config, verification
 from tgcloud.deployment.proxy.manager import NGINX_IMAGE, render_config_set
+from tgcloud.deployment.proxy.state import empty_state
 
 from .test_feature import SECRET, XML, route
 
 ENABLED = (os.name == "posix" and shutil.which("docker") and os.environ.get("TGCLOUD_TEST_EXTERNAL_WEBDAV_DOCKER") == "1")
+
+
+def nginx_fixture(target):
+    state = empty_state()
+    state.update(version=2, external_webdav={target["edition"]: target})
+    return render_config_set(state)
+
+
+class ExternalNginxFixtureTests(unittest.TestCase):
+    def test_owned_fixture_renders_before_docker_is_required(self):
+        target = route("clouddrive2")
+        files = nginx_fixture(target)
+        self.assertIn("nginx.conf", files)
+        self.assertIn(target["domain"], "\n".join(files.values()))
+        self.assertIn(target["auth_file"], "\n".join(files.values()))
 
 
 @unittest.skipUnless(ENABLED, "Requires explicit disposable Linux Docker integration environment")
@@ -103,7 +119,7 @@ class ExternalNginxTests(unittest.TestCase):
                                          "-keyout", str(certs / "privkey.pem"), "-out", str(certs / "fullchain.pem")],
                                         capture_output=True, timeout=30, check=False)
                 self.assertEqual(result.returncode, 0)
-                files = render_config_set({"version": 2, "domains": {}, "external_webdav": {edition: target}})
+                files = nginx_fixture(target)
                 for name, content in files.items():
                     destination = directory / "nginx" / name
                     destination.parent.mkdir(parents=True, exist_ok=True)

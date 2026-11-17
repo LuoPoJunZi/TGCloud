@@ -119,7 +119,7 @@ def account(service, action: str, user: str, *, sample_file: str = "") -> None:
             service.log("用户名：" + user)
             if action in {"add", "rotate"}:
                 service.ui.show_password(secret)
-            service.log(("base path：" if service.product.is_openlist else "根目录：") + original["target_dir"])
+            service.log("根目录：" + original["target_dir"])
             confirmed = service.ui.ask("后台已设置的账号根目录（不能为 /）", validate=config.logical_path)
             if (confirmed != original["target_dir"] or not service.ui.confirm(
                     "已确认原生独立账号、只读和共同目录，无上传／删除／移动／管理权限？")):

@@ -770,7 +770,7 @@ fi
             return adapter.status(current)
         item = current["domains"].get(self.product.key)
         if not item:
-            return ProxyReport("", "not_configured", "当前 Edition 尚未配置域名访问。", ())
+            return ProxyReport("", "not_configured", "当前实例尚未配置域名访问。", ())
         domain = item["domain"]
         code, output = self._run(status_command(self.product, domain), timeout=90)
         markers = parse_markers(output)
@@ -876,7 +876,7 @@ if path.exists() or path.is_symlink():
         if all_routes and registry["instances"]:
             raise RuntimeError("共享代理仍承载 Compose HTTPS；请先用对应部署包移除这些路由，再安排入口迁移。")
         if self.product.key in registry["instances"]:
-            raise RuntimeError("当前 Edition 的 HTTPS 由独立 Compose 部署管理；请使用原部署包的 HTTPS 工具修改或移除。")
+            raise RuntimeError("当前实例的 HTTPS 由独立 Compose 部署管理；请使用原部署包的 HTTPS 工具修改或移除。")
 
     def _configure_locked(self, domain: str, email: str) -> ProxyReport:
         self.log("TGCLOUD_STAGE=HTTPS_ENV")
@@ -1115,7 +1115,7 @@ if path.exists() or path.is_symlink():
             if action == "renew_dry_run":
                 item = state["domains"].get(self.product.key)
                 if not item:
-                    raise RuntimeError("当前 Edition 尚未配置域名，不能演练续期。")
+                    raise RuntimeError("当前实例尚未配置域名，不能演练续期。")
                 domain = validate_domain(item["domain"])
                 self.log("TGCLOUD_STAGE=RENEW_DRY_RUN")
                 task_id = uuid.uuid4().hex
@@ -1155,7 +1155,7 @@ if path.exists() or path.is_symlink():
             return adapter.remove_locked()
         target = state_without_route(previous, self.product.key)
         if target == previous:
-            return ProxyReport("", "not_configured", "当前 Edition 没有可移除的域名路由。", ())
+            return ProxyReport("", "not_configured", "当前实例没有可移除的域名路由。", ())
         removed = previous["domains"][self.product.key]["domain"]
         try:
             if has_routes(target):

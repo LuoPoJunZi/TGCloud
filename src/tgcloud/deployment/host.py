@@ -240,7 +240,7 @@ def edition_lock(path: Path) -> Iterator[None]:
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise RuntimeError("另一个一键脚本正在操作此 Edition") from exc
+            raise RuntimeError("另一个一键脚本正在操作此实例") from exc
         yield
     finally:
         os.close(descriptor)
