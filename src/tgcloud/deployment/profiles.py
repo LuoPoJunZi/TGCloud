@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from tgcloud.version import VERSION as RELEASE_VERSION
 
 SHARED_PAYLOAD_FILES = (
+    "THIRD_PARTY_NOTICES.md",
     "packaging/hooks/clouddrive2/backup_retention.sh",
     "packaging/hooks/clouddrive2/preserve_runtime_config.sh",
     "packaging/.dockerignore", "packaging/Dockerfile", "requirements/bot.lock.txt",
@@ -37,14 +38,8 @@ class ProductProfile:
     requires_fuse: bool
     managed_toggle: bool
     payload_variant: str
-    legacy_install_dirs: tuple[str, ...]
-    legacy_containers: tuple[str, ...]
-    legacy_networks: tuple[str, ...]
     required_payload: tuple[str, ...]
 
-    @property
-    def is_openlist(self) -> bool:
-        return self.key == "openlist"
 
 
 CLOUDDRIVE2_PRODUCT = ProductProfile(
@@ -53,8 +48,8 @@ CLOUDDRIVE2_PRODUCT = ProductProfile(
     app_title="TGCloud · CloudDrive2",
     app_version=RELEASE_VERSION,
     executable_name="TGCloud-CloudDrive2-Deployer",
-    install_dir="/opt/tgcloud-clouddrive2",
-    backup_dir="/opt/tgcloud-clouddrive2-backups",
+    install_dir="/opt/tgcloud",
+    backup_dir="/opt/tgcloud-backups",
     webdav_url="http://tgcloud-clouddrive2:19798/dav",
     webdav_username="",
     webdav_target="",
@@ -66,9 +61,6 @@ CLOUDDRIVE2_PRODUCT = ProductProfile(
     requires_fuse=True,
     managed_toggle=True,
     payload_variant="packaging/hooks/clouddrive2",
-    legacy_install_dirs=("/opt/tg115",),
-    legacy_containers=("tg115-bot", "tg115-clouddrive2"),
-    legacy_networks=("tg115",),
     required_payload=SHARED_PAYLOAD_FILES
     + (
         "packaging/hooks/clouddrive2/remote_install.sh",
@@ -81,19 +73,6 @@ CLOUDDRIVE2_PRODUCT = ProductProfile(
 
 PRODUCTS = {CLOUDDRIVE2_PRODUCT.key: CLOUDDRIVE2_PRODUCT}
 
-# Rejection/protection only. These identities must never become management or
-# deletion targets in this independent project.
-RETIRED_IDENTITIES = {
-    "openlist": {
-        "directories": ("/opt/tgcloud-openlist", "/opt/tgcloud-openlist-backups", "/opt/tg115-openlist",
-                        "/opt/tgcloud-lan/openlist", "/opt/tgcloud-webdav/openlist"),
-        "containers": ("tgcloud-openlist-bot", "tgcloud-openlist", "tgcloud-lan-openlist",
-                       "tg115-openlist-bot", "tg115-openlist"),
-        "networks": ("tgcloud-openlist-net", "tg115-openlist-net"),
-    },
-}
-
-
 def require_product(product: ProductProfile) -> None:
     if product.key not in PRODUCTS:
-        raise ValueError("TGCloud 仅支持 CloudDrive2；不接管其他项目、TG115 或 OpenList。")
+        raise ValueError("TGCloud 仅支持 CloudDrive2。")

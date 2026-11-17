@@ -54,7 +54,7 @@ def selected_files(instance) -> dict[str, Path]:
     root = instance.directory
     if root.resolve() != root:
         raise ValueError("实例路径经过链接")
-    gateway = "openlist/data" if instance.product.is_openlist else "clouddrive/config"
+    gateway = "clouddrive/config"
     database = database_path(root / "data", require_existing=True).relative_to(root).as_posix()
     names = [*bundle.required(instance.product.key, database), "config", gateway]
     personal = root / "data/listener/personal.session"
@@ -79,8 +79,6 @@ def selected_files(instance) -> dict[str, Path]:
         if checked > bundle.MAX_FILES or len(path.relative_to(root).parts) > 64:
             raise ValueError("实例备份扫描数量或深度超过安全上限")
         relative = path.relative_to(root).as_posix()
-        if relative.startswith(("openlist/data/log/", "openlist/data/temp/")) or relative in {"openlist/data/log", "openlist/data/temp"}:
-            return
         if path.is_symlink() or path.resolve() != path or path.stat().st_dev != device or path in mounts and path != top:
             raise ValueError("备份范围包含链接或嵌套挂载；停止，不扩展扫描范围")
         if path.is_dir():
@@ -220,7 +218,7 @@ def create(instance, session, destination: Path) -> Path:
                         with source.open("rb") as reader, target.open("xb") as writer:
                             target.chmod(0o600)
                             shutil.copyfileobj(reader, writer, 1024 * 1024)
-                for directory in ("config", "openlist/data" if instance.product.is_openlist else "clouddrive/config"):
+                for directory in ("config", "clouddrive/config"):
                     (snapshot / directory).mkdir(parents=True, mode=0o700, exist_ok=True)
                 event("copied")
                 bundle.pack(snapshot, archive, instance.product.key, instance.version)

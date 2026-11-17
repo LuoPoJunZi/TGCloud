@@ -673,7 +673,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.temp.cleanup)
         self.settings = make_settings(Path(self.temp.name))
         self.admin = self.settings.allowed_user_id
-        self.db = TaskDB(self.settings.data_dir / "tg115.db")
+        self.db = TaskDB(self.settings.data_dir / "tgcloud.db")
         self.addCleanup(self.db.close)
         self.owner = make_service(self.settings, self.db)
         self.owner._notify = AsyncMock()
@@ -1095,7 +1095,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(backend=backend, stream=stream):
                     mid = (
                         100
-                        + (10 if backend == "openlist" else 0)
+                        + (10 if backend == "unsupported" else 0)
                         + (1 if stream else 0)
                     )
                     m = message(mid)
@@ -1112,8 +1112,8 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
                     self.owner.settings = replace(
                         self.settings,
                         storage_backend=backend,
-                        destination_label="OpenList"
-                        if backend == "openlist"
+                        destination_label="UnsupportedGateway"
+                        if backend == "unsupported"
                         else "CloudDrive2",
                     )
                     self.owner.rclone = FakeRclone()
@@ -1964,7 +1964,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
             for mode in ("local", "stream"):
                 with self.subTest(backend=backend, mode=mode):
                     self.owner.settings = replace(self.settings, storage_backend=backend)
-                    mid = 400 + (10 if backend == "openlist" else 0) + (mode == "stream")
+                    mid = 400 + (10 if backend == "unsupported" else 0) + (mode == "stream")
                     m = message(mid)
                     await self.listener.receive(self.source, m)
                     plan = self.repo.pending(self.admin)[0]
@@ -1993,7 +1993,7 @@ class ListenerTests(unittest.IsolatedAsyncioTestCase):
             for mode in ("local", "stream"):
                 with self.subTest(backend=backend, mode=mode):
                     self.owner.settings = replace(self.settings, storage_backend=backend)
-                    mid = 500 + (10 if backend == "openlist" else 0) + (mode == "stream")
+                    mid = 500 + (10 if backend == "unsupported" else 0) + (mode == "stream")
                     m = message(mid)
                     await self.listener.receive(self.source, m)
                     plan = self.repo.pending(self.admin)[0]

@@ -81,7 +81,7 @@ class ReadinessTests(unittest.TestCase):
         original = source.read_text()
         for change in ({"sampled_at": 0}, {"schema": 99}, {"sampled_at": time.time() + 10},
                        {"ttl": float("nan")}, {"queued": "SECRET"}, {"checks": {"telegram": "ok"}},
-                       {"edition": "openlist"}, {"edition": "unknown"}):
+                       {"edition": "unsupported"}, {"edition": "unknown"}):
             with self.subTest(change=tuple(change)):
                 source.write_text(json.dumps({**json.loads(original), **change}))
                 self.assertFalse(readiness.read(self.root, now=time.time())["ready"])

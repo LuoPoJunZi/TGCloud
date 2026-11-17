@@ -14,7 +14,14 @@ from tgcloud.cli.presentation import (
     page_heading,
     terminal_report,
 )
-from tgcloud.deployment import architecture, instances, preflight, runtime, uninstall
+from tgcloud.deployment import (
+    architecture,
+    instances,
+    local_source,
+    preflight,
+    runtime,
+    uninstall,
+)
 from tgcloud.deployment.host import LocalSession, SafeLog, edition_lock
 from tgcloud.deployment.profiles import PRODUCTS
 from tgcloud.deployment.proxy import lan
@@ -34,6 +41,7 @@ MENU_ITEMS = (
 )
 MENU = numbered_menu(MENU_ITEMS) + "\n"
 MENU_ACTIONS = tuple(str(number) for number, _ in MENU_ITEMS)
+SOURCE_ROOT = Path(__file__).resolve().parents[3]
 
 
 def choose(ui, prompt: str, values: tuple[str, ...], default: str = "") -> str:
@@ -47,10 +55,11 @@ def choose(ui, prompt: str, values: tuple[str, ...], default: str = "") -> str:
 class Management:
     menu_items = MENU_ITEMS
 
-    def __init__(self, product, session, log, ui, install_dir=None, *, mode_hint=None):
+    def __init__(self, product, session, log, ui, install_dir=None, *, mode_hint=None, source_dir=None):
         self.product, self.session, self.log, self.ui = product, session, log, ui
         self.install_dir = install_dir
         self.mode_hint = mode_hint
+        self.source_dir = source_dir
         self.additional_handlers = {}
 
     def external_webdav(self, instance):
@@ -259,9 +268,19 @@ class Management:
                 use_lan = selected == "2"
         else:
             use_lan = bool(saved)
-        source = Path(self.ui.ask("TGCloud 完整本地源码目录（绝对路径）"))
-        if not source.is_absolute() or source.resolve() != source or not source.is_dir():
-            raise ValueError("请选择不经过链接的完整本地源码绝对目录")
+        source = Path(self.source_dir) if self.source_dir is not None else SOURCE_ROOT
+        try:
+            if not source.is_absolute() or source.resolve() != source:
+                raise ValueError("源码目录必须是不经过链接的绝对路径")
+            # Derive the default from the running installer, never cwd or an
+            # inherited environment variable. Inspect bytes without executing
+            # candidate modules; the installer snapshots them again later.
+            local_source.content(source)
+        except (ValueError, OSError, SyntaxError, UnicodeError) as from_source:
+            raise ValueError("当前路径不包含完整 TGCloud 安装源码；请在完整源码目录运行 sudo bash install.sh，"
+                             "内网使用 install-lan.sh；也可使用 tgcloud manage --source-dir /absolute/TGCloud 指定完整源码") from from_source
+        self.log("已自动识别安装源码目录：" + str(source) if self.source_dir is None
+                 else "安装源码目录：" + str(source))
         arguments = ["--edition", self.product.key, "--source-dir", str(source)]
         if use_lan:
             if instance.directory != Path(self.product.install_dir):
@@ -346,7 +365,7 @@ class Management:
             backup.output_directory(parent, instance)
             if action == "6":
                 self.log("备份配置、业务数据库、Session 和网关配置；不备份云端、downloads、日志、共享代理或附加功能状态。请另存这些资料；导出目录在默认卸载清理范围之外。")
-                if not self.ui.confirm("确认短暂停止所选 Bot 与网关创建快照？会暂时中断该网关的管理和外部 WebDAV 读取；不停止其他 Edition"):
+                if not self.ui.confirm("确认短暂停止所选 Bot 与网关创建快照？会暂时中断该网关的管理和外部 WebDAV 读取；不停止其他实例"):
                     return False
                 with edition_lock(Path("/opt/tgcloud-cli-locks") / (self.product.key + ".lock")):
                     current = self.recheck(instance)
@@ -390,7 +409,7 @@ class Management:
             raise ValueError("现有卸载器只支持标准目录；自定义目录不自动卸载，避免清理错误实例")
         self.log("── 卸载计划 ──\n仅卸载 " + self.product.display_name
                  + "\n将清理：当前实例的容器、配置、数据库、下载及受管备份（以最终预检计划为准）。"
-                 + "\n保留：旧项目和其他部署的容器和数据、云端文件及系统 Docker／Nginx 等软件。")
+                 + "\n保留：其他部署的容器和数据、云端文件及系统 Docker／Nginx 等软件。")
         self.log("其他部署或入口仍在使用时保留 tgcloud；最后一套完整清理后，核验归属并移除快捷命令及其代码。")
         if not self.ui.confirm("继续查看 " + self.product.display_name + " 的完整卸载计划？"):
             return False
@@ -473,9 +492,11 @@ class Management:
 def main(argv=None, *, mode_hint=None) -> int:
     parser = argparse.ArgumentParser(description="TGCloud 本地管理；仅 CloudDrive2，安装及升级使用完整本地源码")
     parser.add_argument("--edition", choices=tuple(PRODUCTS), default="clouddrive2")
-    parser.add_argument("--install-dir", help="指定已核验的单 Edition 自定义目录")
+    parser.add_argument("--install-dir", help="指定已核验的单实例自定义目录")
+    parser.add_argument("--source-dir", type=Path, help="显式指定完整安装源码；默认识别当前安装脚本所在源码目录")
     args = parser.parse_args(argv)
     log, ui = InstallerLog(SafeLog()), None
+    started = False
     try:
         preflight.validate_host()
         if mode_hint not in {None, "public", "lan"}:
@@ -486,12 +507,15 @@ def main(argv=None, *, mode_hint=None) -> int:
         ui = terminal.Terminal()
         ui.friendly = True
         key = args.edition
-        return Management(PRODUCTS[key], LocalSession(log), log, ui, args.install_dir, mode_hint=mode_hint).run()
+        manager = Management(PRODUCTS[key], LocalSession(log), log, ui, args.install_dir,
+                             mode_hint=mode_hint, source_dir=args.source_dir)
+        started = True
+        return manager.run()
     except (KeyboardInterrupt, EOFError):
         log("已退出本地管理；中断的变更请重新检查状态，不假定已经回退。")
         return 130
     except (ValueError, RuntimeError, OSError, json.JSONDecodeError) as exc:
-        log("本地管理未启动：" + str(exc))
+        log(("本次操作未完成：" if started else "本地管理未启动：") + str(exc))
         return 1
     except Exception:  # noqa: BLE001 - never expose a configuration traceback
         log("本地管理操作异常；未输出配置或凭据，请核对实例状态。")

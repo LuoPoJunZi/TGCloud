@@ -210,7 +210,7 @@ def compose_network(text: str, edition: str, network: str) -> str:
     """Transform only our official template, never an external Compose file."""
     identifier(network)
     if edition not in EDITION_BACKEND_PORTS:
-        raise ValueError("未知 Edition。")
+        raise ValueError("未知实例。")
     own = "tgcloud-" + edition + "-net"
     marker = "    networks:\n      - " + own + "\n"
     if text.count(marker) != 2 or "tgcloud-external-entry" in text:

@@ -193,7 +193,7 @@ def render_route_conf(route: DomainRoute) -> str:
         route.edition not in SUPPORTED_EDITIONS
         or route.backend_port != EDITION_BACKEND_PORTS[route.edition]
     ):
-        raise ValueError("无法为未知 Edition 或后端端口生成代理配置。")
+        raise ValueError("无法为未知实例或后端端口生成代理配置。")
     return f"""server {{
     listen 80;
     listen [::]:80;

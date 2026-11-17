@@ -1,4 +1,4 @@
-"""Fresh TGCloud naming and safe legacy data compatibility, without services."""
+"""TGCloud database identity and unrelated-data protection, without services."""
 from __future__ import annotations
 
 import io
@@ -46,33 +46,29 @@ class DatabaseNameTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             paths.database_path(self.root, require_existing=True)
 
-    def test_existing_legacy_is_used_without_renaming_or_new_empty_history(self):
-        path = self.database("tg115.db")
+    def test_unrelated_database_is_rejected_without_renaming_or_empty_replacement(self):
+        path = self.database("unrelated.db")
         before = path.read_bytes()
-        self.assertEqual(paths.database_path(self.root), path)
-        self.assertEqual(paths.database_path(self.root, require_existing=True), path)
+        for required in (False, True):
+            with self.subTest(require_existing=required), self.assertRaisesRegex(ValueError, "其他数据库"):
+                paths.database_path(self.root, require_existing=required)
         self.assertEqual(path.read_bytes(), before)
-        db = TaskDB(paths.database_path(self.root))
-        try:
-            self.assertEqual(db.get(1)["state"], "completed")
-        finally:
-            db.close()
         self.assertFalse((self.root / "tgcloud.db").exists())
 
     def test_canonical_existing_database_remains_selected(self):
         path = self.database("tgcloud.db")
         self.assertEqual(paths.database_path(self.root, require_existing=True), path)
-        self.assertFalse((self.root / "tg115.db").exists())
+        self.assertFalse((self.root / "unrelated.db").exists())
 
     def test_both_names_are_ambiguous_and_untouched(self):
-        for name in paths.DATABASE_NAMES:
+        for name in ("tgcloud.db", "unrelated.db"):
             self.database(name)
         before = {path.name: path.read_bytes() for path in self.root.iterdir()}
-        with self.assertRaisesRegex(ValueError, "同时"):
+        with self.assertRaisesRegex(ValueError, "其他数据库"):
             paths.database_path(self.root)
         self.assertEqual(before, {path.name: path.read_bytes() for path in self.root.iterdir()})
         with self.assertRaises(ValueError):
-            paths.database_entry("data/" + name for name in paths.DATABASE_NAMES)
+            paths.database_entry(("data/tgcloud.db", "data/unrelated.db"))
 
     def test_orphan_sidecars_never_create_replacement_database(self):
         for name in paths.DATABASE_NAMES:
@@ -98,7 +94,7 @@ class DatabaseNameTests(unittest.TestCase):
             paths.database_path(self.root)
 
     def test_symlink_rejected_even_if_other_database_exists(self):
-        self.database("tg115.db")
+        self.database("unrelated.db")
         link = self.root / "tgcloud.db"
         link.write_bytes(b"synthetic link stand-in")
         original = Path.is_symlink
@@ -111,32 +107,31 @@ class DatabaseNameTests(unittest.TestCase):
         result = subprocess.run([sys.executable, "-I", "-S", "-B", str(code), str(self.root)], capture_output=True, text=True, check=False, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "tgcloud.db")
-        for name in paths.DATABASE_NAMES:
-            (self.root / name).write_bytes(b"synthetic")
+        (self.root / "unrelated.db").write_bytes(b"synthetic")
         with redirect_stdout(io.StringIO()) as stdout, redirect_stderr(io.StringIO()) as stderr:
             self.assertEqual(paths.main([str(self.root)]), 1)
         self.assertEqual(stdout.getvalue(), "")
         self.assertNotIn(str(self.root), stderr.getvalue())
 
-    def test_new_generated_config_has_no_old_project_variables(self):
+    def test_generated_config_uses_current_backend_namespace(self):
         values = {"api_id":"123456", "api_hash":"a"*32, "bot_token":"123456789:SYNTHETIC_TEST_TOKEN_ONLY",
                   "user_id":"123456789", "webdav_user":"tgcloud", "webdav_password":"SYNTHETIC", "target":"",
                   "budget":"20", "reserve":"8", "timezone":"Asia/Shanghai", "admin_password":"SYNTHETIC"}
         for product in PRODUCTS.values():
             config = configuration.new_config(product, values)
-            self.assertFalse(any(key.startswith("TG115_") for key in config))
+            self.assertEqual(config["TGCLOUD_RCLONE_REMOTE_NAME"], "cd2")
             self.assertEqual(config["TGCLOUD_STORAGE_BACKEND"], product.key)
 
-    def test_new_and_legacy_backup_rehearsal_for_both_editions(self):
+    def test_clouddrive2_backup_rehearsal_uses_current_database(self):
         for edition in PRODUCTS:
             for database_name in paths.DATABASE_NAMES:
                 root = self.root / (edition + "-" + database_name)
-                for name in ("data", "config", "openlist/data" if edition == "openlist" else "clouddrive/config"):
+                for name in ("data", "config", "clouddrive/config"):
                     (root / name).mkdir(parents=True)
                 (root / ".env").write_text("SYNTHETIC=true\n")
                 (root / "docker-compose.yml").write_text("services: {}\n")
                 (root / "config/settings.conf").write_text("synthetic")
-                gateway = root / ("openlist/data" if edition == "openlist" else "clouddrive/config")
+                gateway = root / ("clouddrive/config")
                 (gateway / "settings.json").write_text("{}")
                 with closing(sqlite3.connect(root / "data/bot.session")) as connection:
                     connection.execute("CREATE TABLE synthetic (value TEXT)")
@@ -157,9 +152,6 @@ class CanonicalShellTests(unittest.TestCase):
         fixture = shell.CloudDriveBackupTests(methodName="runTest")
         fixture.setUp()
         self.addCleanup(fixture.doCleanups)
-        canonical = fixture.database.with_name("tgcloud.db")
-        fixture.database.rename(canonical)  # Only our synthetic isolated fixture.
-        fixture.database = canonical
         return fixture
 
     def test_canonical_upgrade_snapshot_and_manual_backup(self):
@@ -170,7 +162,7 @@ class CanonicalShellTests(unittest.TestCase):
             archives = list((fixture.root / "backups").glob("database-*.db"))
             self.assertEqual(len(archives), 1)
             fixture.assert_database(archives[0], 1)
-            self.assertFalse((fixture.installation / "data/tg115.db").exists())
+            self.assertFalse((fixture.installation / "data/unrelated.db").exists())
 
     def test_clouddrive_upgrade_snapshot_uses_canonical_name(self):
         fixture = self.fixture()
@@ -179,13 +171,12 @@ class CanonicalShellTests(unittest.TestCase):
         marker = 'if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then\n  BACKUP='
         action = marker + script.split(marker, 1)[1].split('\nlog "提交已预检的程序和配置"', 1)[0]
         with patch.object(shell, "PREFIX", prefix):
-            # The reusable Docker stub has an optional OpenList branch.
-            result, _ = fixture.execute(action, before="OPENLIST_CONTAINER=synthetic-openlist\n")
+            result, _ = fixture.execute(action)
         self.assertEqual(result.returncode, 0, result.stderr)
         archives = list((fixture.root / "backups").glob("database-*.db"))
         self.assertEqual(len(archives), 1)
         fixture.assert_database(archives[0], 1)
-        self.assertFalse((fixture.installation / "data/tg115.db").exists())
+        self.assertFalse((fixture.installation / "data/unrelated.db").exists())
 
     def test_each_edition_rollback_preserves_canonical_identity(self):
         for edition in PRODUCTS:
@@ -197,7 +188,7 @@ class CanonicalShellTests(unittest.TestCase):
                 result, _ = fixture.execute("rollback_install\n", before=before)
             self.assertEqual(result.returncode, 0, result.stderr)
             fixture.assert_database(fixture.database, 2)
-            self.assertFalse((fixture.installation / "data/tg115.db").exists())
+            self.assertFalse((fixture.installation / "data/unrelated.db").exists())
 
 
 if __name__ == "__main__":

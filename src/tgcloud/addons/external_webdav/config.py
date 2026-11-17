@@ -148,7 +148,7 @@ def validate_record(item: dict) -> dict:
         required.add("members")
     if (not isinstance(item, dict) or set(item) != required or type(schema) is not int or schema not in {1, 2} or item["owner"] != OWNER
             or any(not isinstance(value, str) for key, value in item.items() if key not in {"schema", "members"})
-            or item["edition"] not in {"clouddrive2", "openlist"}
+            or item["edition"] != "clouddrive2"
             or item["phase"] not in {"pending", "disabled", "enabled", "needs_repair"}
             or item["scope_verification"] != "manual-native-readonly"
             or not re.fullmatch(r"[0-9a-f]{32}", item["revision"])

@@ -54,7 +54,7 @@ def main(argv=None):
                 install_dir=args.install_dir,
             )
             if not item.present or not item.running:
-                raise ValueError("请先安装并启动所选 Edition")
+                raise ValueError("请先安装并启动所选实例")
             stage = "个人监听账号操作"
             return account_command(product, args.action, docker=docker)
     except (ValueError, RuntimeError, OSError):

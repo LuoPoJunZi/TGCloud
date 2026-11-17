@@ -11,6 +11,10 @@ from tgcloud.deployment.fingerprints import deployed_fingerprint
 from tgcloud.deployment.host import LocalSession, SafeLog
 from tgcloud.deployment.profiles import ProductProfile, require_product
 
+# A default-directory change must not create an empty replacement beside
+# existing TGCloud data. Existing containers are resolved by their own labels.
+PREVIOUS_INSTALL_DIR = Path("/opt/tgcloud-clouddrive2")
+
 
 def inspect_container(session: LocalSession, name: str) -> dict:
     template = ('{"image":{{json .Config.Image}},"running":{{json .State.Running}},'
@@ -56,10 +60,10 @@ def discover(
     has_bot = product.bot_container in inventory
     has_gateway = product.storage_container in inventory
     if not has_bot and not has_gateway:
-        if any(name in inventory for name in product.legacy_containers) or any(
-            Path(name).exists() for name in product.legacy_install_dirs
-        ):
-            raise ValueError("发现旧 TG115；请按迁移文档人工迁移，不自动覆盖")
+        if default == Path(product.install_dir) and PREVIOUS_INSTALL_DIR != default:
+            previous = PREVIOUS_INSTALL_DIR
+            if previous.is_symlink() or (previous.exists() and (not previous.is_dir() or any(previous.iterdir()))):
+                raise ValueError("发现其他目录中的 TGCloud 数据；停止新建实例，不移动或覆盖数据。请核对原目录后显式指定 --install-dir")
         if default.exists() and any(default.iterdir()):
             raise ValueError("安装目录有残留但缺少容器；停止，不能当作首次安装覆盖")
         return Instance(product, default, False)
@@ -105,13 +109,13 @@ def discover(
     from tgcloud.deployment.local_source import verify_installed
     identity = verify_installed(directory, mode="shell")
     raw = configuration.regular_private(directory / ".env")
-    if not product.is_openlist and b"\r" in raw:
+    if b"\r" in raw:
         raise ValueError("CloudDrive2 .env 含 CRLF/回车；现有安装器会规范化它，为保留原始字节已停止，请人工核对")
     config = configuration.parse_config(raw)
     log.register(config)
-    backend = config.get("TGCLOUD_STORAGE_BACKEND", config.get("TG115_STORAGE_BACKEND"))
+    backend = config.get("TGCLOUD_STORAGE_BACKEND")
     if backend != product.key or config.get("DEPLOY_CLOUDDRIVE2", "true") != "true":
-        raise ValueError("实例不是此 Edition 的受管网关部署；不会覆盖外部 WebDAV 配置")
+        raise ValueError("实例不是此实例的受管网关部署；不会覆盖外部 WebDAV 配置")
     for name in ("app", "data", "config", "downloads", "logs"):
         child = directory / name
         if not child.is_dir() or child.resolve() != child:

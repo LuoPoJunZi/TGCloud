@@ -1,8 +1,7 @@
-"""Prepare unpublished new-layout bootstrap candidates; never change live pins."""
+"""Validate TGCloud local source entry manifests; never publish."""
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 from pathlib import Path
 
@@ -42,28 +41,13 @@ def runtime_files(root: Path) -> list[str]:
 
 
 def render_entry(root: Path, name: str) -> str:
+    if name not in ("install.sh", "install-lan.sh"):
+        raise ValueError("unknown TGCloud source entry")
     text = (root / name).read_text(encoding="utf-8")
-    if "<<'PY' &\n" not in text:
-        return text
-    start = text.index("<<'PY' &\n") + len("<<'PY' &\n")
-    end = text.index("\nPY\n", start)
-    block = text[start:end]
-    nodes = [node for node in ast.walk(ast.parse(block)) if isinstance(node, ast.Assign)
-             and any(isinstance(target, ast.Name) and target.id == "files" for target in node.targets)]
-    if len(nodes) != 1:
-        raise ValueError("one explicit bootstrap manifest is required")
-    node = nodes[0]
-    lines = block.splitlines()
-    indentation = " " * node.col_offset
-    replacement = indentation + "files = (\n" + "".join(indentation + "    " + repr(path) + ",\n" for path in helper_files(root)) + indentation + ")"
-    lines[node.lineno-1:node.end_lineno] = replacement.splitlines()
-    block = "\n".join(lines).replace("payload_clouddrive2/app/version.py", "src/tgcloud/version.py")
-    result = text[:start] + block + text[end:]
-    command = {"install.sh": "install", "install-lan.sh": "lan"}[name]
-    module = {"install.sh": "scripts.vps_installer", "install-lan.sh": "scripts.lan_installer"}[name]
-    # Only the post-download launch changes. Legacy local-source compatibility
-    # branches and the existing real immutable pin remain untouched.
-    return result.replace(f'python3 -B -m {module} "$@" &', f'python3 -B scripts/run_source.py {command} "$@" &')
+    command = "lan" if name == "install-lan.sh" else "install"
+    if 'exec python3 -B "$script_root/scripts/run_source.py" ' + command + ' "$@"' not in text:
+        raise ValueError("source entry does not dispatch the current command")
+    return text
 
 
 def main() -> int:
@@ -82,7 +66,7 @@ def main() -> int:
         args.directory.mkdir(mode=0o700, parents=True, exist_ok=False)
         for name in ("install.sh", "install-lan.sh"):
             (args.directory / name).write_text(render_entry(ROOT, name), encoding="utf-8", newline="\n")
-        print("CANDIDATE_ONLY: existing pins retained; publish/review helper commit A before setting pins in B")
+        print("CANDIDATE_ONLY: local TGCloud source entries; no network installation or publication")
     print("BOOTSTRAP_MANIFEST=OK")
     return 0
 
