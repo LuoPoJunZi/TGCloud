@@ -83,7 +83,7 @@ class Service:
             if not (auth_dir / (owner + ".htpasswd")).is_file():
                 raise ValueError("活动外部路由缺少认证文件，停止，不猜测密码。")
         if auth_dir.exists():
-            if not auth_dir.is_dir() or {p.name for p in auth_dir.iterdir()} - {"clouddrive2.htpasswd", "openlist.htpasswd"}:
+            if not auth_dir.is_dir() or {p.name for p in auth_dir.iterdir()} - {"clouddrive2.htpasswd"}:
                 raise ValueError("共享认证目录含未知资源。")
             for path in auth_dir.iterdir():
                 config.canonical(path)
@@ -146,7 +146,7 @@ class Service:
     def record(self):
         item = config.read_record(self.record_path)
         if item and item["edition"] != self.product.key:
-            raise ValueError("附加功能记录 Edition 与目录不符。")
+            raise ValueError("附加功能记录实例与目录不符。")
         return item
 
     def save(self, item: dict) -> None:
@@ -268,8 +268,8 @@ class Service:
                                    validate=lambda v: config.logical_path(v, allow_root=True))
         target = config.logical_path(bot_root.rstrip("/") + "/" + relative if relative else bot_root)
         self.log("Bot 保存目录：" + target)
-        user = self.ui.ask("新的外部专用用户名（回车默认 tg2-webdav）" if not previous else "新的外部专用用户名",
-                           default=(previous or {}).get("username", "tg2-webdav"),
+        user = self.ui.ask("新的外部专用用户名（回车默认 tgcloud-webdav）" if not previous else "新的外部专用用户名",
+                           default=(previous or {}).get("username", "tgcloud-webdav"),
                            validate=lambda v: config.username(v, config.decode(instance.config, "USERNAME")))
         generated = config.new_password()
         secret = self.ui.ask("新的外部密码（回车自动生成 9 位随机密码）", default=generated, secret=True, validate=config.password)
@@ -309,16 +309,14 @@ class Service:
                 self.manager.apply_shared_state_locked(state, verify_remaining=False)
         try:
             self.log("──────── 后台创建账号 ────────")
-            self.log("请登录 " + self.product.display_name + " 后台，创建独立" + ("普通用户：" if self.product.is_openlist else " WebDAV 用户："))
+            self.log("请登录 CloudDrive2 后台，创建独立 WebDAV 用户：")
             self.log("管理页：" + management_url)
             self.log("用户名：" + user)
             self.ui.show_password(secret)
-            self.log(("base path：" if self.product.is_openlist else "根目录：") + target)
-            self.log("权限：" + ("仅开启 WebDAV 读取／列表；关闭 WebDAV 管理及所有写入权限。" if self.product.is_openlist
-                                  else "只读，关闭上传、删除、移动、改名和管理权限。"))
+            self.log("根目录：" + target)
+            self.log("权限：只读，关闭上传、删除、移动、改名和管理权限。")
             self.log("请勿使用管理员账号或 Bot 正在使用的账号。")
-            if not self.product.is_openlist:
-                self.log("若当前版本或会员权限不支持独立只读用户，请取消安装。")
+            self.log("若当前版本或会员权限不支持独立只读用户，请取消安装。")
             if not self.ui.confirm("已完成以上账号和权限设置？"):
                 raise ValueError("未完成人工目录／权限确认；入口保持关闭。")
             route = dict(self.route(item, True), username=user)
@@ -377,7 +375,7 @@ class Service:
     def maintain(self, action: str, *, sample_file: str = "") -> None:
         item = self.record()
         if item is None:
-            raise ValueError("尚未登记此 Edition 的外部 WebDAV。")
+            raise ValueError("尚未登记此实例的外部 WebDAV。")
         if action in {"status", "print-config"}:
             self.display(item)
             self.management_hint()
@@ -502,7 +500,8 @@ class Service:
                 raise ValueError("已有离线维护代码摘要不匹配，拒绝覆盖或切换。")
 
         if not destination.exists():
-            destination.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+            self.root.mkdir(parents=True, mode=0o700, exist_ok=True)
+            destination.parent.mkdir(mode=0o700, exist_ok=True)
             # Only this invocation's private candidate is removed on ordinary
             # failure/interruption. Old stage-* paths (including unknown files)
             # are preserved and cannot block a fresh, uniquely named attempt.
@@ -511,7 +510,10 @@ class Service:
                 config.canonical(staged)
                 for relative in paths:
                     target = staged / relative
-                    target.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+                    # parents=True only applies mode to the leaf directory.
+                    # Every copied source directory must stay private under 022.
+                    for parent in reversed(Path(relative).parents):
+                        (staged / parent).mkdir(mode=0o700, exist_ok=True)
                     shutil.copyfile(source / relative, target)
                     target.chmod(0o600)
                 config.atomic(staged / "installation.json", (json.dumps(dict(identity, code_sha256=revision)) + "\n").encode())

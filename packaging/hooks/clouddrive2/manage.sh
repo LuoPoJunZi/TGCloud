@@ -2,8 +2,8 @@
 set -Eeuo pipefail
 umask 077
 
-INSTALL_DIR="${INSTALL_DIR:-/opt/tgcloud-clouddrive2}"
-BACKUP_DIR="/opt/tgcloud-clouddrive2-backups"
+INSTALL_DIR="${INSTALL_DIR:-/opt/tgcloud}"
+BACKUP_DIR="/opt/tgcloud-backups"
 BOT_SERVICE="tgcloud-clouddrive2-bot"
 BOT_CONTAINER="tgcloud-clouddrive2-bot"
 [[ "$INSTALL_DIR" =~ ^/opt/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] || exit 2

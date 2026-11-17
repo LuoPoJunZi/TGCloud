@@ -4,8 +4,8 @@ umask 077
 
 SOURCE_DIR="${1:-}"
 CONFIG_FILE="${2:-}"
-INSTALL_DIR="${INSTALL_DIR:-/opt/tgcloud-clouddrive2}"
-BACKUP_DIR="/opt/tgcloud-clouddrive2-backups"
+INSTALL_DIR="${INSTALL_DIR:-/opt/tgcloud}"
+BACKUP_DIR="/opt/tgcloud-backups"
 BOT_SERVICE="tgcloud-clouddrive2-bot"
 BOT_CONTAINER="tgcloud-clouddrive2-bot"
 BACKUP=""
@@ -23,6 +23,7 @@ ROLLBACK_ARMED=false
 PROGRAM_PATHS=(
   app .dockerignore backup_retention.sh Dockerfile docker-compose.yml manage.sh remote_install.sh
   preserve_runtime_config.sh repair_clouddrive_network.sh requirements.txt tgcloud-source.json
+  LICENSE README.md THIRD_PARTY_NOTICES.md
 )
 
 log() {
@@ -102,7 +103,7 @@ cleanup_release_stage() {
   if [[ "$DATABASE_BACKUP_CANDIDATE" == "$BACKUP_DIR"/database-*.db && "$DATABASE_BACKUP_CANDIDATE" != "$DATABASE_BACKUP" ]]; then
     rm -f -- "$DATABASE_BACKUP_CANDIDATE"
   fi
-  if [[ -n "$RELEASE_STAGE" && "$RELEASE_STAGE" == /opt/tgcloud-clouddrive2-release-* && -d "$RELEASE_STAGE" ]]; then
+  if [[ -n "$RELEASE_STAGE" && "$RELEASE_STAGE" == /opt/tgcloud-release-* && -d "$RELEASE_STAGE" ]]; then
     rm -rf -- "$RELEASE_STAGE"
   fi
   if [[ -n "$CANDIDATE_TAG" ]]; then
@@ -141,8 +142,6 @@ trap cleanup_release_stage EXIT
   || fail "安装目录不能包含 . 或 .. 路径段"
 [[ "$(realpath -m -- "$INSTALL_DIR")" == "$INSTALL_DIR" ]] \
   || fail "安装目录不能经过符号链接"
-[[ "$INSTALL_DIR" != /opt/tg115 ]] \
-  || fail "检测到旧 TG115 安装目录 /opt/tg115；TGCloud 不会静默覆盖，请先按迁移文档处理"
 SOURCE_DIR="$(realpath -e -- "$SOURCE_DIR")"
 CONFIG_FILE="$(realpath -e -- "$CONFIG_FILE")"
 native_check() (
@@ -168,18 +167,6 @@ source "$SOURCE_DIR/preserve_runtime_config.sh"
   || fail "部署源目录和安装目录不能重叠"
 [[ "$CONFIG_FILE" != "$INSTALL_DIR/"* ]] || fail "请将输入配置放在安装目录之外"
 export INSTALL_DIR
-
-[[ ! -e /opt/tg115 ]] || log "检测到旧目录 /opt/tg115；保留不动，新安装继续"
-if command -v docker >/dev/null 2>&1; then
-  for legacy_container in tg115-bot tg115-clouddrive2; do
-    if docker container inspect "$legacy_container" >/dev/null 2>&1; then
-      log "检测到旧容器 $legacy_container；保留不动，不参与新部署"
-    fi
-  done
-  if docker network inspect tg115 >/dev/null 2>&1; then
-    log "检测到旧 TG115 Network tg115；新部署不会使用或修改它"
-  fi
-fi
 
 if [[ -d "$INSTALL_DIR" && ! -f "$INSTALL_DIR/docker-compose.yml" ]] \
   && [[ -n "$(find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
@@ -269,14 +256,8 @@ done
 
 PORT_19798_OWNER="$(docker ps --format '{{.Names}}|{{.Ports}}' \
   | awk -F'|' '$2 ~ /:19798->/ {print $1; exit}')"
-if [[ "$PORT_19798_OWNER" == tg115-clouddrive2 ]]; then
-  fail "旧 TG115 容器正在占用固定端口 19798；请自行处理占用后重新检测，不会自动停用或改端口"
-fi
 if [[ -n "$PORT_19798_OWNER" && "$PORT_19798_OWNER" != tgcloud-clouddrive2 ]]; then
-  if ! docker inspect --format '{{.Config.Image}}' "$PORT_19798_OWNER" 2>/dev/null \
-    | grep -Eiq '(^|/)clouddrive2([:@]|$)'; then
-    fail "固定端口 19798 被容器 $PORT_19798_OWNER 占用；请自行处理后重新检测"
-  fi
+  fail "固定端口 19798 被其他容器占用；不会接管或修改该容器"
 fi
 if [[ -z "$PORT_19798_OWNER" ]]; then
   if command -v ss >/dev/null 2>&1; then
@@ -332,7 +313,7 @@ mkdir -p \
   "$INSTALL_DIR/clouddrive/mounts"
 install -d -m 700 "$BACKUP_DIR"
 
-RELEASE_STAGE="$(mktemp -d /opt/tgcloud-clouddrive2-release-XXXXXXXX)"
+RELEASE_STAGE="$(mktemp -d /opt/tgcloud-release-XXXXXXXX)"
 CANDIDATE_TAG="tgcloud-clouddrive2-candidate:$(date +%s)-$$"
 log "在隔离目录预检新程序和配置"
 cp -a "$SOURCE_DIR/." "$RELEASE_STAGE/"
@@ -413,20 +394,10 @@ DEPLOY_CLOUDDRIVE2="$(awk -F= '$1=="DEPLOY_CLOUDDRIVE2" {print $2; exit}' .env)"
 if [[ "${DEPLOY_CLOUDDRIVE2:-true}" == "true" ]]; then
   modprobe fuse 2>/dev/null || true
   [[ -c /dev/fuse ]] || fail "VPS 没有提供 /dev/fuse；请让服务商开启 FUSE 后重试"
-  mapfile -t CD2_MATCHES < <(
-    docker ps --format '{{.Names}}|{{.Image}}|{{.Ports}}' \
-      | awk -F'|' -v bot_container="$BOT_CONTAINER" '
-          (tolower($1) ~ /clouddrive2/ && tolower($1) !~ /^tg115-/) ||
-          tolower($2) ~ /(^|\/)clouddrive2([:@]|$)/ ||
-          tolower($2) ~ /cloudnas\/clouddrive2([:@]|$)/ {
-            if (tolower($1) ~ /^tg115-/ || tolower($1) == tolower(bot_container)) next
-            print $1
-          }
-        '
-  )
-  [[ "${#CD2_MATCHES[@]}" -le 1 ]] \
-    || fail "发现多个正在运行的 CloudDrive2 容器，请只保留目标容器后重试"
-  EXISTING_CD2="${CD2_MATCHES[0]:-}"
+  EXISTING_CD2=""
+  if [[ "$(docker inspect --format '{{.State.Running}}' tgcloud-clouddrive2 2>/dev/null || true)" == true ]]; then
+    EXISTING_CD2=tgcloud-clouddrive2
+  fi
   PORT_19798_CONTAINER="$(
     docker ps --format '{{.Names}}|{{.Ports}}' \
       | awk -F'|' '$2 ~ /:19798->/ {print $1; exit}'

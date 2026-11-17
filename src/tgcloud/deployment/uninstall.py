@@ -19,7 +19,6 @@ from tgcloud.deployment import configuration, preflight, runtime
 from tgcloud.deployment.host import LocalSession, SafeLog, edition_lock
 from tgcloud.deployment.profiles import (
     PRODUCTS,
-    RETIRED_IDENTITIES,
     ProductProfile,
     require_product,
 )
@@ -272,10 +271,7 @@ class Plan:
 
 def other_edition_present(editions: tuple[str, ...], containers: dict) -> bool:
     """Retained data also needs its shared certificates, not just live containers."""
-    retired = any(name in containers for identity in RETIRED_IDENTITIES.values() for name in identity["containers"])
-    retired = retired or any(Path(name).exists() or Path(name).is_symlink()
-                             for identity in RETIRED_IDENTITIES.values() for name in identity["directories"])
-    return bool(read_compose_instances()) or retired or any(
+    return bool(read_compose_instances()) or any(
         PRODUCTS[key].bot_container in containers or PRODUCTS[key].storage_container in containers
         or Path(PRODUCTS[key].install_dir).exists() or (LAN_ROOT / key).exists()
         for key in PRODUCTS if key not in editions)
@@ -314,12 +310,12 @@ def backup_identity(root: Path, pattern: re.Pattern) -> tuple | None:
 def build_plan(editions: tuple[str, ...], session: LocalSession, *, purge_data: bool = False,
                purge_backups: bool = False) -> Plan:
     if editions != ("clouddrive2",):
-        raise UninstallError("此独立项目仅支持卸载当前 CloudDrive2；不接受 openlist、both 或 all。")
+        raise UninstallError("仅支持卸载 TGCloud 的 CloudDrive2 实例。")
     purge_data = purge_data or purge_backups
     check_compose_transaction()
     compose_instances = read_compose_instances()
     if set(editions) & set(compose_instances):
-        raise UninstallError("所选 Edition 已由独立 Compose HTTPS 登记；请使用部署包 HTTPS 工具移除路由，再按 Compose 指南维护；此卸载器不接管")
+        raise UninstallError("所选实例已由独立 Compose HTTPS 登记；请使用部署包 HTTPS 工具移除路由，再按 Compose 指南维护；此卸载器不接管")
     containers, networks = docker_snapshot(session)
     state = read_state()
     journal = Path(PROXY_ROOT) / "state/external-transaction.json"
@@ -339,7 +335,7 @@ def build_plan(editions: tuple[str, ...], session: LocalSession, *, purge_data: 
             try:
                 verify_installed(root, mode="shell")
             except (ValueError, OSError):
-                raise UninstallError("实例缺少此独立项目的有效来源标记；不接管或删除旧项目资源。") from None
+                raise UninstallError("实例缺少 TGCloud 有效来源标记；停止处理未知资源。") from None
         projects = set()
         core = {product.bot_container, product.storage_container}
         for name in core:
@@ -423,7 +419,7 @@ def build_plan(editions: tuple[str, ...], session: LocalSession, *, purge_data: 
                 text = source.read_text(encoding="utf-8")
                 if not all(re.search(r"(?m)^    container_name: " + re.escape(name) + r"\s*$", text)
                            for name in (PRODUCTS[key].bot_container, PRODUCTS[key].storage_container)):
-                    raise UninstallError("残留目录不是所选 Edition 的标准 payload；不删除")
+                    raise UninstallError("残留目录不是所选实例的标准 payload；不删除")
         targets = backup_targets(editions, containers, remove_proxy) if purge_backups else {}
         backups = {root: backup_identity(root, pattern) for root, pattern in targets.items()}
         purge_preflight(editions, containers, selected, remove_proxy, tuple(targets))
@@ -657,7 +653,7 @@ def cleanup_manager(session: LocalSession, log: SafeLog) -> str:
                 locks.enter_context(edition_lock(LOCK_ROOT / (key + ".lock")))
             locks.enter_context(session.hold_lock(proxy_lock_command()))
             if manager_in_use(session):
-                log("仍有 Edition、入口、保留数据/备份或相关资源；保留 tgcloud 管理命令及其代码。")
+                log("仍有实例、入口、保留数据/备份或相关资源；保留 tgcloud 管理命令及其代码。")
                 return "retained"
             if runtime.remove(root=runtime.ROOT, command=runtime.COMMAND):
                 log("最后一个实例已完整卸载：tgcloud 快捷命令及受管管理代码已移除。")
@@ -670,10 +666,10 @@ def cleanup_manager(session: LocalSession, log: SafeLog) -> str:
 
 def preview(plan: Plan, log: SafeLog) -> None:
     log("TGCloud 卸载计划（确认前不停止容器、不修改路由）")
-    log("Edition：" + ", ".join(PRODUCTS[key].display_name for key in plan.editions))
+    log("实例：" + ", ".join(PRODUCTS[key].display_name for key in plan.editions))
     log("容器：" + (", ".join(sorted(plan.containers)) or "无"))
     log("网络：" + (", ".join(sorted(plan.networks)) or "无"))
-    log("移除所选 Edition 的 HTTPS 路由和独立 LAN 管理入口；其他项目资源保留。")
+    log("移除所选实例的 HTTPS 路由和独立 LAN 管理入口；其他项目资源保留。")
     log("共享 Nginx/Certbot：" + ("没有剩余 HTTPS 路由，移除受管容器" if plan.remove_proxy else "保留，其他部署仍在使用"))
     for key in plan.editions:
         log(("删除本地数据：" if plan.purge_data else "保留本地配置/数据：") + PRODUCTS[key].install_dir)
@@ -682,7 +678,7 @@ def preview(plan: Plan, log: SafeLog) -> None:
         log("删除不再使用的共享代理备份：" + str(PROXY_BACKUP_ROOT))
     else:
         log("共享代理历史备份保留；所选范围之外的数据不会清理。")
-    log("镜像缓存、并发锁元数据、旧 TG115 和系统软件不清理；不能保证系统逐字节恢复到安装前。")
+    log("镜像缓存、并发锁元数据和系统软件保留。")
     log("最后一套完整清理后，若无其他实例/入口/保留数据依赖，将核验并移除 tgcloud 命令及其代码；否则保留。")
     log("请先结束进行中的传输并自行备份；停止容器会中断任务。不要同时运行 EXE/其他安装器。")
 

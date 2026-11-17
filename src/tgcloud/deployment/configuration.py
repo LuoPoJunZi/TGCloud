@@ -8,7 +8,6 @@ from pathlib import Path
 
 from tgcloud.deployment.profiles import (
     PRODUCTS,
-    RETIRED_IDENTITIES,
     ProductProfile,
     require_product,
 )
@@ -53,13 +52,12 @@ def checked_directory(value: str) -> Path:
 def check_product_directory(product: ProductProfile, directory: Path) -> None:
     require_product(product)
     protected = [Path("/opt/tgcloud-proxy"), Path("/opt/tgcloud-cli-locks"), Path("/opt/tgcloud-webdav"), Path("/opt/tgcloud-cli")]
-    protected.extend(Path(name) for identity in RETIRED_IDENTITIES.values() for name in identity["directories"])
     for profile in PRODUCTS.values():
-        protected += [Path(profile.backup_dir), *(Path(name) for name in profile.legacy_install_dirs)]
+        protected.append(Path(profile.backup_dir))
         if profile.key != product.key:
             protected.append(Path(profile.install_dir))
     if any(directory == root or directory.is_relative_to(root) or root.is_relative_to(directory) for root in protected):
-        raise ValueError("安装目录与其他 Edition、代理、锁、备份或 TG115 路径重叠")
+        raise ValueError("安装目录与受保护的代理、锁、备份或其他实例路径重叠")
 
 
 def encoded(value: str) -> str:

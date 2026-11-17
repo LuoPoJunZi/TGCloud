@@ -38,16 +38,6 @@ def prepare(root: Path, version: str) -> tuple[dict, str]:
             raise ValueError("invalid local-source Linux entry")
     else:
         changes[name] = replace_one(entry, r'^installer_version\s*=\s*"[0-9.]+"$', 'installer_version = "' + version + '"')
-    for name in ("website/package.json", "website/package-lock.json", "website/site.config.json"):
-        original = read(name)
-        content = json.loads(original)
-        content["version"] = version
-        if name.endswith("package-lock.json"):
-            content["packages"][""]["version"] = version
-        if name.endswith("site.config.json"):
-            # Keep the last genuinely published version. A candidate is not a Release.
-            content["releaseStatus"] = "unreleased"
-        changes[name] = json.dumps(content, ensure_ascii=False, indent=2) + "\n"
     patch = "".join("".join(difflib.unified_diff(read(name).splitlines(True), value.splitlines(True),
                                              fromfile="a/" + name, tofile="b/" + name))
                     for name, value in changes.items())
@@ -55,15 +45,13 @@ def prepare(root: Path, version: str) -> tuple[dict, str]:
             "mechanical_files": list(changes), "manual_review": [
                 "CHANGELOG.md: describe actual changes and compatibility",
                 "RELEASE_NOTES.md: exact target identity and real validation evidence",
-                "README.md / README_EN.md / docs / website: current instructions and download links",
+                "README.md / README_EN.md / docs: current instructions and download links",
                 "review and regenerate bootstrap/runtime source manifests",
-                "review the previous stable version upgrade baseline",
             ], "release_gates": [
                 "review candidate patch; run local regression and maintenance_preflight.py",
-                "publish helper commit A only after explicit authorization; wait for its CI",
-                "generate entry candidates with prepare_bootstrap.py; pin verified public A in commit B",
-                "wait for B CI; authorize immutable tag and same-tag native release validation",
-                "download and verify actual release assets; then mark website released",
+                "review and commit current source only after explicit authorization",
+                "verify branch CI; authorize an immutable tag and native release validation separately",
+                "download and verify actual release assets and their documentation",
             ], "not_checked": ["remote-ci", "published-helper", "release-assets", "real-vps"]}, patch
 
 

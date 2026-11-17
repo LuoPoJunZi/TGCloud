@@ -134,7 +134,7 @@ class AccessTests(unittest.TestCase):
             runtime.saved_config(root, "clouddrive2")
 
     def test_strict_schemas_and_legacy_metadata_without_access_plan(self):
-        for changes in ({"format": True}, {"mode": []}, {"mode": "unknown"}, {"edition": "openlist"},
+        for changes in ({"format": True}, {"mode": []}, {"mode": "unknown"}, {"edition": "unsupported"},
                         {"domain": "https://panel.example.com"}, {"email": "invalid"}, {"extra": 1}):
             value = dict(self.plan(), **changes)
             with self.subTest(changes=changes), self.assertRaises(ValueError):
@@ -185,7 +185,7 @@ class AccessTests(unittest.TestCase):
     def test_offline_backup_includes_access_plan_but_not_shared_proxy(self):
         root = self.candidate()
         self.initialize(root, Answers())
-        for name in ("data/tg115.db", "data/bot.session"):
+        for name in ("data/tgcloud.db", "data/bot.session"):
             with closing(sqlite3.connect(root / name)) as db:
                 db.execute("CREATE TABLE synthetic (value TEXT)")
         (root / "config/synthetic.conf").write_text("no-secrets")

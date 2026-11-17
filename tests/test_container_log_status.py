@@ -38,7 +38,7 @@ class ContainerLogTests(unittest.TestCase):
             commands = "\n".join(call.args[0] for call in session.run.call_args_list)
             for forbidden in (" restart ", " stop ", " rm ", "compose up", ".Config.Env", ".Config.Cmd", "logs "):
                 self.assertNotIn(forbidden, commands)
-            self.assertNotIn("tgcloud-openlist", commands)
+            self.assertNotIn("tgcloud-unsupported", commands)
             self.assertEqual(session.run.call_count, 4)
 
     def test_old_gateway_is_pending_without_recreating_or_changing_anything(self):

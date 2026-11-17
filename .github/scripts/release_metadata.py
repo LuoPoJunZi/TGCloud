@@ -14,8 +14,9 @@ TAG = re.compile(rf"v({CORE})(?:-(alpha|beta|rc)\.([1-9][0-9]*))?")
 
 
 def source_version(root: Path) -> str:
-    current = root / "src/tgcloud/version.py"
-    path = current if current.is_file() else root / "payload_clouddrive2/app/version.py"
+    path = root / "src/tgcloud/version.py"
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("TGCloud version source missing or linked")
     module = ast.parse(path.read_text(encoding="utf-8"))
     values = [node.value.value for node in module.body
               if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "VERSION" for target in node.targets)
@@ -26,35 +27,29 @@ def source_version(root: Path) -> str:
 
 
 def linux_entry_names(root: Path) -> tuple[str, ...]:
-    """An explicit API marker selects two current or three historical entries."""
-    marker = root / "packaging/external-webdav.json"
-    unified = False
-    if marker.is_file():
-        value = json.loads(marker.read_text(encoding="utf-8"))
-        if (not isinstance(value, dict) or type(value.get("api")) is not int
-                or value not in ({"api": 1, "proxy_schema": 2, "owner": "tgcloud.external_webdav"},
-                                 {"api": 2, "proxy_schema": 2, "owner": "tgcloud.external_webdav"})):
-            raise ValueError("unsupported Linux entry layout")
-        unified = value["api"] == 2
-    if unified and any((root / name).exists() or (root / name).is_symlink() for name in ("uninstall.sh", "install-webdav.sh")):
-        raise ValueError("retired standalone entry in unified Linux layout")
-    return ("install.sh", "install-lan.sh") if unified else ("install.sh", "install-lan.sh", "uninstall.sh")
+    value = json.loads((root / "packaging/external-webdav.json").read_text(encoding="utf-8"))
+    if value != {"api": 2, "proxy_schema": 2, "owner": "tgcloud.external_webdav"}:
+        raise ValueError("unsupported TGCloud external WebDAV contract")
+    return ("install.sh", "install-lan.sh")
 
 
 def linux_entries(root: Path, version: str) -> None:
-    """Release entry pins must be enabled; VPS helper identity must agree."""
     for name in linux_entry_names(root):
         text = (root / name).read_text(encoding="utf-8")
         command = "lan" if name == "install-lan.sh" else "install"
-        if 'script_root=' in text and "installer_commit" not in text:
-            expected = 'exec python3 -B "$script_root/scripts/run_source.py" ' + command + ' "$@"'
-            if expected not in text or any(item in text for item in ("https://", "http://", "curl", "wget")):
-                raise ValueError("invalid local-source Linux entry: " + name)
-            continue
-        if len(re.findall(r'^installer_commit\s*=\s*"[0-9a-f]{40}"$', text, re.MULTILINE)) != 1:
-            raise ValueError(f"invalid immutable Linux entry pin: {name}")
-        if name == "install.sh" and re.findall(r'^installer_version\s*=\s*"([0-9.]+)"$', text, re.MULTILINE) != [version]:
-            raise ValueError("Linux entry helper version must match release source")
+        expected = 'exec python3 -B "$script_root/scripts/run_source.py" ' + command + ' "$@"'
+        local, separator, online = text.partition("# TGCloud online bootstrap.")
+        # A complete source tree must dispatch locally without any downloads.
+        # The standalone fallback may fetch only this project's stable assets.
+        online_valid = not separator or (
+            name == "install.sh"
+            and re.findall(r"https?://[^\s\"']+", online) == [
+                "https://github.com/LuoPoJunZi/TGCloud/releases/download/${tgcloud_tag}"]
+            and len(re.findall(r"(?m)^curl -fL ", online)) == 2
+        )
+        if (expected not in local or not online_valid
+                or any(item in local for item in ("installer_commit", "https://", "http://", "curl", "wget"))):
+            raise ValueError("invalid local-source Linux entry: " + name)
 
 
 def release_metadata(root: Path, tag: str) -> dict[str, str]:

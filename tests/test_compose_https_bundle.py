@@ -26,7 +26,7 @@ from tgcloud.deployment.runtime import files as host_files
 ROOT = Path(__file__).resolve().parents[1]
 _git = shutil.which("git")
 _git_bash = Path(_git).resolve().parents[1] / "bin/bash.exe" if _git else None
-BASH = os.getenv("TG115_TEST_BASH") or (
+BASH = os.getenv("TGCLOUD_TEST_BASH") or (
     str(_git_bash) if os.name == "nt" and _git_bash and _git_bash.is_file()
     else shutil.which("bash") if os.name != "nt" else None)
 spec = importlib.util.spec_from_file_location("https_source_release", ROOT / ".github/scripts/source_release.py")
@@ -179,7 +179,7 @@ class HTTPSReleaseContractTests(unittest.TestCase):
         for product in PRODUCTS.values():
             names.update(path.relative_to(ROOT).as_posix() for path in payload_sources(ROOT, product).values())
         names.update({"packaging/compose-release.json", "packaging/compose-https.sh",
-                      ".github/scripts/compose_release.py", ".github/workflows/compose-images.yml", "docs/compose-guide.md"})
+                      ".github/scripts/compose_release.py", ".github/workflows/compose-bundles.yml", "docs/compose-guide.md"})
         cls.files = {name: (ROOT / name).read_bytes() for name in names}
 
     def verify(self, files):
@@ -202,7 +202,7 @@ class HTTPSReleaseContractTests(unittest.TestCase):
         self.verify(self.files)
         files = dict(self.files)
         del files["packaging/compose-https.sh"]
-        with self.assertRaisesRegex(ValueError, "incomplete direct Compose HTTPS"):
+        with self.assertRaisesRegex(ValueError, "incomplete direct Compose source layout"):
             self.verify(files)
         old = json.loads(files["packaging/compose-release.json"])
         old["format"] = 1

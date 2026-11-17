@@ -1,10 +1,8 @@
 """Offline repository contracts; no build, deployment, or personal data."""
 
 import ast
-import hashlib
 import importlib.util
 import io
-import json
 import re
 import runpy
 import shutil
@@ -76,7 +74,7 @@ class PythonCheckEntryTests(unittest.TestCase):
         paths = checks.source_paths("all")
         for path in (".github/scripts", "src", "packaging/compat", "scripts", "tests"):
             self.assertIn(path, paths)
-        for path in ("build", "dist", ".venv", "website", "legacy"):
+        for path in ("build", "dist", ".venv", "legacy"):
             self.assertNotIn(path, paths)
         command = checks.commands("compile", "cli")[0]
         self.assertEqual(command[6:], list(checks.CLI_PATHS))
@@ -110,7 +108,7 @@ class PythonCheckEntryTests(unittest.TestCase):
 
 class RepositoryContractTests(unittest.TestCase):
     def test_public_sources_are_script_only_without_root_duplicates(self):
-        for name in ("installer.py", "installer_clouddrive2.py", "installer_openlist.py",
+        for name in ("installer.py", "installer_clouddrive2.py", "installer_unsupported.py",
                      "operation_feedback.py", "build.ps1", "requirements-build.txt"):
             with self.subTest(name=name):
                 self.assertFalse((ROOT / name).exists())
@@ -141,27 +139,26 @@ class RepositoryContractTests(unittest.TestCase):
         for guide in (
             "install.md", "compose-guide.md", "configuration-guide.md", "bot-guide.md",
             "listening-guide.md", "operations-guide.md", "backup-and-recovery.md",
-            "security.md", "development.md", "../archive/README.md",
+            "security.md", "development.md", "naming-guide.md", "network-guide.md", "faq.md",
         ):
             with self.subTest(guide=guide):
                 self.assertIn(f"]({guide})", index)
         for readme in ("README.md", "README_EN.md"):
             self.assertIn('](docs/README.md)', (ROOT / readme).read_text(encoding="utf-8"))
 
-    def test_editor_rules_preserve_markdown_and_official_brand_assets(self):
+    def test_editor_rules_preserve_markdown_and_source_formatting(self):
         rules = (ROOT / ".editorconfig").read_text(encoding="utf-8")
         self.assertIn("root = true", rules)
         self.assertIn("charset = utf-8", rules)
         self.assertIn("[*.ps1]\nend_of_line = crlf", rules)
         self.assertIn("[*.md]", rules)
         self.assertIn("trim_trailing_whitespace = false", rules)
-        self.assertIn("[*.{svg,png,ico}]", rules)
-        self.assertIn("insert_final_newline = unset", rules)
 
-    def test_archive_hashes_survive_cross_platform_git_checkout(self):
+    def test_source_attributes_are_portable_without_archival_exceptions(self):
         rules = (ROOT / ".gitattributes").read_text(encoding="utf-8")
-        self.assertIn("archive/project-history/** -text", rules)
         self.assertIn("*.py text eol=lf", rules)
+        self.assertIn("*.sh text eol=lf", rules)
+        self.assertNotIn("archive/", rules)
 
     def test_ruff_keeps_original_implicit_defaults(self):
         config = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -169,7 +166,7 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertEqual(len(sections), 1)
         self.assertIn('target-version = "py310"', sections[0])
         self.assertIn("respect-gitignore = true", sections[0])
-        self.assertIn('extend-exclude = ["website"]', sections[0])
+        self.assertNotRegex(config, r"(?m)^\s*extend-exclude\s*=")
         self.assertNotRegex(config, r"(?m)^\s*(?:select|ignore|extend-select|extend-ignore)\s*=")
 
     def test_current_cli_linter_pin_matches_the_declared_and_locked_tool(self):
@@ -240,12 +237,12 @@ class RepositoryContractTests(unittest.TestCase):
     def test_dependabot_scans_the_current_cd2_compose_file(self):
         config = (ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
         updates = re.split(r"(?m)^  - package-ecosystem: *", config)[1:]
-        openlist = [block for block in updates
+        unsupported = [block for block in updates
                     if re.search(r"(?m)^    directory: /packaging/compose$", block)]
-        self.assertEqual(len(openlist), 1)
-        self.assertEqual(openlist[0].splitlines()[0], "docker-compose")
-        self.assertIn("interval: monthly", openlist[0])
-        self.assertIn("open-pull-requests-limit: 5", openlist[0])
+        self.assertEqual(len(unsupported), 1)
+        self.assertEqual(unsupported[0].splitlines()[0], "docker-compose")
+        self.assertIn("interval: monthly", unsupported[0])
+        self.assertIn("open-pull-requests-limit: 5", unsupported[0])
         compose_files = sorted((ROOT / "packaging/compose").glob("*.yml"))
         self.assertEqual({path.name for path in compose_files},
                          {"docker-compose.clouddrive2.yml"})
@@ -271,11 +268,10 @@ class RepositoryContractTests(unittest.TestCase):
                 with self.subTest(script=script.relative_to(ROOT).as_posix(), source=name):
                     self.assertTrue((ROOT / name).is_file(), "ShellCheck source annotation points to a missing helper")
 
-    def test_consistency_checks_run_when_source_docs_or_brand_change(self):
-        website = (ROOT / ".github/workflows/website-docs.yml").read_text(encoding="utf-8")
-        for path in ("assets/brand/**", "docs/**", "archive/project-history/**", "README.md", "README_EN.md", "src/tgcloud/version.py"):
-            self.assertEqual(website.count(f'"{path}"'), 2, path)
+    def test_consistency_checks_run_when_source_version_or_docs_change(self):
         docs = (ROOT / ".github/workflows/docs.yml").read_text(encoding="utf-8")
+        for path in ("docs/**", "THIRD_PARTY_NOTICES.md", "README.md", "README_EN.md", "CHANGELOG.md", "src/tgcloud/version.py"):
+            self.assertEqual(docs.count(f'"{path}"'), 2, path)
         self.assertIn("-p test_repository.py", docs)
 
     def test_repository_ci_checks_every_change_without_build_or_write_permissions(self):
@@ -309,53 +305,23 @@ class UserDocumentationTests(unittest.TestCase):
         if name.startswith("docs/") and name.endswith(".md") and not repository.forbidden_reason(name)
     )
 
-    def test_all_version_records_remain_indexed_even_without_release_downloads(self):
-        history = (ROOT / "archive/project-history/changelog.md").read_text(encoding="utf-8")
-        origin = json.loads((ROOT / "archive/project-history/record-index.json").read_text(encoding="utf-8"))["source_project"]
-        pattern = rf"^## {re.escape(origin)} v(\d+\.\d+\.\d+)\s*$"
-        versions = re.findall(pattern, history, re.MULTILINE)
-        # Published history is not pruned when Release pages or tags are removed.
-        baseline = {f"1.{minor}.{patch}" for minor, count in ((0, 5), (1, 6), (2, 2), (3, 5), (4, 2))
-                    for patch in range(count)}
-        self.assertLessEqual(baseline, set(versions))
-        self.assertEqual(len(versions), len(set(versions)))
-        records = json.loads((ROOT / "archive/project-history/record-index.json").read_text(encoding="utf-8"))["records"]
-        record = next(row for row in records if row["path"] == "archive/project-history/changelog.md")
-        self.assertEqual(hashlib.sha256((ROOT / record["path"]).read_bytes()).hexdigest(), record["sha256"])
-        for name in ("CHANGELOG.md", "website/docs/changelog.md"):
-            text = (ROOT / name).read_text(encoding="utf-8")
-            with self.subTest(document=name):
-                self.assertEqual(re.findall(r"^## TGCloud v(\d+\.\d+\.\d+)\s*$", text, re.MULTILINE), ["0.0.1"])
-                self.assertIn("archive/README.md", text)
-                self.assertNotRegex(text, r"TGCloud v1\.")
+    def test_current_changelog_has_only_the_tgcloud_development_version(self):
+        text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertEqual(re.findall(r"^## TGCloud v(\d+\.\d+\.\d+)\s*$", text, re.MULTILINE), ["0.0.1"])
+        self.assertNotRegex(text, r"TG2Cloud|原项目|历史档案|迁移")
 
-    def test_current_docs_do_not_recommend_retired_downloads_or_migration(self):
+    def test_product_docs_stand_alone_and_preserve_separate_legal_notices(self):
         for name in self.GUIDES:
-            if name == "CHANGELOG.md":
-                continue  # The changelog retains facts about all past product versions.
             text = (ROOT / name).read_text(encoding="utf-8")
             with self.subTest(document=name):
+                self.assertNotRegex(text, r"TG2Cloud|原项目|旧项目|历史档案|历史归档|精简版|UnsupportedGateway")
                 self.assertNotRegex(text, r"https://[^)\s]+/releases/download/[^)\s]+\.exe")
-                self.assertNotIn("](MIGRATION_FROM_TG115.md)", text)
-                self.assertNotIn("](README-小白使用说明.md)", text)
-                self.assertNotIn("build.ps1 -Edition", text)
-        for name in ("docs/README-小白使用说明.md", "docs/MIGRATION_FROM_TG115.md"):
-            self.assertFalse((ROOT / name).exists())
-        for name in ("README.md", "README_EN.md"):
-            self.assertIn("whyhhh20/TG115", (ROOT / name).read_text(encoding="utf-8"))
-        self.assertTrue((ROOT / "LICENSE").is_file())
+        self.assertIn("TG115 Contributors", (ROOT / "LICENSE").read_text(encoding="utf-8"))
+        self.assertIn("whyhhh20/TG115", (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8"))
 
-    def test_archived_evidence_links_resolve_to_real_immutable_git_files(self):
-        text = (ROOT / "archive/project-history/changelog.md").read_text(encoding="utf-8")
-        links = re.findall(r"https://github.com/LuoPoJunZi/[^/]+/blob/([0-9a-f]{40})/(docs/development/[^)#\s]+)", text)
-        self.assertTrue(links)
-        for commit in {commit for commit, _ in links}:
-            result = subprocess.run(["git", "ls-tree", "-r", "--name-only", commit, "--", "docs/development"],
-                                    cwd=ROOT, capture_output=True, text=True, check=True)
-            files = set(result.stdout.splitlines())
-            for identity, name in links:
-                if identity == commit:
-                    self.assertIn(name, files)
+    def test_product_tree_has_no_retired_documentation_directories(self):
+        for name in ("archive", "legacy", "history", "old-docs"):
+            self.assertFalse((ROOT / name).exists())
 
     def test_readmes_and_index_offer_standalone_bot_and_storage_guides(self):
         for name in ("bot-guide.md", "configuration-guide.md"):
@@ -385,18 +351,17 @@ class UserDocumentationTests(unittest.TestCase):
                                    for heading in headings}
                         self.assertIn(unquote(fragment), anchors)
 
-    def test_repository_navigation_does_not_depend_on_website_articles_or_source(self):
+    def test_repository_navigation_targets_existing_local_files(self):
         for name in self.GUIDES:
             source = ROOT / name
             links = re.findall(r'\]\(([^)]+)\)|\bhref="([^"]+)"', source.read_text(encoding="utf-8"))
             for markdown, html in links:
                 href = markdown or html
                 with self.subTest(source=name, link=href):
-                    if href.startswith("https://tgcloud.pages.dev/"):
-                        self.assertEqual(href, "https://tgcloud.pages.dev/")
-                    elif not re.match(r"(?:https?://|mailto:|#)", href):
+                    if not re.match(r"(?:https?://|mailto:|#)", href):
                         target = (source.parent / unquote(href.split("#", 1)[0])).resolve()
-                        self.assertFalse(target.is_relative_to(ROOT / "website"))
+                        self.assertTrue(target.is_relative_to(ROOT))
+                        self.assertTrue(target.is_file())
 
     def test_documented_bot_commands_are_handled_and_include_recovery(self):
         # Both production routers are called by CommandHandlers; do not hand-maintain a command allowlist.
@@ -446,13 +411,17 @@ class UserDocumentationTests(unittest.TestCase):
             source = (ROOT / "packaging/hooks" / edition / "manage.sh").read_text(encoding="utf-8")
             labels = re.findall(r"^  ([a-z][a-z0-9-]*(?:\|[a-z][a-z0-9-]*)*)\)", source, re.MULTILINE)
             commands[edition] = {part for label in labels for part in label.split("|")}
-        examples = re.findall(r"/opt/tgcloud-(clouddrive2)/manage\.sh ([a-z-]+)", text)
+        profiles = ast.parse((ROOT / "src/tgcloud/deployment/profiles.py").read_text(encoding="utf-8"))
+        product = next(node for node in ast.walk(profiles) if isinstance(node, ast.Call)
+                       and isinstance(node.func, ast.Name) and node.func.id == "ProductProfile")
+        directory = next(ast.literal_eval(item.value) for item in product.keywords if item.arg == "install_dir")
+        examples = re.findall(re.escape(directory) + r"/manage\.sh ([a-z-]+)", text)
         self.assertTrue(examples)
-        for edition, command in examples:
-            self.assertIn(command, commands[edition])
+        for command in examples:
+            self.assertIn(command, commands["clouddrive2"])
         for command in ("status", "logs", "check"):
             self.assertIn(command, commands["clouddrive2"])
-        self.assertFalse((ROOT / "packaging/hooks/openlist/manage.sh").exists())
+        self.assertFalse((ROOT / "packaging/hooks/unsupported/manage.sh").exists())
         self.assertIn("直接删除", text)
         self.assertIn("1～50", text)
 
@@ -469,13 +438,13 @@ class PublicFileTests(unittest.TestCase):
 
     def test_forbidden_outputs_private_files_and_internal_records(self):
         for name in (
-            "dist/app.exe", "build/phase2-preview/view.png", "website/node_modules/tool/index.js",
+            "dist/app.exe", "build/phase2-preview/view.png", "scratch/node_modules/tool/index.js",
             "app/__pycache__/bot.pyc", ".pytest_cache/README.md", ".ruff_cache/item",
-            ".venv/Scripts/python.exe", "website/dist/index.html", "App.EXE", "old.spec",
-            ".codex/PROJECT_MEMORY.md", "AGENTS.md", "website/AGENTS.md", "AGENTS_old.md",
+            ".venv/Scripts/python.exe", "scratch/dist/index.html", "App.EXE", "old.spec",
+            ".codex/PROJECT_MEMORY.md", "AGENTS.md", "scratch/AGENTS.md", "AGENTS_old.md",
             "docs/AUDIT.md", "docs/WORKLOG.md", "TGCloud-Codex-Kickoff-Prompt.md",
-            "TGCloud-v1.0.0-RELEASE-CHECKLIST.md", "website/QA_REPORT.md",
-            ".env", "payload_openlist/.env.production", "rclone.conf", "secret.pem", "id_ed25519",
+            "TGCloud-v1.0.0-RELEASE-CHECKLIST.md", "scratch/QA_REPORT.md",
+            ".env", "payload_unsupported/.env.production", "rclone.conf", "secret.pem", "id_ed25519",
             "tasks.db", "tasks.sqlite3", "tasks.sqlite-wal", "tasks.sqlite3-shm", "run.log",
             "bot.session-wal", "personal.session-shm", "personal.session-journal",
             "nested/Personal.SESSION-JOURNAL",
@@ -505,9 +474,9 @@ class PublicFileTests(unittest.TestCase):
     def test_public_sources_resources_and_example_config_are_allowed(self):
         for name in (
             "src/tgcloud/deployment/profiles.py", "install.sh", "tests/test_repository.py", ".github/workflows/release.yml",
-            ".github/CONTRIBUTING.md", ".github/SECURITY.md", "assets/brand/tgcloud.ico",
-            "website/public/favicon.ico", "docs/填写信息清单.md", "docs/development/BRAND-GUIDE.md",
-            "docs/development/DEVELOPMENT.md", "LICENSE", "packaging/hooks/clouddrive2/.env.example",
+            ".github/CONTRIBUTING.md", ".github/SECURITY.md", "packaging/Dockerfile",
+            "docs/填写信息清单.md", "docs/configuration-guide.md", "docs/development.md",
+            "LICENSE", "THIRD_PARTY_NOTICES.md", "packaging/hooks/clouddrive2/.env.example",
         ):
             with self.subTest(name=name):
                 self.assertIsNone(repository.forbidden_reason(name))
@@ -575,13 +544,13 @@ class RepositoryGuardrailTests(unittest.TestCase):
     def test_build_contract_includes_all_public_regular_inputs(self):
         self.assertEqual(repository.check_build_inputs(self.root, self.build_fixture()), [])
 
-    def test_missing_payload_and_excluded_brand_resource_are_reported(self):
+    def test_missing_payload_and_excluded_legal_notice_are_reported(self):
         files = self.build_fixture()
         (self.root / "packaging/compose/docker-compose.clouddrive2.yml").unlink()
-        files.remove("assets/brand/tgcloud.ico")
+        files.remove("THIRD_PARTY_NOTICES.md")
         errors = repository.check_build_inputs(self.root, files)
         self.assertTrue(any("packaging/compose/docker-compose.clouddrive2.yml: required build input missing" in error for error in errors))
-        self.assertTrue(any("assets/brand/tgcloud.ico: required build input excluded" in error for error in errors))
+        self.assertTrue(any("THIRD_PARTY_NOTICES.md: required build input excluded" in error for error in errors))
 
     def test_directory_cannot_replace_build_file(self):
         files = self.build_fixture()
@@ -593,7 +562,7 @@ class RepositoryGuardrailTests(unittest.TestCase):
 
     def test_missing_edition_or_invalid_manifest_fails_without_echoing_code(self):
         files = self.build_fixture()
-        for text in ('FILES = ("packaging/compose/docker-compose.openlist.yml",)\n', 'invalid syntax PRIVATE_MARKER !\n'):
+        for text in ('FILES = ("packaging/compose/docker-compose.unsupported.yml",)\n', 'invalid syntax PRIVATE_MARKER !\n'):
             with self.subTest(text=text):
                 self.put("src/tgcloud/deployment/profiles.py", text)
                 errors = repository.check_build_inputs(self.root, files)

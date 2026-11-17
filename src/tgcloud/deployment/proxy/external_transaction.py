@@ -135,7 +135,7 @@ class SiteTransaction:
         instance = object.__new__(cls)
         instance.directory, instance.journal, instance.data, instance.items = directory, journal, value, value["items"]
         for name, item in instance.items.items():
-            if (not re.fullmatch(r"tgcloud-(?:clouddrive2|openlist|webdav-clouddrive2|webdav-openlist)\.conf", name)
+            if (not re.fullmatch(r"tgcloud-(?:clouddrive2|webdav-clouddrive2)\.conf", name)
                     or not isinstance(item, dict) or set(item) != {"before", "after", "mode", "intermediate"}
                     or item["mode"] not in {0o600, 0o640, 0o644}):
                 raise ValueError("事务清单不属于受支持站点。")

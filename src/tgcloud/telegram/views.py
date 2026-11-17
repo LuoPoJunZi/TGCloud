@@ -418,19 +418,17 @@ class TaskViews:
     def _format_doctor(self) -> str:
         checked = self.destination_last_checked
         age = f"{max(0, int(time.time() - checked))} 秒前" if checked else "尚未完成"
-        probe_details = ""
-        if getattr(self.settings, "storage_backend", "clouddrive2") == "openlist":
-            kind = getattr(self, "destination_failure_kind", "")
-            label = {"rate_limited": "限流等待（HTTP 429）", "unauthorized": "凭据需核对（HTTP 401）"}.get(
-                kind, "只读探测通过" if self._destination_ready() else "未就绪"
-            )
-            remaining = max(0, int(getattr(self, "_destination_next_probe_at", 0) - time.monotonic() + 0.999))
-            timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(checked)) if checked else "尚未完成"
-            probe_details = (
-                f"OpenList 探测：{label}\n最近实际探测：{timestamp}（VPS 本地时间）\n"
-                + (f"下次允许探测：约 {remaining} 秒后；刷新不会绕过冷却\n" if remaining else "下次允许探测：可执行；等待后台检查或主动刷新\n")
-                + ("冷却结束不代表服务端已经解除限流。\n" if kind == "rate_limited" else "")
-            )
+        kind = getattr(self, "destination_failure_kind", "")
+        label = {"rate_limited": "限流等待（HTTP 429）", "unauthorized": "凭据需核对（HTTP 401）"}.get(
+            kind, "只读探测通过" if self._destination_ready() else "未就绪"
+        )
+        remaining = max(0, int(getattr(self, "_destination_next_probe_at", 0) - time.monotonic() + 0.999))
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(checked)) if checked else "尚未完成"
+        probe_details = (
+            f"网关探测：{label}\n探测时间：{timestamp}（VPS 本地时间）\n"
+            + (f"下次探测：约 {remaining} 秒后；刷新不会绕过冷却\n" if remaining else "下次探测：可执行；等待后台检查或主动刷新\n")
+            + ("冷却结束不代表服务端已经解除限流。\n" if kind == "rate_limited" else "")
+        )
         return (
             "运行诊断\n\n"
             f"资源采样：{'正常' if self._sample_fresh() else '过期或未就绪，停止放行'}\n"
