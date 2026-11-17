@@ -1541,6 +1541,8 @@ class PayloadTests(unittest.TestCase):
         for relative in (
             "Dockerfile",
             ".dockerignore",
+            "LICENSE",
+            "THIRD_PARTY_NOTICES.md",
             "docker-compose.yml",
             "remote_install.sh",
             "repair_clouddrive_network.sh",
@@ -1621,7 +1623,7 @@ class PayloadTests(unittest.TestCase):
         dockerignore = (PAYLOAD / ".dockerignore").read_text(encoding="utf-8")
         self.assertEqual(
             dockerignore.splitlines(),
-            ["*", "!Dockerfile", "!requirements.txt", "!app/", "!app/**"],
+            ["*", "!Dockerfile", "!requirements.txt", "!LICENSE", "!THIRD_PARTY_NOTICES.md", "!app/", "!app/**"],
         )
         self.assertNotIn("!.env", dockerignore)
         self.assertNotIn("!downloads", dockerignore)
