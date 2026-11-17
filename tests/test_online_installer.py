@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = (ROOT / "install-online.sh").read_text(encoding="utf-8")
+SCRIPT = (ROOT / "install.sh").read_text(encoding="utf-8")
 VALIDATOR = SCRIPT.split("python3 -c '\n", 1)[1].split("\n' \"$tgcloud_work\"", 1)[0]
 TAG = "v0.0.1"
 ASSET = "TGCloud-" + TAG + "-source.tar.gz"
@@ -106,7 +106,7 @@ class OnlineInstallerTests(unittest.TestCase):
                 return candidate
         self.fail("Bash is required to validate the standalone online entry")
 
-    def launch(self, *arguments, failed_download=False):
+    def launch(self, *arguments, failed_download=False, stream_entry=False):
         self.archive()
         binaries = self.root / "bin"
         binaries.mkdir()
@@ -121,6 +121,10 @@ while (($#)); do
   if [[ "$1" == -o ]]; then output="$2"; shift 2; else url="$1"; shift; fi
 done
 printf '%s\\n' "$url" >> "$TGCLOUD_FIXTURE_URLS"
+if [[ "$url" == https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh ]]; then
+  cat "$TGCLOUD_FIXTURE_ENTRY"
+  exit 0
+fi
 cp "$TGCLOUD_FIXTURE_DOWNLOADS/${url##*/}" "$output"
 """,
         }
@@ -137,8 +141,13 @@ cp "$TGCLOUD_FIXTURE_DOWNLOADS/${url##*/}" "$output"
                            TMPDIR=bash_path(temporary), PYTHONIOENCODING="utf-8",
                            TGCLOUD_FIXTURE_FAIL="1" if failed_download else "0",
                            TGCLOUD_FIXTURE_URLS=bash_path(self.root / "urls"),
-                           TGCLOUD_FIXTURE_DOWNLOADS=bash_path(self.downloads))
-        command = "export PATH=" + shlex.quote(bash_path(binaries)) + ':"$PATH"; exec bash ' + shlex.join([bash_path(entry), *arguments])
+                           TGCLOUD_FIXTURE_DOWNLOADS=bash_path(self.downloads),
+                           TGCLOUD_FIXTURE_ENTRY=bash_path(entry))
+        entry_argument = (
+            "<(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh)"
+            if stream_entry else shlex.quote(bash_path(entry))
+        )
+        command = "export PATH=" + shlex.quote(bash_path(binaries)) + ':"$PATH"; exec bash ' + entry_argument + " " + shlex.join(arguments)
         result = subprocess.run([self.shell(), "-c", command], input="terminal answer\n",
                                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                                 env=environment, check=False, timeout=30)
@@ -165,3 +174,13 @@ cp "$TGCLOUD_FIXTURE_DOWNLOADS/${url##*/}" "$output"
         record = json.loads(next(line.split("=", 1)[1] for line in result.stdout.splitlines()
                                  if line.startswith("FIXTURE_WIZARD=")))
         self.assertEqual(record["args"], ["install", "--check"])
+
+    def test_documented_process_substitution_preserves_terminal_and_arguments(self):
+        result = self.launch("--check", "space value", stream_entry=True)
+        self.assertEqual(result.returncode, 7, result.stderr)
+        record = json.loads(next(line.split("=", 1)[1] for line in result.stdout.splitlines()
+                                 if line.startswith("FIXTURE_WIZARD=")))
+        self.assertEqual(record, {"args": ["install", "--check", "space value"], "stdin": "terminal answer\n"})
+        urls = (self.root / "urls").read_text().splitlines()
+        self.assertEqual(urls[0], "https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh")
+        self.assertEqual(len(urls), 3)

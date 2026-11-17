@@ -19,7 +19,7 @@ A successful upload and size check do not establish content-hash equality or fin
 Use a native AMD64 or ARM64 Debian/Ubuntu Linux host with Docker Compose v2 and `/dev/fuse`. Host commands require Python 3.10+; Bot images use Python 3.12.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install-online.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh)
 ```
 
 Run in a root terminal (`sudo -i` first if needed), with curl, Python 3.10+ and CA certificates installed. The online entry downloads and verifies the stable `v0.0.1` source archive before opening the existing CloudDrive2 wizard. No Git checkout or source-path input is required. Append `--lan` for a trusted LAN; run `tgcloud` for management. A complete local source tree still supports `sudo bash install.sh` and `sudo bash install-lan.sh`.

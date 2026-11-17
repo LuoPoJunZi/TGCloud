@@ -85,8 +85,8 @@ class ValidationTests(unittest.TestCase):
     def test_shell_stage_checks_all_entries_and_every_managed_hook(self):
         commands = validation.commands('shell')
         self.assertEqual([c for c in commands if c[:2] == ['bash', '-n']],
-                         [['bash', '-n', 'install.sh'], ['bash', '-n', 'install-lan.sh'], ['bash', '-n', 'install-online.sh'], ['bash', '-n', 'packaging/compose-https.sh']])
-        self.assertIn(['shellcheck', 'install.sh', 'install-lan.sh', 'install-online.sh', 'packaging/compose-https.sh'], commands)
+                         [['bash', '-n', 'install.sh'], ['bash', '-n', 'install-lan.sh'], ['bash', '-n', 'packaging/compose-https.sh']])
+        self.assertIn(['shellcheck', 'install.sh', 'install-lan.sh', 'packaging/compose-https.sh'], commands)
         hooks = commands[-1]
         for path in (ROOT / 'packaging/hooks').glob('*/*.sh'):
             self.assertIn(path.relative_to(ROOT).as_posix(), hooks)
@@ -140,8 +140,8 @@ class ValidationTests(unittest.TestCase):
         version = planning.source_version(ROOT)
         for name in ('README.md', 'README_EN.md', 'docs/install.md'):
             text = (ROOT / name).read_text(encoding='utf-8')
-            self.assertIn('bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install-online.sh)', text)
-        online = (ROOT / 'install-online.sh').read_text(encoding='utf-8')
+            self.assertIn('bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh)', text)
+        online = (ROOT / 'install.sh').read_text(encoding='utf-8')
         self.assertIn('tgcloud_tag=v' + version, online)
         self.assertIn('/releases/download/${tgcloud_tag}', online)
         compose = (ROOT / 'docs/compose-guide.md').read_text(encoding='utf-8')

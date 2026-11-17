@@ -7,7 +7,6 @@ on:
     paths:
       - "install.sh"
       - "install-lan.sh"
-      - "install-online.sh"
       - "tests/test_online_installer.py"
       - "tests/addons/**"
       - "scripts/**"
@@ -62,7 +61,6 @@ on:
     paths:
       - "install.sh"
       - "install-lan.sh"
-      - "install-online.sh"
       - "tests/test_online_installer.py"
       - "tests/addons/**"
       - "scripts/**"
@@ -162,8 +160,7 @@ jobs:
         run: |
           bash -n install.sh
           bash -n install-lan.sh
-          bash -n install-online.sh
-          shellcheck install.sh install-lan.sh install-online.sh
+          shellcheck install.sh install-lan.sh
       - name: Offline tests (no VPS or Docker calls)
         run: |
           python .github/scripts/check_python.py test --scope cli

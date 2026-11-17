@@ -182,12 +182,13 @@ class SourceReleaseTests(unittest.TestCase):
                     package.validate_pins(self.root, commit)
         path.write_bytes(original)
 
-    def test_current_local_entries_require_no_remote_bootstrap(self):
+    def test_complete_source_dispatch_precedes_the_online_bootstrap(self):
         for name in ("install.sh", "install-lan.sh"):
             text = (ROOT / name).read_text(encoding="utf-8")
             self.assertIn("scripts/run_source.py", text)
+            local = text.partition("# TGCloud online bootstrap.")[0]
             for remote in ("installer_commit", "curl", "https://"):
-                self.assertNotIn(remote, text)
+                self.assertNotIn(remote, local)
 
     def test_download_only_entry_is_rejected_before_packaging(self):
         (self.root / "install.sh").write_text('#!/bin/bash\ncurl https://example.invalid/bootstrap\n', encoding="utf-8")
@@ -196,7 +197,7 @@ class SourceReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid local-source Linux entry"):
             package.validate_pins(self.root, commit)
 
-    def test_online_fallback_cannot_pass_the_local_entry_contract(self):
+    def test_untrusted_online_source_cannot_pass_the_entry_contract(self):
         path = self.root / "install.sh"
         path.write_text(path.read_text(encoding="utf-8") + "\ncurl https://example.invalid/source\n", encoding="utf-8")
         self.commit()

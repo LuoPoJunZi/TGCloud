@@ -1199,7 +1199,7 @@ class LocalRuntimeTests(unittest.TestCase):
         ast.parse((ROOT / "scripts/run_source.py").read_text(encoding="utf-8"))
         text = (ROOT / "install.sh").read_text(encoding="utf-8")
         self.assertIn('exec python3 -B "$script_root/scripts/run_source.py" install "$@"', text)
-        self.assertNotIn("curl", text)
+        self.assertNotIn("curl", text.partition("# TGCloud online bootstrap.")[0])
 
 
 if __name__ == "__main__":

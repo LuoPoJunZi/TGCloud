@@ -13,7 +13,7 @@ TGCloud 提供面向 CloudDrive2 的 Telegram 文件转存、持久化任务与�
 一键启动公网安装向导：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install-online.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh)
 ```
 
 在 Linux root 终端执行，普通用户先运行 `sudo -i`。入口自动下载并校验本版正式源码，不需要 Git。默认安装目录 `/opt/tgcloud`，管理命令 `tgcloud`，可信内网在上述命令末尾追加 `--lan`。

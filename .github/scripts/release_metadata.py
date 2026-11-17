@@ -38,7 +38,17 @@ def linux_entries(root: Path, version: str) -> None:
         text = (root / name).read_text(encoding="utf-8")
         command = "lan" if name == "install-lan.sh" else "install"
         expected = 'exec python3 -B "$script_root/scripts/run_source.py" ' + command + ' "$@"'
-        if expected not in text or any(item in text for item in ("installer_commit", "https://", "http://", "curl", "wget")):
+        local, separator, online = text.partition("# TGCloud online bootstrap.")
+        # A complete source tree must dispatch locally without any downloads.
+        # The standalone fallback may fetch only this project's stable assets.
+        online_valid = not separator or (
+            name == "install.sh"
+            and re.findall(r"https?://[^\s\"']+", online) == [
+                "https://github.com/LuoPoJunZi/TGCloud/releases/download/${tgcloud_tag}"]
+            and len(re.findall(r"(?m)^curl -fL ", online)) == 2
+        )
+        if (expected not in local or not online_valid
+                or any(item in local for item in ("installer_commit", "https://", "http://", "curl", "wget"))):
             raise ValueError("invalid local-source Linux entry: " + name)
 
 

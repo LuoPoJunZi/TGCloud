@@ -27,7 +27,7 @@ TGCloud 是面向 **CloudDrive2** 的 Telegram 文件自动化转存与管理工
 在目标 Linux 主机的 **root 终端**执行（普通用户先运行 `sudo -i`）。需要 curl、Python 3.10+ 和 CA 证书：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install-online.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh)
 ```
 
 在线入口自动下载并校验 `v0.0.1` 正式源码，直接进入安装／管理向导，无需 Git 或手动填写源码路径。仅支持 CloudDrive2，收集配置、展示计划后再确认安装。已安装后使用 `tgcloud` 管理。
@@ -35,7 +35,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/inst
 没有公网域名、使用可信内网时：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install-online.sh) --lan
+bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh) --lan
 ```
 
 已有完整源码仍可运行 `sudo bash install.sh` 或 `sudo bash install-lan.sh`。
@@ -78,7 +78,7 @@ cd deployment && bash manage.sh
 
 ## 常见问题
 
-**一键入口需要先下载源码吗？** 不需要，`install-online.sh` 会下载并校验正式源码包；源码内的 `install.sh` 则直接使用同目录资源。
+**一键入口需要先下载源码吗？** 不需要。通过在线命令运行 `install.sh` 时自动下载并校验正式源码包；在完整源码目录运行时直接使用本地资源。
 
 **Bot 在线但任务不能上传？** 先检查 CloudDrive2 挂载、专用用户、目标目录和磁盘余量，再运行管理菜单中的就绪检查与 WebDAV 验收。
 

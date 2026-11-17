@@ -25,7 +25,7 @@ sudo apt-get install -y curl python3 ca-certificates
 先运行 `sudo -i` 进入 root 终端；已经是 root 时无需重复。公网 VPS 准备指向本机的域名并放行 TCP 80/443，然后执行：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install-online.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh)
 ```
 
 入口自动下载 `v0.0.1` 正式源码包，校验 SHA256 并安全解包到私有临时目录，再运行原有交互向导；不要求安装 Git、克隆仓库或输入源码目录。退出时清理本次临时源码，不删除运行实例。下载、校验失败会停止，不改用开发分支业务代码。
@@ -35,7 +35,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/inst
 无公网域名时，使用同一入口的可信内网向导：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install-online.sh) --lan
+bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh) --lan
 ```
 
 按提示填写本机私有 IPv4。内网 HTTP 不加密，不向公网映射管理端口。后续维护使用 `tgcloud`；需要重新下载正式源码运行向导时，可再次运行上述在线命令。

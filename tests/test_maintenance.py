@@ -358,7 +358,7 @@ class ReleaseMetadataTests(unittest.TestCase):
             self.assertEqual(metadata["release_artifact"], "TGCloud-v9.0.0-source")
             self.assertFalse((root / "legacy").exists())
 
-    def test_release_requires_local_dispatch_without_online_fallback(self):
+    def test_release_requires_local_dispatch_and_rejects_untrusted_downloads(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             for name in ("install.sh", "install-lan.sh", "packaging/external-webdav.json"):
