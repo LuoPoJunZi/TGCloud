@@ -249,7 +249,7 @@ class ProxyReviewTests(unittest.TestCase):
         linux = workflow.split("  linux-validation:", 1)[1].split("  release:", 1)[0]
         release = workflow.split("  release:", 1)[1]
         self.assertIn("ref: ${{ env.RELEASE_TAG }}", linux)
-        self.assertIn("python .github/scripts/check_python.py test", linux)
+        self.assertIn(".github/scripts/linux_validation.py test", linux)
         self.assertIn("shellcheck rclone", linux)
         self.assertIn("docker info", linux)
         self.assertIn("- linux-validation", release)

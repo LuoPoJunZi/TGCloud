@@ -185,7 +185,7 @@ def recommendations(checks: dict, failures: dict, configuration: str, containers
 def collect(instance, session) -> str:
     lines = ["# TGCloud 故障诊断报告", "", "仅只读检查；不包含原始日志、文件名、私人路径或凭据。",
              "", "生成时间（UTC）：" + datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-             "Edition：" + instance.product.display_name,
+             "实例：" + instance.product.display_name,
              "宿主系统：" + ("Linux" if platform.system() == "Linux" else "非 Linux（未作宿主实机验收）"),
              "宿主架构：" + {"aarch64": "ARM64", "arm64": "ARM64", "AMD64": "AMD64", "x86_64": "AMD64"}.get(platform.machine(), "未检查")]
     for label, command in (("Docker", "docker version --format '{{.Server.Version}}'"),

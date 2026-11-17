@@ -104,7 +104,7 @@ class ComposeTests(unittest.TestCase):
         for image in ("latest", "ghcr.io/owner/image:v1", "tgcloud-local:" + "b" * 32):
             with self.assertRaises(ValueError):
                 packaging.render(ROOT, "clouddrive2", image, source_digest=digest)
-        for changes in ({"edition": "openlist"}, {"legacy": True}):
+        for changes in ({"edition": "unsupported"}, {"legacy": True}):
             with self.assertRaises(ValueError):
                 packaging.render(ROOT, changes.get("edition", "clouddrive2"), packaging.image_name(digest), source_digest=digest, legacy=changes.get("legacy", False))
         with self.assertRaises(ValueError):
@@ -130,7 +130,7 @@ class ComposeTests(unittest.TestCase):
         self.assertTrue(self.initialize(path))
 
     def test_unknown_data_and_script_installations_are_never_adopted(self):
-        for name in ("data", "app", "openlist"):
+        for name in ("data", "app", "unsupported"):
             with self.subTest(name=name), tempfile.TemporaryDirectory(dir=self.root) as temp:
                 path = write_candidate(Path(temp) / "bundle")
                 (path / name).mkdir()
@@ -169,11 +169,11 @@ class ComposeTests(unittest.TestCase):
         path = self.candidate()
         self.initialize(path)
         config = runtime.saved_config(path, "clouddrive2")
-        for changes in ({"TGCLOUD_STORAGE_BACKEND": "openlist"}, {"TGCLOUD_INSTALL_MODE": "script"}, {"TGCLOUD_BIND_IP": "0.0.0.0"}):
+        for changes in ({"TGCLOUD_STORAGE_BACKEND": "unsupported"}, {"TGCLOUD_INSTALL_MODE": "script"}, {"TGCLOUD_BIND_IP": "0.0.0.0"}):
             with self.assertRaises(ValueError):
                 runtime.validate_config(path, config | changes, "clouddrive2")
         metadata = json.loads((path / "compose-bundle.json").read_text())
-        for changes in ({"version": "9.0.0"}, {"format": 3}, {"format": True}, {"edition": "openlist"},
+        for changes in ({"version": "9.0.0"}, {"format": 3}, {"format": True}, {"edition": "unsupported"},
                         {"project": "TGCloud"}, {"source_sha256": "f" * 64}, {"image": "ghcr.io/owner/image:v1"}, {"commit": "a" * 40}):
             (path / "compose-bundle.json").write_text(json.dumps(metadata | changes))
             with self.subTest(changes=changes), self.assertRaises(ValueError):

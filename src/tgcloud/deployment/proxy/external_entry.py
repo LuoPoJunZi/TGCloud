@@ -542,7 +542,7 @@ class ExternalEntry:
     def status(self, state):
         route = state["domains"].get(self.product.key)
         if not route:
-            return ProxyReport("", "not_configured", "当前 Edition 尚未配置域名访问。", ())
+            return ProxyReport("", "not_configured", "当前实例尚未配置域名访问。", ())
         domain = route["domain"]
         try:
             self.preflight()

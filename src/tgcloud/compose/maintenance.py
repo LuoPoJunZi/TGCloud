@@ -174,7 +174,7 @@ def backups(manager, instance):
     backup.output_directory(parent, instance, create=True)
     if action == "1":
         manager.log("备份配置、数据库、两个 Session 和网关授权；不包含云端文件、下载、日志或共享代理。")
-        if manager.ui.confirm("短暂停止当前 Bot 和网关创建备份，并恢复原运行状态？其他 Edition 保持运行"):
+        if manager.ui.confirm("短暂停止当前 Bot 和网关创建备份，并恢复原运行状态？其他实例保持运行"):
             with edition_lock(Path("/opt/tgcloud-cli-locks") / (manager.product.key + ".lock")):
                 archive = backup.create(manager.recheck(instance), manager.session, parent)
             manager.log("实例备份已核验：" + str(archive) + "；含敏感信息，可在本菜单另存加密副本。")

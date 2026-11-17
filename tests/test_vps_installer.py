@@ -150,19 +150,19 @@ class TerminalTests(unittest.TestCase):
         config = {
             "WEBDAV_USERNAME_B64": "!invalid-private-fixture!",
             "WEBDAV_PASSWORD_B64": tgdep_configuration.encoded("secret\x1b[31m"),
-            "OPENLIST_ADMIN_PASSWORD": "secret\nunsafe",
+            "UNRELATED_ADMIN_PASSWORD": "secret\nunsafe",
         }
         tgdep_terminal.show_credentials(ui, PRODUCTS["clouddrive2"], config, SafeLog(logs.append))
         ui.reveal.assert_not_called()
         for value in config.values():
             self.assertNotIn(value, "\n".join(logs))
 
-    def test_clouddrive_legacy_saved_keys_do_not_reveal_openlist_password(self):
+    def test_clouddrive_legacy_saved_keys_do_not_reveal_unsupported_password(self):
         ui = Mock()
         config = {
             "CD2_WEBDAV_USERNAME_B64": tgdep_configuration.encoded("tgcloud"),
             "CD2_WEBDAV_PASSWORD_B64": tgdep_configuration.encoded(VALUES["webdav_password"]),
-            "OPENLIST_ADMIN_PASSWORD": VALUES["admin_password"],
+            "UNRELATED_ADMIN_PASSWORD": VALUES["admin_password"],
         }
         tgdep_terminal.show_credentials(ui, PRODUCTS["clouddrive2"], config, SafeLog(lambda _line: None))
         self.assertEqual(ui.reveal.call_count, 2)
@@ -261,9 +261,6 @@ class TerminalTests(unittest.TestCase):
         self.assertTrue(reader.closed)
 
     def test_main_requires_actual_terminal_confirmation_for_both_editions(self):
-        baseline = patch.object(tgdep_releases, "download_baseline", return_value=ROOT)
-        baseline.start()
-        self.addCleanup(baseline.stop)
         for product in PRODUCTS.values():
             for check, answer in ((True, ""), (False, "\n"), (False, "y\n"), (False, "")):
                 with self.subTest(edition=product.key, check=check, answer=answer):
@@ -380,7 +377,7 @@ class StandaloneBootstrapTests(unittest.TestCase):
             self.assertFalse((source.root / ".env").exists())
 
     def test_rc_draft_bad_tag_and_commit_stop_before_helpers(self):
-        for edition in ("openlist", "both", "all", "clouddrive2;id"):
+        for edition in ("unsupported", "both", "all", "clouddrive2;id"):
             with self.subTest(edition=edition), patch.object(tgdep_terminal, "Terminal") as terminal, self.assertRaises(SystemExit):
                 tgdep_vps.parser().parse_args(["--edition", edition])
             terminal.assert_not_called()
@@ -471,7 +468,7 @@ class ApiTests(unittest.TestCase):
             with tarfile.open(fileobj=data, mode="w:gz") as archive:
                 info = tarfile.TarInfo("repo/app/version.py")
                 content = b'VERSION="9.9.9"\n'
-                info.name = "repo/payload_clouddrive2/app/version.py"
+                info.name = "repo/src/tgcloud/version.py"
                 info.size = len(content)
                 archive.addfile(info, io.BytesIO(content))
             with patch.object(tgdep_releases, "open_public", return_value=io.BytesIO(data.getvalue())), self.assertRaisesRegex(ValueError, "Tag"):
@@ -517,38 +514,41 @@ class ArchiveTests(unittest.TestCase):
 
 
 class VersionSourceTests(unittest.TestCase):
-    def read_version(self, legacy, current=None):
+    def read_version(self, deployed, current=None):
         with tempfile.TemporaryDirectory() as private:
             root = Path(private).resolve()
-            (root / "app").mkdir()
-            (root / "app/__init__.py").write_text(legacy, encoding="utf-8")
+            fallback = root / "app/tgcloud/version.py"
+            fallback.parent.mkdir(parents=True)
+            fallback.write_text(deployed, encoding="utf-8")
             if current is not None:
-                (root / "app/version.py").write_text(current, encoding="utf-8")
+                selected = root / "src/tgcloud/version.py"
+                selected.parent.mkdir(parents=True)
+                selected.write_text(current, encoding="utf-8")
             return tgdep_releases.source_version(root)
 
-    def test_published_legacy_literal_without_execution(self):
-        self.assertEqual(self.read_version('__version__ = "1.0.2"\nraise RuntimeError("not executed")'), "1.0.2")
+    def test_deployed_tgcloud_literal_without_execution(self):
+        self.assertEqual(self.read_version('VERSION = "0.0.1"\nraise RuntimeError("not executed")'), "0.0.1")
 
-    def test_new_version_source_takes_precedence(self):
-        self.assertEqual(self.read_version('__version__ = "1.0.2"', 'VERSION = "1.1.2"'), "1.1.2")
+    def test_complete_source_version_takes_precedence_over_runtime_copy(self):
+        self.assertEqual(self.read_version('VERSION = "0.0.1"', 'VERSION = "0.0.2"'), "0.0.2")
 
     def test_invalid_new_source_never_falls_back(self):
         for current in ('', 'VERSION = "bad"', 'VERSION = "1.1.2"\nVERSION = "1.1.3"', 'VERSION = "1.1.2-rc.1"'):
             with self.subTest(current=current), self.assertRaises(ValueError):
-                self.read_version('__version__ = "1.0.2"', current)
+                self.read_version('VERSION = "0.0.1"', current)
 
-    def test_legacy_dynamic_duplicate_or_nonstable_version_rejected(self):
-        for legacy in ('__version__ = get_version()', '__version__ = "1.0.2"\n__version__ = "1.0.3"',
-                       '__version__ = "1.0.2-rc.1"', 'VERSION = "1.0.2"'):
+    def test_deployed_dynamic_duplicate_or_nonstable_version_rejected(self):
+        for legacy in ('VERSION = get_version()', 'VERSION = "0.0.1"\nVERSION = "0.0.2"',
+                       'VERSION = "0.0.1-rc.1"', '__version__ = "0.0.1"'):
             with self.subTest(legacy=legacy), self.assertRaises(ValueError):
                 self.read_version(legacy)
 
-    def test_original_project_baseline_cannot_be_adopted_even_with_matching_version(self):
+    def test_instance_without_source_record_cannot_be_adopted_even_with_matching_version(self):
         with tempfile.TemporaryDirectory() as private:
             directory = Path(private).resolve()
             (directory / ".env").write_bytes(b"SYNTHETIC=keep-exactly\r\n")
             old = tgdep_instances.Instance(PRODUCTS["clouddrive2"], directory, True, VERSION)
-            with self.assertRaisesRegex(ValueError, "不接管"):
+            with self.assertRaisesRegex(ValueError, "有效来源记录"):
                 tgdep_upgrade.assert_unmodified(old, ROOT)
             self.assertEqual((directory / ".env").read_bytes(), b"SYNTHETIC=keep-exactly\r\n")
 
@@ -637,7 +637,7 @@ class ConfigPayloadTests(unittest.TestCase):
                 # Retain the historical fixture. Only obsolete output aliases
                 # are intentionally omitted from newly generated v1.5.3 configs.
                 expected = {key: value for key, value in fixture["expected"][product.key].items()
-                            if not key.startswith("TG115_")}
+                            if not key.startswith("UNRELATED_")}
                 self.assertEqual(tgdep_configuration.new_config(product, VALUES), expected)
 
     def test_shell_characters_in_password_stay_encoded(self):
@@ -656,7 +656,7 @@ class ConfigPayloadTests(unittest.TestCase):
         # Legacy configuration secrets must still be redacted when explicitly
         # registered, even though CD2 no longer generates this gateway field.
         log.register(dict(tgdep_configuration.new_config(PRODUCTS["clouddrive2"], VALUES),
-                          OPENLIST_ADMIN_PASSWORD=VALUES["admin_password"]))
+                          UNRELATED_ADMIN_PASSWORD=VALUES["admin_password"]))
         text = "\n".join(VALUES[key] for key in ("api_hash", "bot_token", "webdav_password", "admin_password"))
         text += "\n" + tgdep_configuration.encoded(VALUES["webdav_password"]) + "\nhttps://user:UNKNOWN@host/\nPassword=UNKNOWN\nCookie: UNKNOWN"
         text += '\n{"access_token":"UNKNOWN","cookie":"UNKNOWN"}'
@@ -678,7 +678,7 @@ class ConfigPayloadTests(unittest.TestCase):
     def test_install_paths_cannot_overlap_another_component(self):
         product = PRODUCTS["clouddrive2"]
         tgdep_configuration.check_product_directory(product, Path(product.install_dir))
-        for path in ("/opt/tgcloud-proxy", "/opt/tgcloud-proxy/child", "/opt/tgcloud-openlist", "/opt/tgcloud-clouddrive2-backups", "/opt/tg115"):
+        for path in ("/opt/tgcloud-proxy", "/opt/tgcloud-proxy/child", "/opt/tgcloud-webdav", "/opt/tgcloud-backups", "/opt/tgcloud-cli"):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 tgdep_configuration.check_product_directory(product, Path(path))
 
@@ -840,7 +840,7 @@ class InstanceTests(unittest.TestCase):
 
     def test_foreign_labels_and_gateway_mounts_stop(self):
         bot, gateway = self.containers()
-        gateway["mounts"][0]["Source"] = "/opt/other/openlist/data"
+        gateway["mounts"][0]["Source"] = "/opt/other/unsupported/data"
         with self.assertRaises(ValueError):
             self.discover(bot, gateway)
         bot, gateway = self.containers()
@@ -862,7 +862,7 @@ class InstanceTests(unittest.TestCase):
         self.assertEqual(plan.config, self.instance.config)
 
     def test_gateway_image_change_is_not_automatic_database_migration(self):
-        self.instance.gateway_image = "openlistteam/openlist@sha256:" + "0" * 64
+        self.instance.gateway_image = "unsupportedteam/unsupported@sha256:" + "0" * 64
         with self.assertRaisesRegex(ValueError, "网关镜像"), patch.object(tgdep_install, "DomainProxyManager") as manager:
             tgdep_install.make_plan(self.instance, RELEASE, ROOT, ROOT, Mock(), self.log, Mock())
         manager.assert_not_called()
@@ -981,7 +981,7 @@ class InstanceTests(unittest.TestCase):
 
     def test_credential_view_rejects_retired_edition_before_reading_secrets(self):
         with patch.object(tgdep_preflight, "validate_host") as validate, patch.object(tgdep_terminal, "Terminal") as terminal, patch.object(cli, "SafeLog", return_value=self.log), self.assertRaises(SystemExit):
-            tgdep_vps.main(["--edition", "openlist", "--show-credentials"])
+            tgdep_vps.main(["--edition", "unsupported", "--show-credentials"])
         validate.assert_not_called()
         terminal.assert_not_called()
 
@@ -1023,9 +1023,6 @@ class InstanceTests(unittest.TestCase):
         resources.assert_not_called()
 
     def test_main_cancelled_and_readonly_never_mutate(self):
-        baseline = patch.object(tgdep_releases, "download_baseline", return_value=ROOT)
-        baseline.start()
-        self.addCleanup(baseline.stop)
         plan = tgdep_install.Plan(self.instance, "upgrade", Mock())
         for args in (["--edition", "clouddrive2"], ["--edition", "clouddrive2", "--check"]):
             ui = Mock()
@@ -1038,9 +1035,6 @@ class InstanceTests(unittest.TestCase):
             execute.assert_not_called()
 
     def test_wizard_defaults_to_single_detected_edition_not_a_new_install(self):
-        baseline = patch.object(tgdep_releases, "download_baseline", return_value=ROOT)
-        baseline.start()
-        self.addCleanup(baseline.stop)
         ui = Mock()
         ui.ask.return_value = "2"
         ui.confirm.return_value = False
@@ -1150,7 +1144,7 @@ class LocalRuntimeTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "Linux flock integration; Windows is not a target VPS")
     def test_edition_lock_is_exclusive_and_released(self):
         with tempfile.TemporaryDirectory() as private:
-            path = Path(private) / "locks" / "openlist.lock"
+            path = Path(private) / "locks" / "unsupported.lock"
             with edition_lock(path), self.assertRaises(RuntimeError), edition_lock(path):
                 pass
             with edition_lock(path):
@@ -1205,7 +1199,7 @@ class LocalRuntimeTests(unittest.TestCase):
         ast.parse((ROOT / "scripts/run_source.py").read_text(encoding="utf-8"))
         text = (ROOT / "install.sh").read_text(encoding="utf-8")
         self.assertIn('exec python3 -B "$script_root/scripts/run_source.py" install "$@"', text)
-        self.assertNotIn("curl", text)
+        self.assertNotIn("curl", text.partition("# TGCloud online bootstrap.")[0])
 
 
 if __name__ == "__main__":

@@ -78,10 +78,10 @@ class LanDockerTests(unittest.TestCase):
         self.exercise(PRODUCTS["clouddrive2"])
 
 class RetiredGatewayTests(unittest.TestCase):
-    def test_openlist_lan_is_rejected_before_docker(self):
+    def test_unsupported_lan_is_rejected_before_docker(self):
         from unittest.mock import patch
         with patch.object(lan.instances, "docker_inventory") as inventory, self.assertRaises(SystemExit):
-            lan.main(["--edition", "openlist"])
+            lan.main(["--edition", "unsupported"])
         inventory.assert_not_called()
 
 

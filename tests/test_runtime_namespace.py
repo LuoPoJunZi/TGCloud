@@ -33,6 +33,10 @@ assert pwd.getpwuid(os.getuid()).pw_name == 'tgcloud'
 assert pwd.getpwuid(os.getuid()).pw_dir == '/nonexistent'
 assert Path.cwd() == Path('/opt/tgcloud')
 assert os.environ['PYTHONPATH'] == '/opt/tgcloud:/opt/tgcloud/app'
+for name in ('LICENSE', 'THIRD_PARTY_NOTICES.md'):
+    notice = Path('/usr/share/doc/tgcloud') / name
+    assert notice.is_file() and notice.stat().st_size > 0, str(notice)
+    assert os.access(notice, os.R_OK) and not os.access(notice, os.W_OK), str(notice)
 for path in Path('app').rglob('*'):
     assert path.stat().st_uid == 0, str(path)
     assert os.access(path, os.R_OK), str(path)
@@ -59,7 +63,7 @@ from tgcloud.persistence.sqlite import TaskDB
 from tgcloud.persistence.plans import Plans
 with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
-    db = TaskDB(root / 'tg115.db')
+    db = TaskDB(root / 'tgcloud.db')
     assert db._conn.execute('PRAGMA user_version').fetchone()[0] == 3
     assert state(db)['enabled'] is False and state(db)['account'] is None
     assert Plans(db, 42).preferences(42)['confirmation'] is False

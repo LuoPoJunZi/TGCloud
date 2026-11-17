@@ -27,7 +27,7 @@ class EditorTests(unittest.IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         settings = make_settings(Path(self.temp.name))
-        self.db = TaskDB(settings.data_dir / "tg115.db")
+        self.db = TaskDB(settings.data_dir / "tgcloud.db")
         self.addCleanup(self.db.close)
         self.owner = make_service(settings, self.db)
         self.admin = settings.allowed_user_id

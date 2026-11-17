@@ -112,7 +112,7 @@ class NativeGatewayTests(unittest.TestCase):
                         state = self.docker("inspect", "--format", "{{json .State}}", name)
                         logs = self.docker("logs", "--tail", "40", name)
                         log = SafeLog()
-                        log.register({"OPENLIST_ADMIN_PASSWORD": "isolated-native-ci-only"})
+                        log.register({"UNRELATED_ADMIN_PASSWORD": "isolated-native-ci-only"})
                         self.fail(log.clean("Gateway fixture stopped before port publication: " + state + "\n" + logs))
                     self.assertTrue(binding.startswith("127.0.0.1:"), binding)
                     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))

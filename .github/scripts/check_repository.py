@@ -16,7 +16,7 @@ BUILD_FILES = (
     "src/tgcloud/compose/management.py", "src/tgcloud/compose/lifecycle.py", "src/tgcloud/compose/releases.py",
     "src/tgcloud/compose/maintenance.py", "src/tgcloud/compose/webdav.py", "docs/operations-guide.md",
     "packaging/compose-release.json", ".github/scripts/compose_release.py",
-    ".github/workflows/compose-images.yml", "docs/compose-guide.md",
+    ".github/workflows/compose-bundles.yml", "docs/compose-guide.md",
     "install.sh", "install-lan.sh", "packaging/external-webdav.json", ".github/scripts/release_metadata.py",
     "scripts/run_source.py", "pyproject.toml", "requirements/bot.lock.txt", "requirements/dev.lock.txt",
     "src/tgcloud/__init__.py", "src/tgcloud/version.py", "src/tgcloud/app.py",
@@ -27,9 +27,7 @@ BUILD_FILES = (
     "src/tgcloud/addons/external_webdav/service.py",
     "packaging/bootstrap-manifest.json", "packaging/runtime-manifest.json",
     ".github/scripts/build_payload.py", ".github/scripts/prepare_bootstrap.py", ".github/scripts/lock_dependencies.py",
-    "LICENSE", ".github/CONTRIBUTING.md", ".github/SECURITY.md",
-    "assets/brand/tgcloud.ico", "assets/brand/tgcloud-logo.svg",
-    "assets/brand/tgcloud-icon-256.png",
+    "LICENSE", "THIRD_PARTY_NOTICES.md", ".github/CONTRIBUTING.md", ".github/SECURITY.md",
 )
 LOCAL_DIRECTORIES = frozenset({
     "build", "dist", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache",
@@ -71,11 +69,11 @@ def forbidden_reason(name: str) -> str | None:
     basename = path.name.casefold()
     if not parts or path.is_absolute() or ".." in parts or "\\" in name or re.match(r"^[a-zA-Z]:", name):
         return "invalid repository-relative path"
-    if parts[0] == "legacy" or (len(parts) == 1 and basename in {
+    if parts[0] in {"archive", "legacy", "history", "old-docs"} or (len(parts) == 1 and basename in {
         "installer.py", "installer_clouddrive2.py", "installer_openlist.py",
         "operation_feedback.py", "requirements-build.txt", "build.ps1",
     }):
-        return "frozen desktop source or tests belong only in local recovery archives"
+        return "retired source or historical documents are not TGCloud product inputs"
     if parts[0] in {"payload_clouddrive2", "payload_openlist"} or name.startswith("scripts/lib/") or name in {
         "scripts/vps_installer.py", "scripts/lan_installer.py", "scripts/uninstaller.py", "scripts/vps_runtime.py",
     }:

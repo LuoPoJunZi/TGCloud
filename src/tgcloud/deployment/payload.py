@@ -4,7 +4,6 @@ import re
 import shutil
 from pathlib import Path
 
-from tgcloud.deployment.compatibility import legacy_payload
 from tgcloud.deployment.fingerprints import source_files
 from tgcloud.deployment.profiles import ProductProfile, require_product
 
@@ -15,7 +14,7 @@ def payload_sources(root: Path, product: ProductProfile, *, strict: bool = True)
         raise ValueError("source root contains links")
     root = root.resolve()
     if not (root / "src/tgcloud/version.py").is_file():
-        return legacy_payload(root, product, strict=strict)
+        raise ValueError("完整 TGCloud 源码缺少 src/tgcloud/version.py")
     result = {}
     for relative in product.required_payload:
         source = root / relative

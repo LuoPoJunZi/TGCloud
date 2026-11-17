@@ -36,7 +36,7 @@ class RegistryTests(unittest.TestCase):
     def test_optional_empty_and_valid_cd2_with_retired_registry_rejected(self):
         value = registry()
         self.assertEqual(maintenance.parse_compose_registry(json.dumps(value)), value)
-        value["instances"].update(registry("openlist")["instances"])
+        value["instances"].update(registry("unsupported")["instances"])
         with self.assertRaises(ValueError):
             maintenance.validate_compose_registry(value)
         value["instances"] = {}
@@ -61,8 +61,8 @@ class RegistryTests(unittest.TestCase):
             invalid.append(value)
         for suffix in ("", "/nested"):
             value = registry()
-            value["instances"].update(registry("openlist")["instances"])
-            value["instances"]["openlist"]["root"] = value["instances"]["clouddrive2"]["root"] + suffix
+            value["instances"].update(registry("unsupported")["instances"])
+            value["instances"]["unsupported"]["root"] = value["instances"]["clouddrive2"]["root"] + suffix
             invalid.append(value)
         for value in invalid:
             with self.subTest(value=value), self.assertRaises(ValueError):
@@ -240,7 +240,7 @@ class UninstallDependencyTests(unittest.TestCase):
         session.run.assert_not_called()
 
     def test_retired_registry_blocks_cleanup_without_touching_docker(self):
-        self.write_registry("openlist")
+        self.write_registry("unsupported")
         with patch.object(uninstall.configuration, "regular_private", side_effect=self.fixture_private), patch.object(uninstall, "docker_snapshot") as snapshot, patch.object(uninstall, "read_state", return_value=empty_state()), patch.object(uninstall, "checked_path"), self.assertRaises(uninstall.UninstallError):
             uninstall.build_plan(("clouddrive2",), Mock())
         snapshot.assert_not_called()
@@ -248,7 +248,7 @@ class UninstallDependencyTests(unittest.TestCase):
     def test_purge_refuses_own_or_global_proxy_deletion_with_any_owner(self):
         self.write_registry()
         with patch.object(uninstall.configuration, "regular_private", side_effect=self.fixture_private), patch.object(uninstall, "mountpoints") as points:
-            for editions, remove_proxy in ((("clouddrive2",), False), (("openlist",), True)):
+            for editions, remove_proxy in ((("clouddrive2",), False), (("unsupported",), True)):
                 with self.subTest(editions=editions, remove_proxy=remove_proxy), self.assertRaises(uninstall.UninstallError):
                     uninstall.purge_preflight(editions, {}, {}, remove_proxy)
             points.assert_not_called()

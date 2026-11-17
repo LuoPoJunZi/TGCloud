@@ -25,7 +25,7 @@ BOT_ENVIRONMENT = (
     "TELEGRAM_API_ID", "TELEGRAM_API_HASH_B64", "BOT_TOKEN_B64", "ALLOWED_USER_ID",
     "WEBDAV_URL_B64", "WEBDAV_USERNAME_B64", "WEBDAV_PASSWORD_B64", "WEBDAV_TARGET_PATH_B64",
     "CD2_WEBDAV_URL_B64", "CD2_WEBDAV_USERNAME_B64", "CD2_WEBDAV_PASSWORD_B64", "CD2_TARGET_PATH_B64",
-    "TGCLOUD_STORAGE_BACKEND", "TG115_STORAGE_BACKEND", "TGCLOUD_RCLONE_REMOTE_NAME", "TG115_RCLONE_REMOTE_NAME",
+    "TGCLOUD_STORAGE_BACKEND", "TGCLOUD_RCLONE_REMOTE_NAME",
     "LOCAL_TEMP_BUDGET_GB", "MIN_FREE_DISK_GB", "CONTROL_INTERVAL_SECONDS",
     "CPU_TARGET_LOW_PERCENT", "CPU_TARGET_HIGH_PERCENT", "CPU_PRESSURE_PERCENT",
     "MEMORY_SOFT_MIN_MB", "MEMORY_HARD_MIN_MB", "RAMP_UP_STEP", "RAMP_DOWN_FACTOR",
@@ -124,7 +124,7 @@ def bundle_files(root: Path, edition: str = EDITION, image: str | None = None,
                  commit: str = "", *, source_digest: str, version: str = VERSION) -> dict[str, bytes]:
     """Only an already verified local snapshot may supply these build inputs."""
     if commit or edition != EDITION or image not in {None, image_name(source_digest)}:
-        raise ValueError("official images, commits and other Editions are not supported")
+        raise ValueError("official images, commits and other实例s are not supported")
     image = image_name(source_digest)
     source = local_source.content(root)
     context_files = {
@@ -139,6 +139,7 @@ def bundle_files(root: Path, edition: str = EDITION, image: str | None = None,
         ".env.example": b"# Run the local setup service to generate the private .env. Never store secrets here.\nTGCLOUD_BIND_IP=127.0.0.1\n",
         "README.md": (root / "docs/compose-guide.md").read_bytes(),
         "LICENSE": (root / "LICENSE").read_bytes(),
+        "THIRD_PARTY_NOTICES.md": (root / "THIRD_PARTY_NOTICES.md").read_bytes(),
         **https_tools(root), **context_files,
         **{"local-source/" + name: body for name, body in sorted(source.items())},
     }

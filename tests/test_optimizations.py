@@ -949,7 +949,7 @@ class OptimizationTests(unittest.IsolatedAsyncioTestCase):
         self.service.destination_scope = result.scope
         self.assertNotIn("尚未创建", self.service._format_status())
 
-    async def test_staging_listing_returns_only_tg115_temp_objects(self) -> None:
+    async def test_staging_listing_returns_only_tgcloud_temp_objects(self) -> None:
         client = RcloneClient(self.settings)
         client.ensure_config = AsyncMock()
         stream = asyncio.StreamReader()
