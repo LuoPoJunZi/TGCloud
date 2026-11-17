@@ -154,6 +154,64 @@ def terminal_report(markdown: str) -> str:
     return "\n".join(re.sub(r"^#{1,3} (.+)$", r"── \1 ──", line) for line in lines).lstrip("\n")
 
 
+def friendly_marker(line: str) -> str:
+    """Render protocol output without changing the command's returned bytes."""
+    match = re.fullmatch(r"TGCLOUD_([A-Z0-9_]+)=(.*)", line)
+    if match is None:
+        return "[待核对] 收到未识别的检查结果，请查看诊断报告。"
+    key, value = match.groups()
+    if key == "STAGE":
+        stage = {"GATEWAY": "启动 CloudDrive2 网关", "BOT": "构建并启动 TGCloud Bot",
+                 "HEALTH": "检查 Bot 基础健康"}.get(value)
+        return "\n── " + stage + " ──" if stage else "[待核对] 安装阶段未识别，请查看诊断报告。"
+    if key == "VERSION":
+        return "程序版本：v" + value if re.fullmatch(r"\d+\.\d+\.\d+", value) else "程序版本：未核实"
+    if key == "INSTALL_DIR":
+        return "安装目录：" + value if re.fullmatch(r"/opt/[A-Za-z0-9._/-]+", value) else "安装目录：未核实"
+    if key == "REPAIR_CONTAINER":
+        return "正在核对 CloudDrive2 受管容器的网络。"
+    if key == "STORAGE_GATEWAY":
+        return "存储网关：CloudDrive2" if value == "clouddrive2" else "存储网关：未核实"
+    if key == "TEST_PATH":
+        return "随机测试文件验收流程结束。"
+    if key == "CLEANUP_WARNING":
+        return "[待核对] 临时测试文件清理未确认，请在授权目标目录检查残留。"
+    if key == "RESULT" and value == "SUCCESS":
+        return "基础部署已完成；继续检查管理入口与业务状态。"
+    if key == "LAN_BASE" and value == "OK；TGCLOUD_LAN_ENTRY=OK；HTTPS=NOT_APPLICABLE":
+        return "基础服务与内网入口检查通过；公网 HTTPS 不适用。"
+    labels = {
+        "CODE": "运行代码校验", "CONFIG": "配置检查", "DATABASE_CHECK": "数据库检查",
+        "DATABASE_BACKUP": "数据库备份", "BOT_HEALTH": "Bot 基础健康", "RESULT": "基础部署",
+        "REPAIR": "CloudDrive2 网络检查", "STATUS": "服务状态", "UPDATE": "程序更新",
+        "APPLY_CONFIG": "配置应用", "BACKUPS": "备份检查", "BACKUP_PRUNE": "备份清理",
+        "CONFIGURATION": "配置检查", "DESTINATION": "WebDAV 写入验收",
+        "CLI_CHECK": "安装只读预检", "LAN_CHECK": "内网只读预检",
+        "PROXY_STATUS_SCRIPT": "HTTPS 状态脚本", "LAN_ENTRY": "内网入口检查",
+        "WEBDAV_AUTH": "WebDAV 账号认证", "WEBDAV_LIST": "WebDAV 目标目录访问",
+        "WEBDAV": "WebDAV 账号与目录检查", "WEBDAV_WRITE": "WebDAV 测试文件写入",
+        "WEBDAV_SIZE": "WebDAV 临时文件大小复验", "UPLOAD": "文件上传与大小复验",
+        "WEBDAV_MOVE": "WebDAV 改名与最终文件复验", "RENAME": "文件改名检查",
+        "WEBDAV_DELETE": "WebDAV 测试文件删除检查", "DELETE": "临时文件清理",
+    }
+    label = labels.get(key)
+    status = re.split(r"[；:：]", value, maxsplit=1)[0]
+    states = {
+        "OK": "通过", "SUCCESS": "通过", "FAILED": "未通过", "MISMATCH": "未通过（与预期不一致）",
+        "MISMATCH_KEYS": "未通过（配置字段不一致）", "healthy": "通过", "unhealthy": "未通过",
+        "starting": "启动中", "exited": "已停止", "missing": "未找到", "STOPPED": "已停止",
+        "UNKNOWN": "未核实", "unknown": "未核实", "PRESERVED": "已保留原配置",
+        "APPLY_REQUESTED": "已请求应用新配置",
+    }
+    if label is None or status not in states:
+        return "[待核对] 收到未识别的检查结果，请查看诊断报告。"
+    prefix = "[错误] " if status in {"FAILED", "MISMATCH", "MISMATCH_KEYS", "unhealthy"} else ""
+    suffix = "（不代表部署或转存验收）" if key in {"CLI_CHECK", "LAN_CHECK"} else ""
+    if key == "DESTINATION" and status == "FAILED" and ":" in value:
+        suffix += "；" + value.partition(":")[2].strip()
+    return prefix + label + "：" + states[status] + suffix
+
+
 class InstallerLog:
     def __init__(self, log: SafeLog, *, friendly: bool = True) -> None:
         self.log = log
@@ -190,7 +248,8 @@ class InstallerLog:
                 label, _, detail = line.partition("；")
                 translations = {"NO_CHANGE": "当前无需变更", "CANCELLED": "已取消", "INTERRUPTED": "操作中断"}
                 key = label.split("=", 1)[1]
-                line = translations.get(key, label.replace("TGCLOUD_CLI_RESULT=FAILED：", "操作失败：").replace("TGCLOUD_LAN_RESULT=FAILED：", "操作失败：")) + ("；" + detail if detail else "")
+                failure = label.replace("TGCLOUD_CLI_RESULT=FAILED：", "操作失败：").replace("TGCLOUD_LAN_RESULT=FAILED：", "操作失败：")
+                line = translations.get(key, failure if key.startswith("FAILED：") else "[待核对] 操作结果未识别，请查看诊断报告。") + ("；" + detail if detail else "")
                 if key.startswith("FAILED"):
                     line = "[错误] " + line
             elif line.startswith("TGCLOUD_CLI_WEBDAV=NOT_RUN"):
@@ -199,6 +258,8 @@ class InstallerLog:
                 line = "WebDAV 写入与大小复验通过；请在云存储官方客户端确认最终文件。"
             elif line.startswith("TGCLOUD_CLI_BASE_HTTPS=OK"):
                 line = "HTTPS 管理入口本机检查通过；公网访问仍需外部网络检查。"
+            elif line.startswith("TGCLOUD_"):
+                line = friendly_marker(line)
             lines.append(line)
         self.log("\n".join(lines))
 

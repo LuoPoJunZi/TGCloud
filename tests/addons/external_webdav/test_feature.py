@@ -308,7 +308,7 @@ class LifecycleTests(unittest.TestCase):
         self.service = Service(PRODUCTS["clouddrive2"], self.session, SafeLog(self.messages.append), self.ui,
                                root=Path(self.temp.name).resolve())
         self.service.launcher = Path(self.temp.name).resolve() / "bin/tgcloud-webdav"
-        self.item = {"schema": 1, "owner": config.OWNER, "edition": "clouddrive2", "instance_dir": "/opt/tgcloud-clouddrive2",
+        self.item = {"schema": 1, "owner": config.OWNER, "edition": "clouddrive2", "instance_dir": "/opt/tgcloud",
                      "domain": route()["domain"], "username": "phone-reader", "bot_root": "/网盘", "target_dir": "/网盘/Telegram",
                      "binding": config.binding(env()), "phase": "enabled", "scope_verification": "manual-native-readonly",
                      "backend_image": "pinned-test-image", "revision": "a" * 32}
@@ -528,17 +528,17 @@ class LifecycleTests(unittest.TestCase):
                     self.ui.ask.side_effect = lambda *args, answers=answers, **kwargs: kwargs["validate"](next(answers) or kwargs.get("default", ""))
                     with patch.object(verification, "check_backend"), patch.object(config, "password_hash", return_value="synthetic-hash"):
                         self.service.configure(install_dir=None, install=not existing)
-                    expected = "saved-reader" if existing else "tg2-webdav"
+                    expected = "saved-reader" if existing else "tgcloud-webdav"
                     self.assertEqual(current["value"]["username"], expected)
                     username_prompt = self.ui.ask.call_args_list[3]
                     self.assertEqual(username_prompt.kwargs["default"], expected)
-                    self.assertEqual("回车默认 tg2-webdav" in username_prompt.args[0], not existing)
+                    self.assertEqual("回车默认 tgcloud-webdav" in username_prompt.args[0], not existing)
                     self.assertEqual(current["value"]["target_dir"], "/网盘/Telegram")
                     self.session.run.assert_not_called()
                     self.assertNotIn(SECRET, "\n".join(self.messages))
-        self.assertEqual(config.username("tg2-webdav", "bot-reader"), "tg2-webdav")
+        self.assertEqual(config.username("tgcloud-webdav", "bot-reader"), "tgcloud-webdav")
         with self.assertRaises(ValueError):
-            config.username("tg2-webdav", "tg2-webdav")
+            config.username("tgcloud-webdav", "tgcloud-webdav")
 
     def test_blank_password_generates_nine_characters_and_short_manual_input_is_kept(self):
         for entered in ("", "short"):
@@ -761,7 +761,7 @@ class EntryAndReleaseTests(unittest.TestCase):
                     service.record.return_value = {"phase": "enabled", "instance_dir": PRODUCTS[edition].install_dir} if action == "upgrade" else None
                     service.configure.return_value = False
                     values = iter((action_number, "0", "0"))
-                    ui.ask.side_effect = lambda *args, values=values, **kwargs: str(ROOT) if "完整本地源码" in args[0] else kwargs["validate"](next(values))
+                    ui.ask.side_effect = lambda *args, values=values, **kwargs: str(ROOT) if "本地源码" in args[0] else kwargs["validate"](next(values))
                     ui.confirm.return_value = False
                     messages = []
                     service.product, service.ui, service.log = PRODUCTS[edition], ui, messages.append
@@ -828,7 +828,7 @@ class EntryAndReleaseTests(unittest.TestCase):
 
     def test_online_bootstrap_refuses_without_network_or_writing(self):
         with tempfile.TemporaryDirectory() as private, patch.object(releases.core, "ReleaseClient") as client:
-            with self.assertRaisesRegex(ValueError, "在线发布尚未配置"):
+            with self.assertRaisesRegex(ValueError, "完整 TGCloud 本地源码"):
                 releases.download(Path(private))
             self.assertEqual(list(Path(private).iterdir()), [])
         client.assert_not_called()

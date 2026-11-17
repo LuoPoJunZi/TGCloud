@@ -38,9 +38,9 @@ def probe_resources(instance: instances.Instance, session: LocalSession):
 
 def storage_options(product: ProductProfile) -> dict:
     return {
-        "managed_clouddrive": not product.is_openlist, "managed_storage": True,
+        "managed_clouddrive": True, "managed_storage": True,
         "requires_fuse": product.requires_fuse,
-        "minimum_memory_mb": 900 if product.is_openlist else 1800,
+        "minimum_memory_mb": 1800,
     }
 
 

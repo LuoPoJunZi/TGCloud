@@ -171,23 +171,14 @@ def installed_status(target: str, *, root: Path | None = None, command: Path | N
 
 
 def install_release(source: Path, release, log) -> dict:
-    """The verified business Release supplies the offline manager, never the old helper."""
+    """Install the offline manager from verified TGCloud source."""
     install(source=source)
     result = installed_status(release.version)
     label = "v" + result["version"] if result["version"] else "未核实"
     log("本地管理工具：" + label + "；目标 v" + release.version)
-    if result["state"] not in {"ok", "legacy"}:
+    if result["state"] != "ok":
         raise RuntimeError("管理工具版本或命令核验未通过；未开始升级 Bot，请重新运行可信安装入口")
-    if result["state"] == "legacy":
-        missing = "、".join({"version": "版本查询", "listen": "监听入口"}[key]
-                           for key, value in result["commands"].items() if value == "unsupported")
-        log("本地管理命令已安装：tgcloud · v" + result["version"] + "（受管源码版本与目标一致）")
-        log("所选旧版未提供：" + missing + "；未把这些项目记为通过。升级到 v1.5.0 后可用。")
-    else:
-        log("本地管理命令已安装：tgcloud · v" + result["version"] + "（与目标一致；版本查询、监听入口通过）")
-    from tgcloud.version import VERSION
-    if VERSION != result["version"]:
-        log("当前菜单进程仍使用 v" + VERSION + "；退出后重新运行 tgcloud 使用已更新的管理工具。")
+    log("本地管理命令已安装：tgcloud · v" + result["version"] + "（与目标一致；版本查询、监听入口通过）")
     return result
 
 

@@ -1,10 +1,10 @@
-# TGCloud 维护
+# TGCloud 日常维护
 
-脚本部署使用 `tgcloud`，独立 Compose 使用生成目录中的 `bash manage.sh`；两者不互相接管。
+脚本部署运行 `sudo tgcloud`，独立 Compose 进入部署目录运行 `sudo bash manage.sh`。菜单检查来源与实例归属后操作。
 
-## 常用菜单
+## 管理菜单
 
-| 菜单 |
+| 操作 |
 | --- |
 | 1. 安装与升级 |
 | 2. 查看运行状态 |
@@ -24,20 +24,35 @@
 | 16. 监听管理 |
 | 0. 退出 |
 
-## 升级
+## 服务、日志与诊断
 
-选择同项目完整本地源码，确认期间再次核对配置、容器、版本和来源摘要。不要将其他项目的程序、旧在线包或未知目录当成升级来源。同版本但源码变化也走升级流程。
-
-## 诊断和卸载
-
-容器健康不等于业务转存成功。先查看就绪与诊断，不盲目重启或重试全部任务。卸载仅处理已确认属于当前项目的资源，用户确认前不删除数据或云端文件；独立导出的备份应保存在清理范围之外。
-
-脚本部署的底层入口位于实例目录，需要检查时可执行：
+“4. 服务启停管理”分别控制 Bot 和存储网关；停止网关会中断存储和外部读取。脚本部署的底层管理入口包括：
 
 ```bash
-sudo bash /opt/tgcloud-clouddrive2/manage.sh status
-sudo bash /opt/tgcloud-clouddrive2/manage.sh logs
-sudo bash /opt/tgcloud-clouddrive2/manage.sh check
+sudo bash /opt/tgcloud/manage.sh status
+sudo bash /opt/tgcloud/manage.sh logs
+sudo bash /opt/tgcloud/manage.sh check
 ```
 
-日常维护优先使用 `tgcloud` 菜单。`prune-backups 1～50` 只对已核对范围内的历史备份直接删除，执行前先确认保留数量与独立备份。
+容器健康不等于业务就绪。先看检查时间、目标目录和资源余量，再执行 WebDAV 验收或诊断报告。导出日志前仍需检查脱敏结果，不公开 Token、Session、授权配置或完整私有文件名。
+
+## 源码升级
+
+获取完整 TGCloud 源码，通过“1. 安装与升级”检查候选版本和源码摘要，核对计划、配置与活动任务后切换。同版本源码变化也需要确认。先创建独立备份，保留失败现场；不要清空数据库来消除报错。
+
+在完整源码目录运行 `sudo bash install.sh` 时自动使用该源码作为候选。已安装的管理工具只携带维护模块；如从管理命令执行升级，使用 `sudo tgcloud manage --source-dir /absolute/TGCloud` 明确指定完整源码，无需在菜单中重复填写。
+
+## 卸载
+
+先预览，再选择保留或清理数据：
+
+```bash
+sudo tgcloud uninstall --check
+sudo tgcloud uninstall --keep-data
+```
+
+`--purge-data` 会清理当前实例本地数据，`--purge-all` 还包含核对后的受管备份，均要求额外确认。云端文件不由项目卸载清理。共享代理与外部访问依赖必须先处理。
+
+自定义安装目录的删除必须通过完整归属检查；主菜单不会猜测该清理哪个目录。独立 Compose 使用其管理菜单卸载，避免使用跨项目 Docker prune 命令。
+
+`prune-backups 1～50` 会直接删除已核对范围内超出保留数量的备份；执行前先保存独立副本。

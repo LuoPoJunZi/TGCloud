@@ -116,7 +116,7 @@ class ManagementTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             service.selected(manager.product, str(manager.root / "foreign"), manager.session, manager.log)
         with self.assertRaises(ValueError):
-            service.selected(SimpleNamespace(key="openlist"), None, manager.session, manager.log)
+            service.selected(SimpleNamespace(key="unsupported"), None, manager.session, manager.log)
         self.assertFalse(any(" restart " in value or " up " in value for value in self.fixture.commands))
 
 
@@ -276,7 +276,7 @@ class LifecycleTests(unittest.TestCase):
         # The real CD2 template binds /Config to clouddrive/config. A directory
         # named clouddrive2 is unknown data, not this gateway's managed scope.
         managed = {"data", "downloads", "logs", "config", "clouddrive"}
-        for child in (*managed, "clouddrive/config", "openlist/data", "clouddrive2/data", "backups"):
+        for child in (*managed, "clouddrive/config", "unsupported/data", "clouddrive2/data", "backups"):
             path = self.root / child
             path.mkdir(parents=True, exist_ok=True)
             (path / "keep-test").write_text("synthetic")
@@ -285,11 +285,11 @@ class LifecycleTests(unittest.TestCase):
         planned = {path.relative_to(self.root).as_posix() for tree in trees for path, *_ in tree}
         self.assertIn("clouddrive/config/keep-test", planned)
         self.assertEqual({Path(name).parts[0] for name in planned}, managed)
-        self.assertTrue(planned.isdisjoint({"openlist/data/keep-test", "clouddrive2/data/keep-test", "backups/keep-test"}))
+        self.assertTrue(planned.isdisjoint({"unsupported/data/keep-test", "clouddrive2/data/keep-test", "backups/keep-test"}))
         for tree in trees:
             lifecycle.remove_tree(tree)
         self.assertFalse((self.root / "clouddrive/config/keep-test").exists())
-        self.assertTrue((self.root / "openlist/data/keep-test").exists())
+        self.assertTrue((self.root / "unsupported/data/keep-test").exists())
         self.assertTrue((self.root / "clouddrive2/data/keep-test").exists())
         self.assertTrue((self.root / "backups/keep-test").exists())
 

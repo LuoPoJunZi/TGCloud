@@ -22,7 +22,7 @@ class FamilyTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.path = Path(self.temp.name) / "data/tg115.db"
+        self.path = Path(self.temp.name) / "data/tgcloud.db"
         self.settings = make_settings(Path(self.temp.name))
         self.db = TaskDB(self.path)
         self.addCleanup(self.db.close)

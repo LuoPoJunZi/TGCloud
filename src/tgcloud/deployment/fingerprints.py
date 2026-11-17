@@ -1,8 +1,4 @@
-"""Versioned code identity shared by deployment and the running container.
-
-V1 is restricted to historical flat app packages. V2 includes relative paths
-and every nested Python source. This module also runs directly on the host.
-"""
+"""Recursive code identity shared by TGCloud deployment and its container."""
 from __future__ import annotations
 
 import argparse
@@ -29,23 +25,22 @@ def source_files(root: Path) -> tuple[Path, ...]:
     return tuple(sorted(paths, key=lambda path: path.relative_to(root).as_posix()))
 
 
-def fingerprint(root: Path, *, legacy: bool = False) -> str:
+def fingerprint(root: Path) -> str:
     if root.is_symlink() or root.absolute() != root.resolve():
         raise ValueError("managed source root contains links")
     root = root.resolve()
     paths = source_files(root)
-    if legacy and any(path.parent != root for path in paths):
-        raise ValueError("legacy fingerprint cannot cover nested or unknown code")
     manifest = "".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  app/{path.relative_to(root).as_posix()}\n"
                        for path in paths)
     value = hashlib.sha256(manifest.encode("utf-8")).hexdigest()
-    return value if legacy else V2_PREFIX + value
+    return V2_PREFIX + value
 
 
 def deployed_fingerprint(app: Path) -> str:
-    # Marker is part of the managed code, not an untrusted operator flag.
     current = app / "tgcloud/deployment/fingerprints.py"
-    return fingerprint(app, legacy=not current.is_file())
+    if not current.is_file():
+        raise ValueError("TGCloud code identity marker missing")
+    return fingerprint(app)
 
 
 def code_fingerprint() -> str:

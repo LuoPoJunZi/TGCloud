@@ -99,30 +99,29 @@ class ScopeTests(unittest.TestCase):
             with patch.object(scope.os, "fstat", return_value=info):
                 self.assertEqual(scope.resolve(self.instance, PRODUCTS["clouddrive2"]).path, "")
 
-    def test_retired_account_scope_rejected_before_reading_credentials(self):
-        with patch.object(scope, "openlist_json") as request, self.assertRaises(ValueError):
-            scope.openlist_root(self.instance, SimpleNamespace(key="openlist"))
-        request.assert_not_called()
+    def test_unknown_product_scope_rejected_before_reading_credentials(self):
+        with patch.object(Path, "read_bytes", side_effect=AssertionError("must not read credentials")), self.assertRaises(ValueError):
+            scope.resolve(self.instance, SimpleNamespace(key="unsupported"))
 
     def test_retired_scope_cannot_reuse_a_previous_confirmed_root(self):
         previous = {"instance_dir": str(self.directory), "bot_root": "/private"}
         with patch.object(scope, "clouddrive2_root") as native, self.assertRaises(ValueError):
-            scope.resolve(self.instance, SimpleNamespace(key="openlist"), previous)
+            scope.resolve(self.instance, SimpleNamespace(key="unsupported"), previous)
         native.assert_not_called()
 
-    def test_retired_http_never_opens_a_connection_or_echoes_tokens(self):
-        with patch.object(scope.http.client, "HTTPConnection") as connect, self.assertRaises(ValueError) as error:
-            scope.openlist_json(5244, "GET", "/api/me", token="PRIVATE_TOKEN")
+    def test_unknown_product_management_never_connects_or_echoes_tokens(self):
+        with patch("socket.create_connection") as connect, self.assertRaises(ValueError) as error:
+            scope.management_address(self.instance, SimpleNamespace(key="unsupported", token="PRIVATE_TOKEN"), {})
         connect.assert_not_called()
         self.assertNotIn("PRIVATE_TOKEN", str(error.exception))
 
     def test_management_link_uses_selected_edition_and_cannot_be_external_dav_domain(self):
         state = {"domains": {"clouddrive2": {"domain": "manage.example.test"},
-                              "openlist": {"domain": "list.example.test"}}}
+                              "unsupported": {"domain": "list.example.test"}}}
         self.assertEqual(scope.management_address(self.instance, PRODUCTS["clouddrive2"], state),
                          "https://manage.example.test")
         with self.assertRaises(ValueError):
-            scope.management_address(self.instance, SimpleNamespace(key="openlist"), state)
+            scope.management_address(self.instance, SimpleNamespace(key="unsupported"), state)
         from tgcloud.deployment.proxy import lan
         with patch.object(lan, "load_state", return_value={"install_dir": str(self.directory), "bind_ip": "192.168.26.5"}):
             self.assertEqual(scope.management_address(self.instance, PRODUCTS["clouddrive2"], {"domains": {}}),

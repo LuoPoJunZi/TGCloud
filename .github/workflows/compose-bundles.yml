@@ -1,0 +1,56 @@
+name: Compose deployment bundles
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing published stable version tag"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compose-release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish-bundle:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ inputs.release_tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate explicit stable tag
+        run: '[[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/tags/${{ inputs.release_tag }}
+          fetch-depth: 0
+      - name: Verify the existing source release
+        run: |
+          set -euo pipefail
+          test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = false
+          test "$(gh release view "$TAG" --json isPrerelease --jq .isPrerelease)" = false
+          python3 .github/scripts/release_metadata.py --tag "$TAG"
+          gh release download "$TAG" --pattern "TGCloud-${TAG}-source.tar.gz" --pattern SHA256SUMS.txt --dir build/source-assets
+          python3 .github/scripts/source_release.py verify --tag "$TAG" --directory build/source-assets
+      - name: Build and verify the local-source deployment bundle
+        run: python3 .github/scripts/compose_release.py bundle --tag "$TAG" --directory build/compose-release
+      - name: Upload without replacing existing assets
+        run: |
+          set -euo pipefail
+          mkdir -p build/existing-assets
+          gh release view "$TAG" --json assets --jq '.assets[].name' > build/asset-names.txt
+          for file in build/compose-release/*.tar.gz build/compose-release/COMPOSE-SHA256SUMS.txt; do
+            name="${file##*/}"
+            if grep -Fxq "$name" build/asset-names.txt; then
+              gh release download "$TAG" --pattern "$name" --dir build/existing-assets
+              cmp "$file" "build/existing-assets/$name"
+            else
+              gh release upload "$TAG" "$file"
+            fi
+          done

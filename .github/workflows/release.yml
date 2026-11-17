@@ -61,13 +61,7 @@ jobs:
       - name: Select validation platforms from the immutable tag capability
         id: platforms
         run: |
-          if [[ -f .github/scripts/check_native_architecture.py ]]; then
-            echo 'matrix={"include":[{"runner":"ubuntu-24.04","arch":"amd64"},{"runner":"ubuntu-24.04-arm","arch":"arm64"}]}' >> "${GITHUB_OUTPUT}"
-          else
-            # Historical immutable releases predate native ARM support. Keep
-            # their AMD64 retry behavior; never claim they were ARM tested.
-            echo 'matrix={"include":[{"runner":"ubuntu-24.04","arch":"amd64"}]}' >> "${GITHUB_OUTPUT}"
-          fi
+          echo 'matrix={"include":[{"runner":"ubuntu-24.04","arch":"amd64"},{"runner":"ubuntu-24.04-arm","arch":"arm64"}]}' >> "${GITHUB_OUTPUT}"
 
       - name: Check public repository inputs before packaging
         run: python3 -B .github/scripts/check_repository.py
@@ -119,92 +113,20 @@ jobs:
 
       - name: Install Linux validation tools
         run: |
-          if [[ -f src/tgcloud/version.py ]]; then
-            sudo apt-get update
-            sudo apt-get install -y shellcheck rclone fuse3 kmod
-            python -m pip install -r requirements/dev.lock.txt
-          else
-            sudo apt-get update
-            sudo apt-get install -y shellcheck rclone
-            python -m pip install -r payload_clouddrive2/requirements.txt ruff==0.16.0 bandit==1.9.4 pip-audit==2.10.1
-            if [[ -f .github/requirements-test.txt ]]; then
-              python -m pip install -r .github/requirements-test.txt
-            fi
-            # Only immutable historical tags may still need frozen desktop tests.
-            if [[ -f legacy/desktop/requirements-build.txt ]]; then
-              python -m pip install -r legacy/desktop/requirements-build.txt
-            elif [[ -f requirements-build.txt ]]; then
-              python -m pip install -r requirements-build.txt
-            fi
-          fi
+          sudo apt-get update
+          sudo apt-get install -y shellcheck rclone fuse3 kmod
+          python -m pip install -r requirements/dev.lock.txt
 
       - name: ShellCheck
         run: |
-          if [[ -f .github/scripts/linux_validation.py ]]; then
-            python3 -B .github/scripts/linux_validation.py shell
-          elif [[ -f src/tgcloud/version.py ]]; then
-            bash -n install.sh
-            bash -n install-lan.sh
-            bash -n uninstall.sh
-            shellcheck install.sh install-lan.sh uninstall.sh
-            if [[ -f install-webdav.sh ]]; then
-              bash -n install-webdav.sh
-              shellcheck install-webdav.sh
-            fi
-            shellcheck -x packaging/hooks/clouddrive2/*.sh tests/manage_harness.sh tests/maintenance_docker_stub.sh
-          else
-            bash -n install.sh
-            bash -n install-lan.sh
-            bash -n uninstall.sh
-            shellcheck install.sh install-lan.sh uninstall.sh
-            shellcheck -x \
-              payload_clouddrive2/backup_retention.sh \
-              payload_clouddrive2/preserve_runtime_config.sh \
-              payload_clouddrive2/remote_install.sh \
-              payload_clouddrive2/repair_clouddrive_network.sh \
-              payload_clouddrive2/manage.sh \
-              payload_openlist/remote_install.sh \
-              payload_openlist/manage.sh \
-              payload_openlist/openlist_admin.sh \
-              payload_openlist/preserve_webdav_config.sh \
-              tests/manage_harness.sh \
-              tests/maintenance_docker_stub.sh
-          fi
+          python3 -B .github/scripts/linux_validation.py shell
 
       - name: Linux runtime, gateway and real WebDAV regression
         run: |
-          if [[ -f .github/scripts/linux_validation.py ]]; then
-            command -v bash shellcheck rclone docker
-            docker info >/dev/null
-            export PYTHONPATH=src
-            python -B .github/scripts/linux_validation.py test
-            python -B .github/scripts/linux_validation.py quality
-          elif [[ -f src/tgcloud/version.py ]]; then
-            command -v bash shellcheck rclone docker
-            docker info >/dev/null
-            export PYTHONPATH=src
-            python .github/scripts/check_python.py test
-            python .github/scripts/check_python.py lint
-            python .github/scripts/check_python.py compile
-            python .github/scripts/prepare_bootstrap.py
-            bandit -q -r src scripts .github/scripts/source_release.py
-            pip-audit -r requirements/bot.lock.txt
-            pip-audit -r requirements/dev.lock.txt
-          else
-            command -v bash shellcheck rclone docker
-            docker info >/dev/null
-            python .github/scripts/check_python.py test
-            python .github/scripts/check_python.py lint --scope cli
-            # Historical desktop entry points are launched with Python, not ./file.
-            # Keep these exceptions here as well so retries can validate older tags.
-            python -m ruff check . --extend-per-file-ignores 'installer.py:EXE001,installer_clouddrive2.py:EXE001,installer_openlist.py:EXE001'
-            python .github/scripts/check_python.py compile
-            bandit -q -r scripts payload_clouddrive2/app .github/scripts/source_release.py
-            if [[ -f domain_proxy.py ]]; then
-              bandit -q domain_proxy.py proxy_maintenance.py
-            fi
-            pip-audit -r payload_clouddrive2/requirements.txt
-          fi
+          command -v bash shellcheck rclone docker
+          docker info >/dev/null
+          python -B .github/scripts/linux_validation.py test
+          python -B .github/scripts/linux_validation.py quality
 
       - name: Verify native platform before candidate builds
         if: hashFiles('.github/scripts/check_native_architecture.py') != ''
@@ -212,18 +134,10 @@ jobs:
 
       - name: Validate edition Compose and build the runtime image
         run: |
-          if [[ -f src/tgcloud/version.py ]]; then
-            python .github/scripts/build_payload.py --edition clouddrive2 --directory build/release-contexts/clouddrive2
-            touch build/release-contexts/clouddrive2/.env
-            docker compose -f build/release-contexts/clouddrive2/docker-compose.yml config --quiet
-            docker build -t tgcloud-bot:release-test build/release-contexts/clouddrive2
-          else
-            touch payload_clouddrive2/.env
-            docker compose -f payload_clouddrive2/docker-compose.yml config --quiet
-            cp payload_clouddrive2/.env payload_openlist/.env
-            OPENLIST_ADMIN_PASSWORD=ci-only-placeholder docker compose -f payload_openlist/docker-compose.yml config --quiet
-            docker build -t tgcloud-bot:release-test payload_clouddrive2
-          fi
+          python .github/scripts/build_payload.py --edition clouddrive2 --directory build/release-contexts/clouddrive2
+          touch build/release-contexts/clouddrive2/.env
+          docker compose -f build/release-contexts/clouddrive2/docker-compose.yml config --quiet
+          docker build -t tgcloud-bot:test build/release-contexts/clouddrive2
 
       - name: Run CloudDrive2 candidate images as non-root
         timeout-minutes: 20
@@ -245,6 +159,11 @@ jobs:
         env:
           TGCLOUD_TEST_LAN_DOCKER: "1"
         run: python -m unittest discover -s tests -p test_lan_gateway_docker.py -v
+
+      - name: Direct Compose setup and non-root runtime checks
+        env:
+          TGCLOUD_TEST_COMPOSE_DOCKER: "1"
+        run: python -B -m unittest discover -s tests -p test_compose_docker.py -v
 
       - name: Isolated external WebDAV Nginx, authentication and Range
         if: hashFiles('packaging/external-webdav.json') != ''
@@ -274,6 +193,22 @@ jobs:
           compression-level: 0
           retention-days: 30
 
+      - name: Package and verify the local-source Compose deployment
+        if: matrix.arch == 'amd64'
+        run: python .github/scripts/compose_release.py bundle --tag "${RELEASE_TAG}" --directory build/compose-release
+
+      - name: Upload validated Compose package
+        if: matrix.arch == 'amd64'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: TGCloud-${{ env.RELEASE_TAG }}-compose
+          path: |
+            build/compose-release/TGCloud-*-compose.tar.gz
+            build/compose-release/COMPOSE-SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
   release:
     needs:
       - prepare
@@ -299,10 +234,18 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ env.RELEASE_ARTIFACT }}
-          path: release-assets
+          path: release-assets/source
+
+      - name: Download the validated Compose artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: TGCloud-${{ env.RELEASE_TAG }}-compose
+          path: release-assets/compose
 
       - name: Verify downloaded package without rebuilding
-        run: python3 .github/scripts/source_release.py verify --tag "${RELEASE_TAG}" --directory release-assets
+        run: |
+          python3 .github/scripts/source_release.py verify --tag "${RELEASE_TAG}" --directory release-assets/source
+          python3 .github/scripts/compose_release.py verify --tag "${RELEASE_TAG}" --directory release-assets/compose
 
       - name: Create GitHub release from the same package
         env:
@@ -318,8 +261,10 @@ jobs:
             prerelease_args+=(--prerelease)
           fi
           gh release create "${RELEASE_TAG}" \
-            "release-assets/TGCloud-${RELEASE_TAG}-source.tar.gz" \
-            release-assets/SHA256SUMS.txt \
+            "release-assets/source/TGCloud-${RELEASE_TAG}-source.tar.gz" \
+            release-assets/source/SHA256SUMS.txt \
+            "release-assets/compose/TGCloud-${RELEASE_TAG}-compose.tar.gz" \
+            release-assets/compose/COMPOSE-SHA256SUMS.txt \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --title "${RELEASE_TITLE}" \
@@ -335,7 +280,9 @@ jobs:
           test "$(gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft)" = false
           test "$(gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --json isPrerelease --jq .isPrerelease)" = "${RELEASE_PRERELEASE}"
           expected=(
+            COMPOSE-SHA256SUMS.txt
             SHA256SUMS.txt
+            "TGCloud-${RELEASE_TAG}-compose.tar.gz"
             "TGCloud-${RELEASE_TAG}-source.tar.gz"
           )
           mapfile -t actual < <(
