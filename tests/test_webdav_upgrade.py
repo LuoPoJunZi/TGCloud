@@ -196,4 +196,4 @@ class ListeningMenuTests(unittest.TestCase):
                     c.args[0][1:],
                     ["--edition", edition, "--install-dir", str(instance.directory)],
                 )
-            self.assertIn((16, "监听管理"), management.MENU_ITEMS)
+            self.assertIn((16, "监听转存管理"), management.MENU_ITEMS)

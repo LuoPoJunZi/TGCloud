@@ -282,6 +282,17 @@ class RepositoryContractTests(unittest.TestCase):
         for text in ("paths:", "paths-ignore:", "build.ps1", "contents: write", "pip install", "git push"):
             self.assertNotIn(text, workflow)
 
+    def test_required_native_checks_run_for_every_main_push_and_pull_request(self):
+        workflow = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+        triggers = workflow.split("permissions:", 1)[0]
+        for event in ("push", "pull_request"):
+            self.assertRegex(triggers, rf"(?m)^  {event}:\n    branches:\n      - main$")
+        for filter_name in ("paths:", "paths-ignore:"):
+            self.assertNotIn(filter_name, triggers)
+        for runner, arch in (("ubuntu-24.04", "amd64"), ("ubuntu-24.04-arm", "arm64")):
+            self.assertIn(f"runner: {runner}\n            arch: {arch}", workflow)
+        self.assertIn("  linux-products:", workflow)
+
     def test_document_history_checks_checkout_full_git_history(self):
         for name in ("docs.yml", "repository.yml"):
             text = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
@@ -305,9 +316,14 @@ class UserDocumentationTests(unittest.TestCase):
         if name.startswith("docs/") and name.endswith(".md") and not repository.forbidden_reason(name)
     )
 
-    def test_current_changelog_has_only_the_tgcloud_development_version(self):
+    def test_changelog_lists_current_tgcloud_version_then_previous_releases(self):
         text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-        self.assertEqual(re.findall(r"^## TGCloud v(\d+\.\d+\.\d+)\s*$", text, re.MULTILINE), ["0.0.1"])
+        versions = re.findall(r"^## TGCloud v(\d+\.\d+\.\d+)\s*$", text, re.MULTILINE)
+        current = runpy.run_path(str(ROOT / "src/tgcloud/version.py"))["VERSION"]
+        self.assertTrue(versions)
+        self.assertEqual(versions[0], current)
+        self.assertEqual(len(versions), len(set(versions)))
+        self.assertEqual(versions, sorted(versions, key=lambda value: tuple(map(int, value.split("."))), reverse=True))
         self.assertNotRegex(text, r"TG2Cloud|原项目|历史档案|迁移")
 
     def test_product_docs_stand_alone_and_preserve_separate_legal_notices(self):

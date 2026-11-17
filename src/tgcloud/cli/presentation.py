@@ -142,7 +142,7 @@ def numbered_menu(items) -> str:
 
 
 def page_heading(title: str, product, version: str = "") -> str:
-    context = product.display_name + (" · 版本 " + version if version else "")
+    context = "TGCloud" + (" · 版本 " + version if version else "")
     return f"\n── {title} ──\n\n{context}\n"
 
 
@@ -162,7 +162,9 @@ def friendly_marker(line: str) -> str:
     key, value = match.groups()
     if key == "STAGE":
         stage = {"GATEWAY": "启动 CloudDrive2 网关", "BOT": "构建并启动 TGCloud Bot",
-                 "HEALTH": "检查 Bot 基础健康"}.get(value)
+                 "HEALTH": "检查 Bot 基础健康",
+                 "HTTPS_ENV": "检查 HTTPS 部署环境", "ACME": "启动证书签发验证",
+                 "CERTIFICATE": "申请或复用 HTTPS 证书", "HTTPS_VERIFY": "检查 HTTPS 管理入口"}.get(value)
         return "\n── " + stage + " ──" if stage else "[待核对] 安装阶段未识别，请查看诊断报告。"
     if key == "VERSION":
         return "程序版本：v" + value if re.fullmatch(r"\d+\.\d+\.\d+", value) else "程序版本：未核实"

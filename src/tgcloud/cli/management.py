@@ -37,7 +37,7 @@ MENU_ITEMS = (
     (4, "服务启停管理"), (5, "Bot 用户管理"), (6, "WebDAV 凭据"),
     (7, "HTTPS 与管理"), (8, "文件分类设置"), (9, "异常通知设置"),
     (10, "业务就绪检查"), (11, "WebDAV 验收"), (12, "故障诊断报告"),
-    (13, "数据备份管理"), (14, "卸载当前实例"), (15, "外部 WebDAV"), (16, "监听管理"), (0, "退出"),
+    (13, "数据备份管理"), (14, "卸载当前实例"), (15, "外部 WebDAV"), (16, "监听转存管理"), (0, "退出"),
 )
 MENU = numbered_menu(MENU_ITEMS) + "\n"
 MENU_ACTIONS = tuple(str(number) for number, _ in MENU_ITEMS)
@@ -279,8 +279,7 @@ class Management:
         except (ValueError, OSError, SyntaxError, UnicodeError) as from_source:
             raise ValueError("当前路径不包含完整 TGCloud 安装源码；请在完整源码目录运行 sudo bash install.sh，"
                              "内网使用 install-lan.sh；也可使用 tgcloud manage --source-dir /absolute/TGCloud 指定完整源码") from from_source
-        self.log("已自动识别安装源码目录：" + str(source) if self.source_dir is None
-                 else "安装源码目录：" + str(source))
+        self.log("TGCloud 安装文件已准备就绪。")
         arguments = ["--edition", self.product.key, "--source-dir", str(source)]
         if use_lan:
             if instance.directory != Path(self.product.install_dir):
@@ -407,11 +406,11 @@ class Management:
         self.heading("卸载当前实例", instance)
         if instance.directory != Path(self.product.install_dir):
             raise ValueError("现有卸载器只支持标准目录；自定义目录不自动卸载，避免清理错误实例")
-        self.log("── 卸载计划 ──\n仅卸载 " + self.product.display_name
+        self.log("── 卸载计划 ──\n仅卸载 TGCloud"
                  + "\n将清理：当前实例的容器、配置、数据库、下载及受管备份（以最终预检计划为准）。"
                  + "\n保留：其他部署的容器和数据、云端文件及系统 Docker／Nginx 等软件。")
         self.log("其他部署或入口仍在使用时保留 tgcloud；最后一套完整清理后，核验归属并移除快捷命令及其代码。")
-        if not self.ui.confirm("继续查看 " + self.product.display_name + " 的完整卸载计划？"):
+        if not self.ui.confirm("继续查看 TGCloud 的完整卸载计划？"):
             return False
         if uninstall.main(["--edition", self.product.key]):
             raise RuntimeError("卸载未完成，请核对结果")
@@ -422,9 +421,9 @@ class Management:
         while True:
             instance = self.discover()
             from tgcloud.version import VERSION
-            self.log(f"\n── TGCloud 本地管理 ──\n\n{self.product.display_name} · 版本 {instance.version or '未安装'} · Bot {'运行中' if instance.running else '未运行'}\n安装目录：{instance.directory}\n管理工具（当前进程）：v{VERSION}\n\n")
+            self.log(f"\n── TGCloud 本地管理 ──\n\nTGCloud · 版本 {instance.version or '未安装'} · Bot {'运行中' if instance.running else '未运行'}\n安装目录：{instance.directory}\n管理工具（当前进程）：v{VERSION}\n\n")
             if not instance.present:
-                if self.ui.confirm(self.product.display_name + " 尚未安装，是否进入安装向导？"):
+                if self.ui.confirm("TGCloud 尚未安装，是否进入安装向导？"):
                     self.upgrade(instance)
                 return 0
             self.log(numbered_menu(self.menu_items) + "\n\n")

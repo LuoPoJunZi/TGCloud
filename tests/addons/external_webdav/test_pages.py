@@ -38,7 +38,7 @@ class PageTests(unittest.TestCase):
         self.assertEqual(service.maintain.call_count, 2)
         self.assertTrue(all(call.args[0] == "status" for call in service.maintain.call_args_list))
         self.assertIn("返回功能菜单", "\n".join(messages))
-        self.assertIn("CloudDrive2 · 版本", "\n".join(messages))
+        self.assertIn("TGCloud · 版本", "\n".join(messages))
         service.configure.assert_not_called()
 
     def test_check_refresh_keeps_read_only_action(self):

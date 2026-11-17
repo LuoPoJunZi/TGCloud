@@ -561,7 +561,7 @@ class PlanExecutionTests(unittest.TestCase):
                     session, _apply = self.execute_fixture(plan, current=before)
                     self.discover.side_effect = [before, after]
                     self.messages.clear()
-                    url_line = f"{product.display_name} 内网管理页：http://{IP}:{product.management_port}"
+                    url_line = f"TGCloud 内网管理页：http://{IP}:{product.management_port}"
 
                     def show_credentials(*_args, expected_url=url_line):
                         self.assertIn(expected_url, self.messages)

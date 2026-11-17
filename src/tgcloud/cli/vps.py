@@ -21,7 +21,7 @@ from tgcloud.deployment.profiles import PRODUCTS
 
 
 def parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(description="TGCloud CloudDrive2 本地源码安装 / 保留配置升级")
+    result = argparse.ArgumentParser(description="TGCloud 本地源码安装 / 保留配置升级")
     result.add_argument("--source-dir", type=Path, default=Path(__file__).resolve().parents[3], help="完整 TGCloud 本地源码目录")
     result.add_argument("--edition", choices=["clouddrive2"], default="clouddrive2", help="存储后端固定为 CloudDrive2")
     result.add_argument("--install-dir", help="仅支持单实例的 /opt 下目录；不搬迁现有实例")
@@ -60,7 +60,7 @@ def main(argv: list[str] | None = None, *, friendly: bool | None = None) -> int:
             return 0
         with local_source.snapshot(args.source_dir) as release:
             source = release.root
-            log("本地 CloudDrive2 源码：v" + release.version + "；SHA256：" + release.digest)
+            log("TGCloud 正式源码：v" + release.version + "；SHA256：" + release.digest)
             plans = []
             for instance in selected_instances:
                 old_source = source

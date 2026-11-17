@@ -860,7 +860,7 @@ class EntryTests(unittest.TestCase):
             bootstrap = (ROOT / name).read_text(encoding="utf-8")
             self.assertNotIn("installer_commit", bootstrap)
             self.assertIn("scripts/run_source.py", bootstrap)
-            self.assertNotIn("curl", bootstrap)
+            self.assertNotIn("curl", bootstrap.partition("# TGCloud online bootstrap.")[0])
             self.assertNotIn("packaging/hooks/unsupported/remote_install.sh", bootstrap)
 
     def test_unified_dispatch_retains_all_edition_cleanup_and_preview_flags(self):

@@ -137,7 +137,7 @@ jobs:
           python .github/scripts/build_payload.py --edition clouddrive2 --directory build/release-contexts/clouddrive2
           touch build/release-contexts/clouddrive2/.env
           docker compose -f build/release-contexts/clouddrive2/docker-compose.yml config --quiet
-          docker build -t tgcloud-bot:release-test build/release-contexts/clouddrive2
+          docker build -t tgcloud-bot:test build/release-contexts/clouddrive2
 
       - name: Run CloudDrive2 candidate images as non-root
         timeout-minutes: 20

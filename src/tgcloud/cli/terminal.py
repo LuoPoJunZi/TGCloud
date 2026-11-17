@@ -123,7 +123,7 @@ def confirm_nat_public_ipv4(ui: Terminal, domain: str, environment: ProxyEnviron
 
 def show_credentials(ui: Terminal, product: ProductProfile, config: dict[str, str], log: SafeLog) -> None:
     """Read saved setup values only; never query/reset a gateway password."""
-    log(product.display_name + "：逐项确认后仅向当前私有终端显示已保存凭据；默认不显示。")
+    log("TGCloud：逐项确认后仅向当前私有终端显示已保存凭据；默认不显示。")
     for key, label in (("USERNAME", "WebDAV 用户名"), ("PASSWORD", "WebDAV 密码")):
         # Older CloudDrive2 installations may only have the compatibility keys.
         encoded_value = config.get("WEBDAV_" + key + "_B64")
@@ -198,7 +198,7 @@ def collect_config(ui: Terminal, product: ProductProfile, *, storage: tuple[str,
 def preview(plan: install.Plan, release: releases.Release, log: SafeLog) -> None:
     instance = plan.instance
     labels = {"install": "首次安装", "upgrade": "保留配置升级", "current": "已是最新，不重建", "newer": "高于 latest，不降级"}
-    log(f"{instance.product.display_name}：{labels[plan.action]}；{instance.version or '未安装'} → {release.version}")
+    log(f"TGCloud：{labels[plan.action]}；{instance.version or '未安装'} → {release.version}")
     log("安装目录：" + str(instance.directory))
     if plan.action == "upgrade":
         log("保留 .env、Session、SQLite、downloads 和云网关数据；所选 Bot 将短暂停止，执行现有备份/回退流程。")

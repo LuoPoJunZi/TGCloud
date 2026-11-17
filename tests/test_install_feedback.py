@@ -33,7 +33,7 @@ SUCCESS = "\n".join(("TGCLOUD_DATABASE_BACKUP=OK", "TGCLOUD_CODE=OK", "TGCLOUD_V
 
 
 def feedback(**values):
-    return OperationReport(**{"edition": "clouddrive2", "label": "CloudDrive2", "previous": "1.4.2",
+    return OperationReport(**{"edition": "clouddrive2", "label": "TGCloud", "previous": "1.4.2",
                               "target": VERSION, "action": "upgrade", "mode": "https", **values})
 
 

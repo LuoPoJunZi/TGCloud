@@ -352,7 +352,7 @@ class ManagementTests(unittest.TestCase):
     def test_confirmed_menu_labels_order_and_alignment_without_naming_preview(self):
         labels = ("安装与升级", "查看运行状态", "查看运行日志", "服务启停管理", "Bot 用户管理",
                   "WebDAV 凭据", "HTTPS 与管理", "文件分类设置", "异常通知设置", "业务就绪检查",
-                  "WebDAV 验收", "故障诊断报告", "数据备份管理", "卸载当前实例", "外部 WebDAV", "监听管理", "退出")
+                  "WebDAV 验收", "故障诊断报告", "数据备份管理", "卸载当前实例", "外部 WebDAV", "监听转存管理", "退出")
         expected = [str(number) for number in (*range(1, 17), 0)]
         self.assertEqual(list(management.MENU_ACTIONS), expected)
         self.assertEqual(management.MENU, numbered_menu(zip(expected, labels)) + "\n")
@@ -421,9 +421,9 @@ class ManagementTests(unittest.TestCase):
             self.assertEqual(self.manager.run(), 0)
         text = "\n".join(self.messages)
         self.assertEqual(text.count("── TGCloud 本地管理 ──"), 1)
-        self.assertLess(text.index("── TGCloud 本地管理 ──"), text.index("CloudDrive2 · 版本 1.3.1"))
+        self.assertLess(text.index("── TGCloud 本地管理 ──"), text.index("TGCloud · 版本 1.3.1"))
         self.assertLess(text.index("安装目录："), text.index("1.  安装与升级"))
-        expected = ("\n── TGCloud 本地管理 ──\n\nCloudDrive2 · 版本 1.3.1 · Bot 运行中\n"
+        expected = ("\n── TGCloud 本地管理 ──\n\nTGCloud · 版本 1.3.1 · Bot 运行中\n"
                     + f"安装目录：{self.instance.directory}\n管理工具（当前进程）：v{VERSION}\n\n" + management.MENU)
         self.assertEqual(text, expected)
 

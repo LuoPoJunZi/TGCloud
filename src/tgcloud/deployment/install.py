@@ -48,7 +48,7 @@ class Plan:
 def execution_feedback(plan, release, session, log, *, mode):
     instance = plan.instance
     target = release.version if plan.action in {"install", "upgrade"} else instance.version
-    feedback = OperationReport(instance.product.key, instance.product.display_name, instance.version, target, plan.action, mode)
+    feedback = OperationReport(instance.product.key, "TGCloud", instance.version, target, plan.action, mode)
     feedback.checks.update(base="not_run", config="unknown" if instance.present else "na",
                            backup="unknown" if plan.action == "upgrade" else "na", webdav="not_run")
     plan.feedback = feedback
@@ -114,7 +114,7 @@ def make_plan(
     manager.prepare()
     state = manager.read_state()
     report = manager.status(state)
-    log(instance.product.display_name + " HTTPS：" + report.message)
+    log("TGCloud HTTPS：" + report.message)
     plan = Plan(instance, action, manager, dict(instance.config), report.domain)
     needs_https = action == "install" or configure_https
     if action == "upgrade" and report.state != "healthy" and not configure_https:

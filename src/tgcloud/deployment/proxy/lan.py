@@ -421,7 +421,7 @@ def make_plan(instance, release, source, baseline, session, log, ui=None, *, add
 
 def preview(plan: Plan, release: local_source.LocalSource, log: SafeLog) -> None:
     labels = {"install": "首次安装", "upgrade": "保留配置升级", "current": "已是最新，不重建 Bot", "newer": "高于 latest，不降级"}
-    log(f"{plan.instance.product.display_name}：{labels[plan.action]}；{plan.instance.version or '未安装'} → {release.version}")
+    log(f"TGCloud：{labels[plan.action]}；{plan.instance.version or '未安装'} → {release.version}")
     log("内网 HTTP 管理地址：" + f"http://{plan.address}:{plan.instance.product.management_port}")
     log("安装目录：" + str(plan.instance.directory))
     log("不申请证书、不操作共享 HTTPS、不占用 80/443；HTTP 不加密，请勿端口转发到公网。")
@@ -490,7 +490,7 @@ def execute(plan: Plan, release, source, baseline, session, log, ui, *, verify=F
         feedback.checks["entry"] = "ok"
         feedback.stage = "安装后检查"
         log("TGCLOUD_LAN_BASE=OK；TGCLOUD_LAN_ENTRY=OK；HTTPS=NOT_APPLICABLE")
-        log(f"{product.display_name} 内网管理页：http://{plan.address}:{product.management_port}")
+        log(f"TGCloud 内网管理页：http://{plan.address}:{product.management_port}")
         log("请先用局域网电脑的浏览器打开上面的地址，配置云存储，并创建与保存凭据一致的专用 WebDAV 用户；完成后再确认写入验收。")
         if plan.action == "install" or not plan.entry_healthy:
             feedback.stage = "后台账号设置"
@@ -542,7 +542,7 @@ def main(argv=None, *, friendly=None) -> int:
         with local_source.snapshot(args.source_dir) as release:
             source = release.root
             baseline = source
-            log("本地 CloudDrive2 源码：v" + release.version + "；SHA256：" + release.digest)
+            log("TGCloud 正式源码：v" + release.version + "；SHA256：" + release.digest)
             if not args.check and ui is None:
                 ui = terminal.Terminal()
                 ui.friendly = friendly

@@ -6,7 +6,7 @@ import io
 import os
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -104,7 +104,7 @@ class ProtocolPresentationTests(unittest.TestCase):
     def test_chinese_display_does_not_replace_raw_success_evidence(self):
         messages = []
         log = InstallerLog(SafeLog(messages.append))
-        report = OperationReport("clouddrive2", "CloudDrive2", "", VERSION, "install", "https")
+        report = OperationReport("clouddrive2", "TGCloud", "", VERSION, "install", "https")
         log.operation = report
         raw = "\n".join(("TGCLOUD_STAGE=GATEWAY", "TGCLOUD_STAGE=BOT", "TGCLOUD_STAGE=HEALTH",
                          "TGCLOUD_CODE=OK", "TGCLOUD_VERSION=" + VERSION, "TGCLOUD_BOT_HEALTH=healthy",
@@ -118,7 +118,7 @@ class ProtocolPresentationTests(unittest.TestCase):
         self.assertNotIn("TGCLOUD_", text)
         self.assertEqual(report.checks["code"], "ok")
         self.assertEqual(report.checks["health"], "ok")
-        fresh = OperationReport("clouddrive2", "CloudDrive2", "", VERSION, "install", "https")
+        fresh = OperationReport("clouddrive2", "TGCloud", "", VERSION, "install", "https")
         fresh.observe_base(0, text)
         self.assertNotEqual(fresh.checks.get("code"), "ok")
 
@@ -214,3 +214,106 @@ class DirectorySafetyTests(unittest.TestCase):
                 result = instances.discover(product, set(), Mock(), SafeLog(lambda _: None))
             self.assertFalse(result.present)
             self.assertFalse(current.exists())
+
+
+class ProjectPresentationTests(unittest.TestCase):
+    def test_source_location_is_hidden_but_the_same_source_is_passed_to_installer(self):
+        messages = []
+        product = PRODUCTS["clouddrive2"]
+        instance = instances.Instance(product, Path(product.install_dir), False)
+        ui = Mock()
+        ui.ask.side_effect = AssertionError("source must not be requested again")
+        manager = management.Management(product, Mock(), SafeLog(messages.append), ui, mode_hint="public")
+        with patch.object(manager, "mode", return_value=None), patch.object(vps, "main", return_value=0) as execute:
+            manager.upgrade(instance)
+        text = "\n".join(messages)
+        self.assertIn("TGCloud 安装文件已准备就绪。", text)
+        self.assertNotIn(str(ROOT), text)
+        self.assertEqual(execute.call_args.args[0][3], str(ROOT))
+        ui.ask.assert_not_called()
+
+    def test_fresh_menu_uses_project_name_and_listener_label_has_six_characters(self):
+        messages = []
+        product = PRODUCTS["clouddrive2"]
+        instance = instances.Instance(product, Path(product.install_dir), False)
+        ui = Mock()
+        ui.confirm.return_value = False
+        manager = management.Management(product, Mock(), SafeLog(messages.append), ui)
+        with patch.object(manager, "discover", return_value=instance), patch.object(manager, "upgrade") as execute:
+            self.assertEqual(manager.run(), 0)
+        text = "\n".join(messages)
+        self.assertIn("TGCloud · 版本 未安装 · Bot 未运行", text)
+        self.assertNotIn("CloudDrive2 · 版本", text)
+        ui.confirm.assert_called_once_with("TGCloud 尚未安装，是否进入安装向导？")
+        execute.assert_not_called()
+        label = dict(management.MENU_ITEMS)[16]
+        self.assertEqual(label, "监听转存管理")
+        self.assertEqual(len(label), 6)
+
+    def test_project_branding_does_not_rename_backend_config_or_containers(self):
+        product = PRODUCTS["clouddrive2"]
+        config = configuration.new_config(product, {
+            "api_id": "123456", "user_id": "123456789", "api_hash": "a" * 32,
+            "bot_token": "123456789:FAKE_PREVIEW_ONLY_TOKEN_123456789", "budget": "20", "reserve": "8",
+            "timezone": "Asia/Shanghai", "webdav_user": "tgcloud", "webdav_password": "FAKE_UI_TEST_PASSWORD",
+            "target": "Telegram",
+        })
+        self.assertEqual(config["TGCLOUD_STORAGE_BACKEND"], "clouddrive2")
+        self.assertEqual(config["TGCLOUD_DESTINATION_LABEL"], "CloudDrive2")
+        self.assertEqual(config["TGCLOUD_RCLONE_REMOTE_NAME"], "cd2")
+        self.assertEqual(product.bot_container, "tgcloud-clouddrive2-bot")
+        self.assertEqual(product.storage_container, "tgcloud-clouddrive2")
+        messages = []
+        terminal.preview(SimpleNamespace(instance=instances.Instance(product, Path(product.install_dir), False),
+                         action="install", config=config, configure_https=True, domain="cloud.example.test"),
+                         SimpleNamespace(version=VERSION), SafeLog(messages.append))
+        self.assertTrue(messages[0].startswith("TGCloud：首次安装"))
+
+    def test_execution_report_identifies_the_project_without_changing_backend_identity(self):
+        from tgcloud.deployment import install
+        product = PRODUCTS["clouddrive2"]
+        instance = instances.Instance(product, Path(product.install_dir), False)
+        plan = SimpleNamespace(instance=instance, action="install", feedback=None)
+        messages = []
+        log = InstallerLog(SafeLog(messages.append))
+        with install.execution_feedback(plan, SimpleNamespace(version=VERSION), Mock(), log, mode="https") as report:
+            self.assertEqual(report.label, "TGCloud")
+            self.assertEqual(report.edition, "clouddrive2")
+        self.assertIn("TGCloud · 未安装", "\n".join(messages))
+
+    def test_real_https_stages_render_chinese_without_promoting_success(self):
+        from tgcloud.deployment.proxy.manager import DomainProxyManager
+        from tgcloud.deployment.proxy.state import ProxyReport, empty_state
+        messages, raw = [], []
+        log = InstallerLog(SafeLog(messages.append))
+        observation = OperationReport("clouddrive2", "TGCloud", "", VERSION, "install", "https")
+        log.operation = observation
+        def emit(line):
+            raw.append(line)
+            log(line)
+        manager = DomainProxyManager(Mock(), PRODUCTS["clouddrive2"], {}, emit)
+        with ExitStack() as stack:
+            for name in ("_check_compose_owner", "_validate_environment", "_ensure_state_file", "_activate",
+                         "_obtain_certificate", "_commit_state"):
+                stack.enter_context(patch.object(manager, name))
+            stack.enter_context(patch.object(manager, "read_state", return_value=empty_state()))
+            stack.enter_context(patch.object(manager, "external_entry", return_value=None))
+            stack.enter_context(patch.object(manager, "probe", return_value=Mock()))
+            stack.enter_context(patch.object(manager, "_compose", return_value=(0, "")))
+            stack.enter_context(patch.object(manager, "status", return_value=ProxyReport("cloud.example.test", "healthy", "", ())))
+            manager._configure_locked("cloud.example.test", "")
+        stages = [line for line in raw if line.startswith("TGCLOUD_STAGE=")]
+        self.assertEqual(stages, ["TGCLOUD_STAGE=" + name for name in ("HTTPS_ENV", "ACME", "CERTIFICATE", "HTTPS_VERIFY")])
+        text = "\n".join(messages)
+        for title in ("检查 HTTPS 部署环境", "启动证书签发验证", "申请或复用 HTTPS 证书", "检查 HTTPS 管理入口"):
+            self.assertIn("── " + title + " ──", text)
+        self.assertNotIn("待核对", text)
+        self.assertNotIn("TGCLOUD_", text)
+        self.assertEqual(observation.checks, {})
+        self.assertFalse(observation.completed)
+        machine = []
+        InstallerLog(SafeLog(machine.append), friendly=False)("\n".join(stages))
+        self.assertEqual("\n".join(machine), "\n".join(stages))
+        log("TGCLOUD_STAGE=UNRECOGNIZED_PRIVATE_STAGE")
+        self.assertIn("[待核对]", messages[-1])
+        self.assertNotIn("UNRECOGNIZED_PRIVATE_STAGE", messages[-1])
