@@ -17,7 +17,7 @@ BUILD_FILES = (
     "src/tgcloud/compose/maintenance.py", "src/tgcloud/compose/webdav.py", "docs/operations-guide.md",
     "packaging/compose-release.json", ".github/scripts/compose_release.py",
     ".github/workflows/compose-bundles.yml", "docs/compose-guide.md",
-    "install.sh", "install-lan.sh", "packaging/external-webdav.json", ".github/scripts/release_metadata.py",
+    "install.sh", "install-lan.sh", "install-online.sh", "packaging/external-webdav.json", ".github/scripts/release_metadata.py",
     "scripts/run_source.py", "pyproject.toml", "requirements/bot.lock.txt", "requirements/dev.lock.txt",
     "src/tgcloud/__init__.py", "src/tgcloud/version.py", "src/tgcloud/app.py",
     "src/tgcloud/deployment/profiles.py", "src/tgcloud/deployment/fingerprints.py",

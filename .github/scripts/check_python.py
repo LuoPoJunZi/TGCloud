@@ -13,7 +13,7 @@ CLI_TESTS = (
     "test_database_paths.py", "test_compose.py", "test_compose_access.py", "test_compose_https.py",
     "test_compose_https_bundle.py", "test_compose_proxy_dependencies.py", "test_compose_management.py",
     "test_architecture.py",
-    "test_vps_installer.py", "test_lan_installer.py", "test_uninstaller.py",
+    "test_vps_installer.py", "test_lan_installer.py", "test_online_installer.py", "test_uninstaller.py",
     "test_proxy_host_compat.py", "test_repository.py", "test_storage_wizard.py", "test_source_release.py", "test_layout_contracts.py",
     "test_feature.py", "test_http.py", "test_scope.py", "test_management.py", "test_family_management.py", "test_users.py", "test_external_proxy.py",
     "test_source_identity.py", "test_instance_backup.py", "test_readiness.py", "test_naming_preview.py",

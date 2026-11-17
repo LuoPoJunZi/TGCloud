@@ -19,24 +19,26 @@ A successful upload and size check do not establish content-hash equality or fin
 Use a native AMD64 or ARM64 Debian/Ubuntu Linux host with Docker Compose v2 and `/dev/fuse`. Host commands require Python 3.10+; Bot images use Python 3.12.
 
 ```bash
-git clone --depth 1 --branch v0.0.1 https://github.com/LuoPoJunZi/TGCloud.git TGCloud && cd TGCloud && sudo bash install.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install-online.sh)
 ```
 
-Git, Python 3.10+ and root/sudo are required. The `TGCloud` destination must not already exist. The wizard detects its complete source tree and configures CloudDrive2 only. Run `sudo tgcloud` for management; use `sudo bash install-lan.sh` for a trusted LAN.
+Run in a root terminal (`sudo -i` first if needed), with curl, Python 3.10+ and CA certificates installed. The online entry downloads and verifies the stable `v0.0.1` source archive before opening the existing CloudDrive2 wizard. No Git checkout or source-path input is required. Append `--lan` for a trusted LAN; run `tgcloud` for management. A complete local source tree still supports `sudo bash install.sh` and `sudo bash install-lan.sh`.
 
 ## Docker Compose
 
-Choose either managed script installation or standalone Compose. For standalone Compose:
+Choose either managed script installation or standalone Compose. In a Linux root terminal with Docker Compose v2 available:
 
 ```bash
-git clone --depth 1 --branch v0.0.1 https://github.com/LuoPoJunZi/TGCloud.git TGCloud
-cd TGCloud
-python3 -B scripts/build_compose.py --output "$PWD/build/compose"
-cd build/compose/clouddrive2
-sudo bash manage.sh
+mkdir -m 700 TGCloud-compose-0.0.1 && cd TGCloud-compose-0.0.1 &&
+curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.1/TGCloud-v0.0.1-compose.tar.gz &&
+curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.1/COMPOSE-SHA256SUMS.txt &&
+sha256sum -c COMPOSE-SHA256SUMS.txt &&
+mkdir deployment &&
+tar --no-same-owner -xzf TGCloud-v0.0.1-compose.tar.gz --strip-components=1 -C deployment &&
+cd deployment && bash manage.sh
 ```
 
-The output directory must not already exist. Alternatively, download `TGCloud-v0.0.1-compose.tar.gz` and verify `COMPOSE-SHA256SUMS.txt`, as shown in the [Compose guide](docs/compose-guide.md). Initialize private configuration, configure the gateway and dedicated WebDAV account, then start the Bot.
+The new download directory must not already exist. The Bot image is built locally. Follow the [step-by-step Compose guide](docs/compose-guide.md) to check the host, initialize private configuration, configure CloudDrive2 and its dedicated WebDAV account, then start and test the Bot.
 
 Read the [documentation index](docs/README.md), [installation guide](docs/install.md), [Compose guide](docs/compose-guide.md), [Bot guide](docs/bot-guide.md), [configuration reference](docs/configuration-guide.md), and [security notes](docs/security.md). Never commit credentials, Sessions, databases or private backups.
 

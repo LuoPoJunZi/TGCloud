@@ -24,29 +24,39 @@ TGCloud 是面向 **CloudDrive2** 的 Telegram 文件自动化转存与管理工
 
 ## 一键启动安装向导
 
-在目标 Linux 主机执行：
+在目标 Linux 主机的 **root 终端**执行（普通用户先运行 `sudo -i`）。需要 curl、Python 3.10+ 和 CA 证书：
 
 ```bash
-git clone --depth 1 --branch v0.0.1 https://github.com/LuoPoJunZi/TGCloud.git TGCloud && cd TGCloud && sudo bash install.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install-online.sh)
 ```
 
-需要 Git、Python 3.10+ 和 root／sudo，目标 `TGCloud` 源码目录须尚不存在。向导自动识别完整源码，只安装 CloudDrive2，逐项收集配置并展示计划。已有源码直接运行 `sudo bash install.sh`；管理命令为 `sudo tgcloud`。内网场景使用 `sudo bash install-lan.sh`。
+在线入口自动下载并校验 `v0.0.1` 正式源码，直接进入安装／管理向导，无需 Git 或手动填写源码路径。仅支持 CloudDrive2，收集配置、展示计划后再确认安装。已安装后使用 `tgcloud` 管理。
+
+没有公网域名、使用可信内网时：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install-online.sh) --lan
+```
+
+已有完整源码仍可运行 `sudo bash install.sh` 或 `sudo bash install-lan.sh`。
 
 完整步骤见[安装指南](docs/install.md)。默认实例目录为 `/opt/tgcloud`，请勿将其放进云挂载目录。
 
 ## Docker Compose
 
-脚本安装与独立 Compose 选择一种部署方式即可。独立 Compose 的完整源码部署命令：
+脚本安装与独立 Compose 选择一种部署方式。在已准备 Docker Compose v2 的 Linux root 终端下载并初始化部署包：
 
 ```bash
-git clone --depth 1 --branch v0.0.1 https://github.com/LuoPoJunZi/TGCloud.git TGCloud
-cd TGCloud
-python3 -B scripts/build_compose.py --output "$PWD/build/compose"
-cd build/compose/clouddrive2
-sudo bash manage.sh
+mkdir -m 700 TGCloud-compose-0.0.1 && cd TGCloud-compose-0.0.1 &&
+curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.1/TGCloud-v0.0.1-compose.tar.gz &&
+curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.1/COMPOSE-SHA256SUMS.txt &&
+sha256sum -c COMPOSE-SHA256SUMS.txt &&
+mkdir deployment &&
+tar --no-same-owner -xzf TGCloud-v0.0.1-compose.tar.gz --strip-components=1 -C deployment &&
+cd deployment && bash manage.sh
 ```
 
-输出目录必须尚不存在。也可直接下载版本附件 `TGCloud-v0.0.1-compose.tar.gz` 并核验 `COMPOSE-SHA256SUMS.txt`，详见 [Compose 下载、初始化与启动命令](docs/compose-guide.md)。初始化后先完成 CloudDrive2 挂载与 WebDAV 配置，再启动 Bot。
+目录须尚不存在。Bot 镜像在本机构建，初始化后先完成 CloudDrive2 挂载与 WebDAV 配置，再启动 Bot。环境检查、分步命令、首次转存、日志和备份见 [Compose 部署教程](docs/compose-guide.md)。
 
 ## 基础配置与首次使用
 
@@ -68,7 +78,7 @@ sudo bash manage.sh
 
 ## 常见问题
 
-**为什么安装入口不能单独下载运行？** 它需要同目录的 Python 源码和部署资源，使用完整 Git 工作副本即可。
+**一键入口需要先下载源码吗？** 不需要，`install-online.sh` 会下载并校验正式源码包；源码内的 `install.sh` 则直接使用同目录资源。
 
 **Bot 在线但任务不能上传？** 先检查 CloudDrive2 挂载、专用用户、目标目录和磁盘余量，再运行管理菜单中的就绪检查与 WebDAV 验收。
 
