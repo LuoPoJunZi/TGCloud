@@ -72,18 +72,18 @@ bash manage.sh
 也可克隆固定版本，从源码生成相同部署内容。需要 Git 和 Python 3.10+：
 
 ```bash
-git clone --depth 1 --branch v0.0.5 https://github.com/LuoPoJunZi/TGCloud.git TGCloud
+git clone --depth 1 --branch v0.0.6 https://github.com/LuoPoJunZi/TGCloud.git TGCloud
 cd TGCloud
 python3 -B scripts/build_compose.py --output "$PWD/build/compose" &&
 (cd build/compose && sha256sum -c COMPOSE-SHA256SUMS.txt) &&
 mkdir -m 700 /root/TGCloud-Compose &&
-tar --no-same-owner -xzf build/compose/TGCloud-v0.0.5-compose-*.tar.gz \
+tar --no-same-owner -xzf build/compose/TGCloud-v0.0.6-compose-*.tar.gz \
   --strip-components=1 -C /root/TGCloud-Compose &&
 cd /root/TGCloud-Compose &&
 sudo bash manage.sh
 ```
 
-打包输出目录 `build/compose` 和部署目录 `/root/TGCloud-Compose` 必须尚不存在。打包输出包含 `clouddrive2/`、带源码摘要的 `TGCloud-v0.0.5-compose-*.tar.gz` 和 `COMPOSE-SHA256SUMS.txt`。部署包包含程序源码、构建上下文、私有配置向导和宿主管理工具。
+打包输出目录 `build/compose` 和部署目录 `/root/TGCloud-Compose` 必须尚不存在。打包输出包含 `clouddrive2/`、带源码摘要的 `TGCloud-v0.0.6-compose-*.tar.gz` 和 `COMPOSE-SHA256SUMS.txt`。部署包包含程序源码、构建上下文、私有配置向导和宿主管理工具。
 
 Bot 使用 `tgcloud-local:` 加源码摘要的本地镜像名；CloudDrive2 使用 Compose 文件声明的固定摘要镜像。这里不依赖预发布的 Bot 镜像。
 
@@ -167,13 +167,13 @@ sudo docker compose up -d --no-build --pull never tgcloud-clouddrive2-bot
 
 升级使用完整 TGCloud 源码或新生成的部署包。先做独立备份，暂停新任务并等活动任务结束，再核对升级计划。
 
-从 0.0.1／0.0.2 升级到 0.0.5 时，旧管理工具仍要求新版已移除的独立声明文件。将校验过的 v0.0.5 源码包解压到独立目录，用新版工具进入旧实例的升级流程：
+从 0.0.1／0.0.2 升级到 0.0.6 时，旧管理工具仍要求新版已移除的独立声明文件。将校验过的 v0.0.6 源码包解压到独立目录，用新版工具进入旧实例的升级流程：
 
 ```bash
-sudo python3 -B /absolute/TGCloud-v0.0.5/scripts/run_source.py compose upgrade --root /absolute/deployment
+sudo python3 -B /absolute/TGCloud-v0.0.6/scripts/run_source.py compose upgrade --root /absolute/deployment
 ```
 
-把 `/absolute/deployment` 换成现有实例的绝对路径。向导询问候选目录时，填写已解压的 v0.0.5 源码目录或对应 Compose 包目录。确认升级完成后，在原部署目录重新运行 `sudo bash manage.sh`。
+把 `/absolute/deployment` 换成现有实例的绝对路径。向导询问候选目录时，填写已解压的 v0.0.6 源码目录或对应 Compose 包目录。确认升级完成后，在原部署目录重新运行 `sudo bash manage.sh`。
 
 卸载前审阅菜单给出的数据删除范围，保留独立备份。
 
