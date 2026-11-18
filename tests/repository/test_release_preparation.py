@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import re
 import shutil
 import sys
 import tarfile
@@ -137,12 +138,16 @@ class ValidationTests(unittest.TestCase):
             self.assertNotIn(text, bundle)
 
     def test_online_source_stays_pinned_and_compose_resolves_latest_stable_tag(self):
-        version = planning.source_version(ROOT)
+        online = (ROOT / 'install.sh').read_text(encoding='utf-8')
+        stable_tag, = re.findall(r"^tgcloud_tag=(v" + planning.CORE + r")$", online, re.MULTILINE)
         for name in ('README.md', 'README_EN.md', 'docs/install.md'):
             text = (ROOT / name).read_text(encoding='utf-8')
-            self.assertIn('bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh)', text)
-        online = (ROOT / 'install.sh').read_text(encoding='utf-8')
-        self.assertIn('tgcloud_tag=v' + version, online)
+            with self.subTest(document=name):
+                self.assertIn('bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh)', text)
+                self.assertIn(stable_tag, text)
+                if name.startswith('README'):
+                    self.assertIn('https://github.com/LuoPoJunZi/TGCloud/releases/tag/' + stable_tag + ')', text)
+        self.assertIn('自动下载并校验 ' + stable_tag, online)
         self.assertIn('/releases/download/${tgcloud_tag}', online)
         compose = (ROOT / 'docs/compose-guide.md').read_text(encoding='utf-8')
         for text in ('https://api.github.com/repos/LuoPoJunZi/TGCloud/releases/latest',
