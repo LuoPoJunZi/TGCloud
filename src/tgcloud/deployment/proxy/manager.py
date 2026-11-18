@@ -64,6 +64,7 @@ from typing import Any, Protocol
 
 from tgcloud.deployment.profiles import PRODUCTS, ProductProfile, require_product
 
+from .ownership import MissingCertbotStatusMount, proxy_identity
 from .rendering import (
     CERTBOT_IMAGE,
     NGINX_IMAGE,
@@ -613,7 +614,6 @@ fi
         return result
 
     def _inspect_certbot_mounts(self) -> None:
-        from tgcloud.deployment.uninstall import proxy_identity
         template = ('{"labels":{{json .Config.Labels}},"network":{{json .HostConfig.NetworkMode}},'
                     '"mounts":{{json .Mounts}}}')
         code, output = self._run(
@@ -632,7 +632,6 @@ fi
 
     def _ensure_certbot_mounts(self, *, timeout: float) -> None:
         from tgcloud.deployment import architecture
-        from tgcloud.deployment.uninstall import MissingCertbotStatusMount
         try:
             self._inspect_certbot_mounts()
             return

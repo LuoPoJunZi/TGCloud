@@ -10,13 +10,13 @@ from tgcloud.cli import terminal
 from tgcloud.cli.presentation import InstallerLog
 from tgcloud.deployment import (
     architecture,
-    install,
     instances,
     local_source,
     preflight,
     runtime,
 )
 from tgcloud.deployment.host import LocalSession, SafeLog
+from tgcloud.deployment.lifecycle import install
 from tgcloud.deployment.profiles import PRODUCTS
 
 

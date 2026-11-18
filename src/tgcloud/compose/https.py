@@ -16,8 +16,10 @@ from pathlib import Path
 
 from tgcloud.cli.presentation import InstallerLog
 from tgcloud.compose import packaging, runtime
-from tgcloud.deployment import architecture, uninstall
+from tgcloud.deployment import architecture
 from tgcloud.deployment.host import LocalSession, SafeLog
+from tgcloud.deployment.lifecycle import uninstall
+from tgcloud.deployment.ownership import bind_map, require_labels
 from tgcloud.deployment.profiles import PRODUCTS
 from tgcloud.deployment.proxy.maintenance import parse_compose_registry
 from tgcloud.deployment.proxy.manager import (
@@ -27,6 +29,7 @@ from tgcloud.deployment.proxy.manager import (
     DomainProxyManager,
     defer_interruptions,
 )
+from tgcloud.deployment.proxy.ownership import proxy_identity
 from tgcloud.deployment.proxy.rendering import (
     CERTBOT_IMAGE,
     NGINX_IMAGE,
@@ -208,7 +211,7 @@ class ComposeInstance:
                 if allow_missing:
                     continue
                 raise runtime.ComposeError("请先创建此部署包的 Bot 与网关容器；停止")
-            uninstall.require_labels(item, {"com.tgcloud.install-mode": "compose", packaging.PROJECT_LABEL: packaging.PROJECT_ID, COMPOSE + "service": service,
+            require_labels(item, {"com.tgcloud.install-mode": "compose", packaging.PROJECT_LABEL: packaging.PROJECT_ID, COMPOSE + "service": service,
                 COMPOSE + "project.working_dir": str(self.root), COMPOSE + "project.config_files": str(self.root / "docker-compose.yml")})
             candidate = (item.get("labels") or {}).get(COMPOSE + "project", "")
             if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", candidate) or project is not None and project != candidate:
@@ -232,7 +235,7 @@ class ComposeInstance:
                     expected_bind = [{"HostIp": "127.0.0.1" if loopback else self.config.get("TGCLOUD_BIND_IP", "127.0.0.1"), "HostPort": port}]
                     if not isinstance(values, dict) or values.get(port + "/tcp") != expected_bind or any(value for name, value in values.items() if name != port + "/tcp"):
                         raise runtime.ComposeError("网关管理端口不是唯一的回环发布；停止")
-            if uninstall.bind_map(item) != mounts:
+            if bind_map(item) != mounts:
                 raise runtime.ComposeError("容器挂载源与此部署目录不一致；停止")
             for source in mounts.values():
                 physical = Path(source)
@@ -322,7 +325,7 @@ class ComposeProxyManager(DomainProxyManager):
                     or labels.get("com.tgcloud.role") in {"reverse-proxy", "certificate-manager"}):
                 if not (root / "state/domains.json").is_file():
                     raise runtime.ComposeError("已有共享代理容器但缺少状态；不会接管")
-                uninstall.proxy_identity(name, item, state=state)
+                proxy_identity(name, item, state=state)
                 image_identity(self.session, item, NGINX_IMAGE if name == PROXY_NGINX_CONTAINER else CERTBOT_IMAGE)
         self.registry = registry
         return registry

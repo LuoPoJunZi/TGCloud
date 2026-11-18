@@ -22,8 +22,8 @@ from tgcloud.addons.external_webdav import (
 )
 from tgcloud.addons.external_webdav.entry import HEADER
 from tgcloud.cli.terminal import confirm_nat_public_ipv4
-from tgcloud.deployment import uninstall
 from tgcloud.deployment.host import edition_lock
+from tgcloud.deployment.lifecycle import uninstall
 from tgcloud.deployment.proxy import maintenance
 from tgcloud.deployment.proxy.manager import (
     NGINX_IMAGE,
@@ -33,6 +33,7 @@ from tgcloud.deployment.proxy.manager import (
     render_compose,
     render_config_set,
 )
+from tgcloud.deployment.proxy.ownership import proxy_identity
 from tgcloud.deployment.proxy.state import certificate_domains
 
 
@@ -63,7 +64,7 @@ class Service:
         containers, _ = uninstall.docker_snapshot(self.session)
         for name in ("tgcloud-proxy-nginx", "tgcloud-proxy-certbot"):
             if name in containers:
-                uninstall.proxy_identity(name, containers[name], state=state)
+                proxy_identity(name, containers[name], state=state)
         root = Path(PROXY_ROOT)
         managed = {"tgcloud-proxy-nginx", "tgcloud-proxy-certbot"} & containers.keys()
         external = self.manager.external_entry(state)

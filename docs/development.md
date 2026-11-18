@@ -4,7 +4,9 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/tgcloud/cli/`、`deployment/` | 标准库宿主 CLI、安装与维护 |
+| `src/tgcloud/cli/` | 标准库命令入口、管理菜单和终端交互 |
+| `src/tgcloud/deployment/lifecycle/` | 宿主安装、内网初始化、升级、备份与卸载 |
+| `src/tgcloud/deployment/proxy/` | 内网网关、HTTPS、代理配置和归属核验 |
 | `src/tgcloud/telegram/` | Bot 事件、界面、命令与授权 |
 | `src/tgcloud/domain/` | 任务规则、分类、命名和规划 |
 | `src/tgcloud/transfer/`、`storage/` | 队列、资源窗口、下载、流式与 rclone |
@@ -12,11 +14,13 @@
 | `src/tgcloud/listening/` | 个人账号授权、来源与筛选 |
 | `src/tgcloud/compose/`、`addons/` | 独立 Compose、HTTPS 和外部访问 |
 | `packaging/` | Dockerfile、CloudDrive2 Compose、受管钩子与源码清单 |
-| `scripts/`、`.github/scripts/` | 源码入口、打包和质量工具 |
+| `scripts/` | 从源码运行 TGCloud、构建 Compose 部署包 |
+| `scripts/dev/` | 本地合成数据库基准和依赖锁生成 |
+| `.github/workflows/`、`.github/scripts/` | 自动化检查与发布工具 |
 | `tests/` | 合成回归及按环境显式启用的集成测试 |
 | `docs/` | 安装、使用、维护和开发文档 |
 
-Telegram 事件进入持久化任务和计划，经资源窗口调度下载／流式传输，再由 rclone 写入 CloudDrive2 WebDAV。宿主 CLI 延迟导入，帮助和版本检查不要求 Bot 依赖。版本唯一来源是 `src/tgcloud/version.py`，当前为 0.0.5。
+Telegram 事件进入持久化任务和计划，经资源窗口调度下载／流式传输，再由 rclone 写入 CloudDrive2 WebDAV。宿主 CLI 延迟导入，帮助和版本检查不要求 Bot 依赖。版本唯一来源是 `src/tgcloud/version.py`，当前开发版本为 0.0.6。
 
 ## 开发环境
 

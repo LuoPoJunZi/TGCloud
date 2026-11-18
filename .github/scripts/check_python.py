@@ -10,23 +10,55 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 CLI_TESTS = (
-    "test_database_paths.py", "test_compose.py", "test_compose_access.py", "test_compose_https.py",
-    "test_compose_https_bundle.py", "test_compose_proxy_dependencies.py", "test_compose_management.py",
-    "test_architecture.py",
-    "test_vps_installer.py", "test_lan_installer.py", "test_online_installer.py", "test_uninstaller.py",
-    "test_proxy_host_compat.py", "test_repository.py", "test_storage_wizard.py", "test_source_release.py", "test_layout_contracts.py",
-    "test_feature.py", "test_http.py", "test_scope.py", "test_management.py", "test_family_management.py", "test_users.py", "test_external_proxy.py",
-    "test_source_identity.py", "test_instance_backup.py", "test_readiness.py", "test_naming_preview.py",
-    "test_host_bundle.py", "test_feature_settings.py", "test_install_feedback.py", "test_installer_ui.py", "test_terminal_layout.py", "test_container_log_status.py",
-    "test_notifications.py", "test_diagnostic_report.py", "test_classification.py", "test_member_quotas.py",
-    "test_progress_metrics.py", "test_listener_observations.py",
-    "test_restore_rehearsal.py",
-    "test_management_pages.py",
-    "test_release_preparation.py",
-    "test_proxy_rendering.py",
-    "test_proxy_certbot_startup.py",
-    "test_webdav_entry.py",
-    "test_listening_host.py", "test_webdav_upgrade.py", "test_listening_login.py",
+    "tests.runtime.test_database_paths",
+    "tests.deployment.test_compose",
+    "tests.deployment.test_compose_access",
+    "tests.deployment.test_compose_https",
+    "tests.deployment.test_compose_https_bundle",
+    "tests.deployment.test_compose_proxy_dependencies",
+    "tests.deployment.test_compose_management",
+    "tests.deployment.test_architecture",
+    "tests.deployment.test_vps_installer",
+    "tests.deployment.test_lan_installer",
+    "tests.deployment.test_online_installer",
+    "tests.deployment.test_uninstaller",
+    "tests.deployment.test_proxy_host_compat",
+    "tests.repository.test_repository",
+    "tests.deployment.test_storage_wizard",
+    "tests.repository.test_source_release",
+    "tests.repository.test_layout_contracts",
+    "tests.addons.external_webdav.test_feature",
+    "tests.addons.external_webdav.test_http",
+    "tests.addons.external_webdav.test_scope",
+    "tests.deployment.test_management",
+    "tests.deployment.test_family_management",
+    "tests.addons.external_webdav.test_users",
+    "tests.deployment.test_external_proxy",
+    "tests.deployment.test_source_identity",
+    "tests.deployment.test_instance_backup",
+    "tests.runtime.test_readiness",
+    "tests.naming.test_naming_preview",
+    "tests.deployment.test_host_bundle",
+    "tests.deployment.test_feature_settings",
+    "tests.deployment.test_install_feedback",
+    "tests.deployment.test_installer_ui",
+    "tests.deployment.test_terminal_layout",
+    "tests.deployment.test_container_log_status",
+    "tests.bot.test_notifications",
+    "tests.deployment.test_diagnostic_report",
+    "tests.naming.test_classification",
+    "tests.bot.test_member_quotas",
+    "tests.runtime.test_progress_metrics",
+    "tests.bot.test_listener_observations",
+    "tests.deployment.test_restore_rehearsal",
+    "tests.deployment.test_management_pages",
+    "tests.repository.test_release_preparation",
+    "tests.deployment.test_proxy_rendering",
+    "tests.deployment.test_proxy_certbot_startup",
+    "tests.deployment.test_webdav_entry",
+    "tests.deployment.test_listening_host",
+    "tests.deployment.test_webdav_upgrade",
+    "tests.deployment.test_listening_login",
 )
 CLI_PATHS = (
     "src/tgcloud/compose", ".github/scripts/compose_release.py",
@@ -39,10 +71,11 @@ CLI_PATHS = (
     ".github/scripts/prepare_release.py", ".github/scripts/linux_validation.py",
     "src/tgcloud/persistence/backup.py", "src/tgcloud/persistence/bundle.py", "src/tgcloud/persistence/paths.py", "src/tgcloud/monitoring/readiness.py",
     "src/tgcloud/monitoring/progress.py", "src/tgcloud/monitoring/observations.py",
-    *(f"tests/{name}" for name in CLI_TESTS if name not in {"test_feature.py", "test_http.py", "test_scope.py", "test_users.py", "test_naming_preview.py"}),
-    "tests/naming/test_naming_preview.py",
+    *(module.replace(".", "/") + ".py" for module in CLI_TESTS if not module.startswith("tests.addons.")),
+    "tests/__init__.py",
+    "tests/fixtures",
     "tests/addons",
-    "tests/test_lan_gateway_docker.py",
+    "tests/integration/test_lan_gateway_docker.py",
 )
 
 
@@ -62,11 +95,11 @@ def commands(task: str, scope: str) -> list[list[str]]:
         if selected == "repository":
             result.append([sys.executable, "-B", ".github/scripts/check_repository.py"])
         elif selected == "test":
-            patterns = CLI_TESTS if scope == "cli" else ("test*.py",)
-            result.extend(
-                [sys.executable, "-B", "-m", "unittest", "discover", "-s", "tests", "-p", pattern, "-v"]
-                for pattern in patterns
-            )
+            unittest = [sys.executable, "-B", "-m", "unittest"]
+            if scope == "cli":
+                result.extend([*unittest, module, "-v"] for module in CLI_TESTS)
+            else:
+                result.append([*unittest, "discover", "-s", "tests", "-t", ".", "-p", "test*.py", "-v"])
         elif selected == "lint":
             paths = CLI_PATHS if scope == "cli" else (".",)
             result.append([sys.executable, "-m", "ruff", "check", *paths])

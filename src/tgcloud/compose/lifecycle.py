@@ -17,8 +17,8 @@ from tgcloud.cli.management import choose
 from tgcloud.cli.presentation import numbered_menu
 from tgcloud.compose import releases, runtime
 from tgcloud.compose.https import atomic_private, owned_file
-from tgcloud.deployment import backup
 from tgcloud.deployment.host import edition_lock
+from tgcloud.deployment.lifecycle import backup
 from tgcloud.deployment.releases import version_tuple
 from tgcloud.persistence.paths import database_path
 

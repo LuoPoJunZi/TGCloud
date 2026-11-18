@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from telethon import events
 from telethon.tl import types
-from test_scenarios import make_service, make_settings
 
+from tests.fixtures.transfer import make_service, make_settings
 from tgcloud.persistence.sqlite import TaskDB
 
 

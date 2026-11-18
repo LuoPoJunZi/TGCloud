@@ -18,7 +18,7 @@ def commands(stage: str, root: Path = ROOT) -> list[list[str]]:
             raise ValueError("managed Shell hooks missing")
         return ([["bash", "-n", name] for name in entries]
                 + [["shellcheck", *entries], ["shellcheck", "-x", *hooks,
-                    "tests/manage_harness.sh", "tests/maintenance_docker_stub.sh"]])
+                    "tests/fixtures/manage_harness.sh", "tests/fixtures/maintenance_docker_stub.sh"]])
     if stage == "test":
         return [[python, "-B", ".github/scripts/check_python.py", "test"]]
     if stage == "quality":

@@ -7,8 +7,9 @@ import string
 from contextlib import ExitStack
 from zoneinfo import ZoneInfoNotFoundError
 
-from tgcloud.deployment import configuration, install, releases
+from tgcloud.deployment import configuration, releases
 from tgcloud.deployment.host import SafeLog
+from tgcloud.deployment.lifecycle import install
 from tgcloud.deployment.profiles import ProductProfile
 from tgcloud.deployment.proxy.state import (
     ProxyEnvironment,

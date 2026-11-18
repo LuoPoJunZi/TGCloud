@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, patch
 
 from telethon import events
 from telethon.tl import types
-from test_scenarios import FakeRclone, make_service, make_settings
 
+from tests.fixtures.transfer import FakeRclone, make_service, make_settings
 from tgcloud.domain.naming import (
     album_file_name,
     caption_candidate,

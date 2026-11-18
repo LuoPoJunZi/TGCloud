@@ -1,0 +1,686 @@
+"""Independent, ownership-checked TGCloud removal; no package management."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shlex
+import shutil
+import stat
+from contextlib import ExitStack
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from tgcloud.cli import terminal
+from tgcloud.deployment import configuration, preflight, runtime
+from tgcloud.deployment.host import LocalSession, SafeLog, edition_lock
+from tgcloud.deployment.ownership import (
+    COMPOSE,
+    MANAGED,
+    ROLE,
+    UninstallError,
+    bind_map,
+    require_labels,
+)
+from tgcloud.deployment.profiles import (
+    PRODUCTS,
+    ProductProfile,
+    require_product,
+)
+from tgcloud.deployment.proxy.maintenance import (
+    ARCHIVE_NAME,
+    COMPOSE_REGISTRY,
+    COMPOSE_TRANSACTION,
+    parse_compose_registry,
+)
+from tgcloud.deployment.proxy.maintenance import BACKUP_ROOT as PROXY_BACKUP_ROOT
+from tgcloud.deployment.proxy.manager import (
+    PROXY_CERTBOT_CONTAINER,
+    PROXY_NGINX_CONTAINER,
+    PROXY_ROOT,
+    DomainProxyManager,
+    defer_interruptions,
+    empty_state,
+    normalize_state,
+    proxy_lock_command,
+)
+from tgcloud.deployment.proxy.ownership import (
+    PROXY_NETWORK,
+    PROXY_PROJECT,
+    proxy_identity,
+)
+
+LAN_ROOT = Path("/opt/tgcloud-lan")
+LOCK_ROOT = Path("/opt/tgcloud-cli-locks")
+HEX_ID = re.compile(r"[0-9a-f]{64}")
+PROXY_CHILDREN = frozenset({"state", "nginx", "certbot", "docker-compose.yml", "external-auth"})
+
+
+def checked_path(path: Path) -> None:
+    """Reject linked parents, non-directories and broad/noncanonical targets."""
+    if not path.is_absolute() or path.resolve() != path or path.is_symlink():
+        raise UninstallError("目标路径缺失绝对位置或经过链接；停止")
+    for parent in (*reversed(path.parents), path):
+        if parent.exists() and (parent.is_symlink() or not parent.is_dir()):
+            raise UninstallError("目录路径经过链接或不是目录；停止")
+
+
+def read_state() -> dict:
+    root = Path(PROXY_ROOT)
+    checked_path(root)
+    source = root / "state/domains.json"
+    if source.exists() or source.is_symlink():
+        checked_path(source.parent)
+        return normalize_state(configuration.regular_private(source))
+    if root.exists() and {item.name for item in root.iterdir()} - {"transaction.lock"}:
+        raise UninstallError("共享代理有文件但缺少状态；停止，不能猜测或覆盖未知路由")
+    return empty_state()
+
+
+def read_compose_instances() -> dict:
+    """Read independent HTTPS owners, including stopped or missing gateways."""
+    path = Path(PROXY_ROOT) / COMPOSE_REGISTRY
+    if not path.exists() and not path.is_symlink():
+        return {}
+    try:
+        checked_path(path.parent)
+        if path.lstat().st_nlink != 1:
+            raise ValueError("linked Compose HTTPS registry")
+        value = parse_compose_registry(configuration.regular_private(path), physical=True)
+    except (ValueError, OSError):
+        raise UninstallError("Compose HTTPS 归属记录无效或不安全；停止，不删除共享入口或证书") from None
+    return value["instances"]
+
+
+def check_compose_transaction() -> None:
+    journal = Path(PROXY_ROOT) / COMPOSE_TRANSACTION
+    if journal.exists() or journal.is_symlink():
+        raise UninstallError("Compose HTTPS 事务尚未完成；请先用部署包 HTTPS 工具核对，不删除入口、证书或恢复材料")
+
+
+def docker_snapshot(session: LocalSession) -> tuple[dict, dict]:
+    """Read only identity/mount metadata, never Config.Env or container logs."""
+    code, output = session.run("docker ps -a --no-trunc --format '{{.ID}}'", timeout=20)
+    ids = output.splitlines()
+    if code or any(not HEX_ID.fullmatch(value) for value in ids):
+        raise UninstallError("Docker 容器清单不可读；停止，不把错误当作空清单")
+    containers = {}
+    template = ('{"id":{{json .Id}},"name":{{json .Name}},"running":{{json .State.Running}},'
+                '"labels":{{json .Config.Labels}},"mounts":{{json .Mounts}},'
+                '"network":{{json .HostConfig.NetworkMode}}}')
+    if ids:
+        code, output = session.run("docker container inspect --format " + shlex.quote(template)
+                                   + " " + " ".join(ids), timeout=30)
+        if code:
+            raise UninstallError("容器检查失败；没有显示原始 Docker 输出")
+        for line in output.splitlines():
+            item = json.loads(line)
+            if item.get("id") not in ids or not isinstance(item.get("name"), str):
+                raise UninstallError("容器身份格式异常")
+            name = item["name"].removeprefix("/")
+            if name in containers:
+                raise UninstallError("容器身份重复")
+            containers[name] = item
+        if len(containers) != len(ids):
+            raise UninstallError("容器清单在读取期间变化；请重新预检")
+    code, output = session.run("docker network ls --no-trunc --format '{{.ID}}'", timeout=20)
+    ids = output.splitlines()
+    if code or any(not HEX_ID.fullmatch(value) for value in ids):
+        raise UninstallError("Docker 网络清单不可读")
+    networks = {}
+    template = ('{"id":{{json .Id}},"name":{{json .Name}},"labels":{{json .Labels}},'
+                '"containers":{{json .Containers}},"driver":{{json .Driver}}}')
+    if ids:
+        code, output = session.run("docker network inspect --format " + shlex.quote(template)
+                                   + " " + " ".join(ids), timeout=30)
+        if code:
+            raise UninstallError("网络检查失败；没有显示原始 Docker 输出")
+        for line in output.splitlines():
+            item = json.loads(line)
+            if item.get("id") not in ids or not isinstance(item.get("name"), str):
+                raise UninstallError("网络身份格式异常")
+            networks[item["name"]] = item
+        if len(networks) != len(ids):
+            raise UninstallError("网络清单在读取期间变化；请重新预检")
+    return containers, networks
+
+
+def mount_overlaps(item: dict, root: Path) -> bool:
+    """Parent bind mounts also expose the subtree about to be removed."""
+    for mount in item.get("mounts", []):
+        if mount.get("Type") == "tmpfs":
+            continue
+        source = mount.get("Source")
+        if not isinstance(source, str) or not source:
+            raise UninstallError("挂载源无法核对；停止，不删除数据")
+        path = Path(source)
+        if path.is_relative_to(root) or root.is_relative_to(path):
+            return True
+    return False
+
+
+def core_identity(product: ProductProfile, name: str, item: dict) -> str:
+    if (item.get("labels") or {}).get("com.tgcloud.install-mode") == "compose":
+        raise UninstallError("独立 Compose 实例请按 Compose 指南移除；此卸载器不接管")
+    require_product(product)
+    directory = Path(product.install_dir)
+    checked_path(directory)
+    service = product.bot_service if name == product.bot_container else product.key
+    require_labels(item, {COMPOSE + "service": service,
+                          COMPOSE + "project.working_dir": str(directory),
+                          COMPOSE + "project.config_files": str(directory / "docker-compose.yml")})
+    project = (item.get("labels") or {}).get(COMPOSE + "project", "")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", project):
+        raise UninstallError("容器缺少有效 Compose 项目身份")
+    expected = {"/" + child: str(directory / child) for child in ("data", "downloads", "logs", "config")}
+    if name == product.storage_container:
+        expected = {"/Config": str(directory / "clouddrive/config"),
+                    "/CloudNAS": str(directory / "clouddrive/mounts")}
+    if bind_map(item) != expected:
+        raise UninstallError("容器挂载不属于标准安装目录；停止，不接管自定义部署")
+    return project
+
+
+def lan_name(product: ProductProfile) -> str:
+    require_product(product)
+    return "tgcloud-lan-cd2"
+
+
+def lan_identity(product: ProductProfile, item: dict) -> None:
+    directory = LAN_ROOT / product.key
+    checked_path(directory)
+    require_labels(item, {MANAGED: "true", ROLE: "lan-management", "com.tgcloud.edition": product.key,
+                          COMPOSE + "project": lan_name(product), COMPOSE + "service": "lan",
+                          COMPOSE + "project.working_dir": str(directory),
+                          COMPOSE + "project.config_files": str(directory / "compose.json")})
+    if item.get("network") != "host" or bind_map(item) != {
+        "/etc/nginx/nginx.conf": str(directory / "nginx.conf"),
+    }:
+        raise UninstallError("内网入口身份或挂载不符")
+
+
+@dataclass(eq=True)
+class Plan:
+    editions: tuple[str, ...]
+    containers: dict
+    networks: dict
+    state: dict
+    remove_proxy: bool
+    purge_data: bool
+    purge_backups: bool = False
+    backups: dict = field(default_factory=dict)
+
+
+def other_edition_present(editions: tuple[str, ...], containers: dict) -> bool:
+    """Retained data also needs its shared certificates, not just live containers."""
+    return bool(read_compose_instances()) or any(
+        PRODUCTS[key].bot_container in containers or PRODUCTS[key].storage_container in containers
+        or Path(PRODUCTS[key].install_dir).exists() or (LAN_ROOT / key).exists()
+        for key in PRODUCTS if key not in editions)
+
+
+def backup_targets(editions: tuple[str, ...], containers: dict, remove_proxy: bool) -> dict:
+    targets = {}
+    for key in editions:
+        kinds = r"config-[A-Za-z0-9]{8}\.tar\.gz|database-[A-Za-z0-9]{8}\.db|env-[A-Za-z0-9]{8}\.env"
+        targets[Path(PRODUCTS[key].backup_dir)] = re.compile(kinds)
+    if remove_proxy and not other_edition_present(editions, containers):
+        targets[PROXY_BACKUP_ROOT] = ARCHIVE_NAME
+    return targets
+
+
+def backup_identity(root: Path, pattern: re.Pattern) -> tuple | None:
+    """Inspect only generated file names and metadata, never backup secrets."""
+    checked_path(root)
+    if not root.exists():
+        return None
+    info = root.stat()
+    if os.name == "posix" and (info.st_uid != os.getuid() or info.st_mode & 0o077):
+        raise UninstallError("备份目录所有者/权限不符合受管私密目录；停止")
+    entries = []
+    for child in sorted(root.iterdir()):
+        metadata = child.lstat()
+        if (not pattern.fullmatch(child.name) or not stat.S_ISREG(metadata.st_mode)
+                or child.is_symlink() or child.resolve() != child
+                or (os.name == "posix" and (metadata.st_uid != os.getuid() or metadata.st_mode & 0o077))):
+            raise UninstallError("备份目录含未知文件、链接或不安全归属；停止，不按目录名猜测删除")
+        entries.append((child.name, metadata.st_dev, metadata.st_ino, metadata.st_size,
+                        metadata.st_mtime_ns, metadata.st_ctime_ns))
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, tuple(entries))
+
+
+def build_plan(editions: tuple[str, ...], session: LocalSession, *, purge_data: bool = False,
+               purge_backups: bool = False) -> Plan:
+    if editions != ("clouddrive2",):
+        raise UninstallError("仅支持卸载 TGCloud 的 CloudDrive2 实例。")
+    purge_data = purge_data or purge_backups
+    check_compose_transaction()
+    compose_instances = read_compose_instances()
+    if set(editions) & set(compose_instances):
+        raise UninstallError("所选实例已由独立 Compose HTTPS 登记；请使用部署包 HTTPS 工具移除路由，再按 Compose 指南维护；此卸载器不接管")
+    containers, networks = docker_snapshot(session)
+    state = read_state()
+    journal = Path(PROXY_ROOT) / "state/external-transaction.json"
+    if journal.exists() or journal.is_symlink():
+        raise UninstallError("外部入口事务尚未恢复；先用 tgcloud proxy recover 核对，不删除配置或恢复材料。")
+    if any(key in state.get("external_webdav", {}) or (Path("/opt/tgcloud-webdav") / key / "config.json").exists() for key in editions):
+        raise UninstallError("所选网关仍被外部 WebDAV 依赖；请先在 tgcloud → 15. 外部 WebDAV → 7. 卸载外部 WebDAV 中处理，不静默中断外部入口。")
+    selected = {}
+    selected_networks = {}
+    for key in editions:
+        product = PRODUCTS[key]
+        checked_path(Path(product.install_dir))
+        root = Path(product.install_dir)
+        related = {product.bot_container, product.storage_container, lan_name(product)} & containers.keys()
+        if root.exists() or root.is_symlink() or related or product.docker_network in networks or key in state["domains"]:
+            from tgcloud.deployment.local_source import verify_installed
+            try:
+                verify_installed(root, mode="shell")
+            except (ValueError, OSError):
+                raise UninstallError("实例缺少 TGCloud 有效来源标记；停止处理未知资源。") from None
+        projects = set()
+        core = {product.bot_container, product.storage_container}
+        for name in core:
+            if name in containers:
+                projects.add(core_identity(product, name, containers[name]))
+                selected[name] = containers[name]
+        if len(projects) > 1:
+            raise UninstallError("Bot 与网关不属于同一个 Compose 项目")
+        for name, item in containers.items():
+            labels = item.get("labels") or {}
+            if name not in core and (labels.get(COMPOSE + "project") in projects or
+                                    labels.get(COMPOSE + "project.working_dir") == product.install_dir):
+                raise UninstallError("安装目录关联了其他容器；停止，不使用 remove-orphans")
+        name = lan_name(product)
+        if name in containers:
+            lan_identity(product, containers[name])
+            selected[name] = containers[name]
+        lan_dir = LAN_ROOT / key
+        checked_path(lan_dir)
+        if lan_dir.exists():
+            entries = {path.name for path in lan_dir.iterdir()}
+            if entries != {"state.json", "compose.json", "nginx.conf"}:
+                raise UninstallError("内网入口目录有未知文件或不完整；停止，不递归清理")
+            record = json.loads(configuration.regular_private(lan_dir / "state.json"))
+            if (not isinstance(record, dict) or record.get("mode") != "lan" or record.get("schema") != 1
+                    or record.get("edition") != key or record.get("install_dir") != product.install_dir
+                    or record.get("project") != "tgcloud"):
+                raise UninstallError("内网入口模式记录不符")
+        if product.docker_network in networks:
+            network = networks[product.docker_network]
+            labels = network.get("labels") or {}
+            project = labels.get(COMPOSE + "project")
+            if (network.get("driver") != "bridge" or labels.get(COMPOSE + "network") != product.docker_network
+                    or not project or (projects and project not in projects)):
+                raise UninstallError("同名网络缺少预期 Compose 归属；停止")
+            if not projects and project != Path(product.install_dir).name:
+                raise UninstallError("残留网络缺少可验证的标准项目身份")
+            if set(network.get("containers") or {}) - {item["id"] for item in selected.values()}:
+                raise UninstallError("项目网络有外部容器连接；停止，不强制断开")
+            selected_networks[product.docker_network] = network
+    remaining = set(state["domains"]) - set(editions)
+    # External ingress and retained certificate metadata are never purge targets.
+    # Last-route removal still deletes our sites and renewal schedule via adapter.
+    remove_proxy = (not remaining and not state.get("external_webdav")
+                    and state.get("version") != 3 and not compose_instances
+                    and not other_edition_present(editions, containers))
+    for name, item in containers.items():
+        labels = item.get("labels") or {}
+        if name in {PROXY_NGINX_CONTAINER, PROXY_CERTBOT_CONTAINER} or labels.get(COMPOSE + "project") == PROXY_PROJECT:
+            proxy_identity(name, item, state=state)
+            if remove_proxy:
+                selected[name] = item
+        if labels.get(ROLE) == "maintenance-dry-run":
+            raise UninstallError("检测到代理证书维护辅助容器；先完成/核对维护，不在卸载时接管")
+    if remove_proxy and PROXY_NETWORK in networks:
+        network = networks[PROXY_NETWORK]
+        require_labels(network, {COMPOSE + "project": PROXY_PROJECT, COMPOSE + "network": "default"})
+        if network.get("driver") != "bridge" or set(network.get("containers") or {}) - {item["id"] for item in selected.values()}:
+            raise UninstallError("共享代理网络有外部连接或类型不符；不强制删除")
+        selected_networks[PROXY_NETWORK] = network
+    if (not Path(PROXY_ROOT, "state/domains.json").exists()
+            and any(name in containers for name in (PROXY_NGINX_CONTAINER, PROXY_CERTBOT_CONTAINER))):
+        raise UninstallError("共享代理容器存在但状态缺失；停止")
+    for key in editions:
+        directory = LAN_ROOT / key
+        if directory.exists():
+            if any(point == directory or point.is_relative_to(directory) for point in mountpoints()):
+                raise UninstallError("内网入口目录下存在挂载点；不递归清理")
+            if any(name not in selected and mount_overlaps(item, directory)
+                   for name, item in containers.items()):
+                raise UninstallError("其他容器正在使用内网入口文件；停止")
+    # Purge is allowed only for verified live roots, or recognizable retained
+    # standard payloads. Never infer ownership from the name of a directory.
+    if purge_data:
+        for key in editions:
+            root = Path(PRODUCTS[key].install_dir)
+            if root.exists() and not any(name in selected for name in (PRODUCTS[key].bot_container, PRODUCTS[key].storage_container)):
+                source = root / "docker-compose.yml"
+                if source.is_symlink() or source.resolve() != source or not source.is_file() or source.stat().st_size > 128 * 1024:
+                    raise UninstallError("残留目录缺少可核对的标准 Compose；不删除")
+                text = source.read_text(encoding="utf-8")
+                if not all(re.search(r"(?m)^    container_name: " + re.escape(name) + r"\s*$", text)
+                           for name in (PRODUCTS[key].bot_container, PRODUCTS[key].storage_container)):
+                    raise UninstallError("残留目录不是所选实例的标准 payload；不删除")
+        targets = backup_targets(editions, containers, remove_proxy) if purge_backups else {}
+        backups = {root: backup_identity(root, pattern) for root, pattern in targets.items()}
+        purge_preflight(editions, containers, selected, remove_proxy, tuple(targets))
+    else:
+        backups = {}
+    return Plan(editions, selected, selected_networks, state, remove_proxy, purge_data, purge_backups, backups)
+
+
+def mountpoints() -> tuple[Path, ...]:
+    def unescape(text: str) -> str:
+        return re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), text)
+
+    result = []
+    for line in Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if len(parts) < 7 or "-" not in parts:
+            raise UninstallError("无法完整核对挂载点；不删除数据")
+        result.append(Path(unescape(parts[4])))
+    if not result:
+        raise UninstallError("挂载点清单为空；不删除数据")
+    return tuple(result)
+
+
+def purge_preflight(editions: tuple[str, ...], containers: dict, selected: dict, remove_proxy: bool,
+                    backups: tuple[Path, ...] = ()) -> None:
+    check_compose_transaction()
+    compose_instances = read_compose_instances()
+    if set(editions) & set(compose_instances) or remove_proxy and compose_instances:
+        raise UninstallError("独立 Compose HTTPS 仍依赖共享入口；停止，不删除其入口、状态或证书")
+    roots = [Path(PRODUCTS[key].install_dir) for key in editions]
+    # Never delete shared certificates while another Edition is still present,
+    # even if that Edition has no committed HTTPS route yet.
+    if remove_proxy and not other_edition_present(editions, containers):
+        roots.append(Path(PROXY_ROOT))
+    roots.extend(backups)
+    points = mountpoints()
+    for root in roots:
+        checked_path(root)
+        if any(point == root or point.is_relative_to(root) for point in points):
+            raise UninstallError("数据目录下仍有挂载点（可能是云盘/FUSE）；不递归删除、不强制卸载，请处理后重新预检")
+        for name, item in containers.items():
+            if name not in selected and mount_overlaps(item, root):
+                raise UninstallError("其他容器正在使用待删除的数据；停止")
+    if (Path(PROXY_ROOT) in roots and Path(PROXY_ROOT).exists()
+            and {path.name for path in Path(PROXY_ROOT).iterdir()} - (PROXY_CHILDREN | {"transaction.lock"})):
+        raise UninstallError("共享代理目录有未知文件；不递归删除")
+
+
+def delete_tree(root: Path, allowed: set[Path]) -> None:
+    if root not in allowed:
+        raise UninstallError("删除目标不在本次已确认的精确目录白名单中")
+    checked_path(root.parent)
+    if root.is_symlink() or root.resolve() != root:
+        raise UninstallError("删除目标经过链接；停止")
+    if not root.exists():
+        return
+    if any(point == root or point.is_relative_to(root) for point in mountpoints()):
+        raise UninstallError("删除前发现挂载点；停止，不触碰云盘文件")
+    if not shutil.rmtree.avoids_symlink_attacks:
+        raise UninstallError("本机缺少防符号链接竞争的目录删除能力；停止")
+    if root.is_dir():
+        # Do not follow child symlinks. Mount traversal was separately rejected.
+        shutil.rmtree(root)
+    elif stat.S_ISREG(root.lstat().st_mode):
+        root.unlink()
+    else:
+        raise UninstallError("删除目标文件类型异常；停止")
+
+
+def remove_container(session: LocalSession, name: str, item: dict, log: SafeLog) -> None:
+    identifier = item["id"]
+    if not HEX_ID.fullmatch(identifier):
+        raise UninstallError("容器 ID 无效")
+    # Stop by immutable ID, never rm -f. Docker can use its configured signal
+    # after this grace period; explicitly ask users to finish active transfers.
+    code, _ = session.run("docker container stop --time 60 " + identifier, timeout=85)
+    if code:
+        raise UninstallError("容器停止失败；没有显示原始输出，停止后续删除")
+    code, _ = session.run("docker container rm " + identifier, timeout=25)
+    if code:
+        raise UninstallError("容器移除失败；停止，请重新预检核对部分完成状态")
+    log("已移除容器：" + name)
+
+
+def execute(plan: Plan, session: LocalSession, log: SafeLog) -> None:
+    with ExitStack() as locks:
+        # Same lock order for all invocations; preserve lock files to avoid
+        # replacing a locked inode. Windows EXEs must not run concurrently.
+        for key in sorted(plan.editions):
+            locks.enter_context(edition_lock(LOCK_ROOT / (key + ".lock")))
+        locks.enter_context(session.hold_lock(proxy_lock_command()))
+        if build_plan(plan.editions, session, purge_data=plan.purge_data, purge_backups=plan.purge_backups) != plan:
+            raise UninstallError("确认期间实例/网络/HTTPS 状态发生变化；停止，请重新预检")
+        # Reuse the existing transactional route removal. Abort before touching
+        # Bot/gateway containers if a remaining route cannot pass its checks.
+        if plan.state.get("version") != 3 and len(plan.state["domains"]) > 1 and not set(plan.state["domains"]) - set(plan.editions):
+            # No surviving route needs a transient activation between removals.
+            manager = DomainProxyManager(session, PRODUCTS[plan.editions[0]], {"ssh_user": "root"}, log)
+            manager.prepare()
+            with defer_interruptions():
+                try:
+                    manager._install_config(empty_state())
+                    code, _ = manager._compose("stop nginx certbot", timeout=90)
+                    if code:
+                        raise UninstallError("共享代理停止失败；未移除业务容器，开始恢复原路由")
+                    manager._commit_state(empty_state())
+                except Exception:
+                    try:
+                        manager._activate(plan.state)
+                        restore_code, _ = manager._compose("up -d certbot", timeout=120)
+                        if restore_code:
+                            log("警告：共享代理恢复未完全通过，请核对原路由；业务容器尚未移除。")
+                    except Exception:  # noqa: BLE001 - preserve the original failure during best-effort rollback
+                        log("警告：共享代理恢复失败，请核对原路由；业务容器尚未移除。")
+                    raise
+            log("已移除全部所选 HTTPS 路由。")
+        else:
+            for key in plan.editions:
+                if key in plan.state["domains"]:
+                    manager = DomainProxyManager(session, PRODUCTS[key], {"ssh_user": "root"}, log)
+                    manager.prepare()
+                    try:
+                        with defer_interruptions():
+                            report = manager._remove_locked()
+                    except Exception as exc:
+                        raise UninstallError("HTTPS 路由移除/剩余入口自检未通过；业务容器尚未移除，请核对共享代理及原路由恢复结果") from exc
+                    log(report.message)
+        order = []
+        for key in plan.editions:
+            product = PRODUCTS[key]
+            order.extend((lan_name(product), product.bot_container, product.storage_container))
+        order.extend(sorted(set(plan.containers) - set(order)))
+        for name in order:
+            if name in plan.containers:
+                remove_container(session, name, plan.containers[name], log)
+        for name, item in plan.networks.items():
+            # Recheck immutable identity/endpoints after removing containers.
+            template = '{"id":{{json .Id}},"containers":{{json .Containers}},"labels":{{json .Labels}}}'
+            code, output = session.run("docker network inspect --format " + shlex.quote(template) + " " + item["id"], timeout=15)
+            if code:
+                raise UninstallError("网络删除前复检失败；停止")
+            current = json.loads(output)
+            if current.get("id") != item["id"] or current.get("labels") != item.get("labels") or current.get("containers"):
+                raise UninstallError("网络归属或连接已变化；不强制断开任何容器")
+            code, _ = session.run("docker network rm " + item["id"], timeout=20)
+            if code:
+                raise UninstallError("网络移除失败；停止，请核对部分完成状态")
+            log("已移除网络：" + name)
+        containers, networks = docker_snapshot(session)
+        if set(containers) & set(plan.containers) or set(networks) & set(plan.networks):
+            raise UninstallError("卸载后资源复检未通过；不输出成功标记")
+        for key in plan.editions:
+            directory = LAN_ROOT / key
+            if directory.exists():
+                delete_tree(directory, {LAN_ROOT / value for value in plan.editions})
+                log("已移除内网入口配置：" + str(directory))
+        if plan.purge_data:
+            targets = backup_targets(plan.editions, containers, plan.remove_proxy) if plan.purge_backups else {}
+            if {root: backup_identity(root, pattern) for root, pattern in targets.items()} != plan.backups:
+                raise UninstallError("备份范围或内容在卸载期间变化；停止数据删除，请重新预检")
+            purge_preflight(plan.editions, containers, {}, plan.remove_proxy, tuple(targets))
+            roots = {Path(PRODUCTS[key].install_dir) for key in plan.editions}
+            for root in sorted(roots):
+                delete_tree(root, roots)
+                if root.exists():
+                    raise UninstallError("本地实例目录删除后复检失败；停止，不输出成功")
+                log("已删除本地实例目录：" + str(root))
+            other_present = other_edition_present(plan.editions, containers)
+            if plan.remove_proxy and not other_present:
+                roots = {Path(PROXY_ROOT) / name for name in PROXY_CHILDREN}
+                for root in sorted(roots):
+                    delete_tree(root, roots)
+                    if root.exists():
+                        raise UninstallError("共享代理配置/证书删除后复检失败")
+                log("已删除不再使用的共享代理配置/证书；事务锁文件保留。")
+            for root, pattern in sorted(targets.items()):
+                if backup_identity(root, pattern) != plan.backups[root]:
+                    raise UninstallError("备份在删除前变化；停止，不删除未经确认的新备份")
+                if plan.backups[root] is not None:
+                    delete_tree(root, set(targets))
+                    if root.exists():
+                        raise UninstallError("备份目录删除后复检失败；停止，不输出成功")
+                    log("已删除历史备份目录：" + str(root))
+        state = read_state()
+        if set(state["domains"]) & set(plan.editions):
+            raise UninstallError("所选 HTTPS 路由仍存在；卸载复检未通过")
+
+
+def validate_environment(session: LocalSession) -> None:
+    preflight.validate_host()
+    from tgcloud.deployment import architecture
+    try:
+        architecture.check_docker(session)
+    except ValueError as exc:
+        raise UninstallError(str(exc)) from None
+
+
+def manager_in_use(session: LocalSession) -> bool:
+    """Conservative post-removal dependency check, including stopped/partial instances."""
+    check_compose_transaction()
+    if read_compose_instances():
+        return True
+    containers, networks = docker_snapshot(session)
+    for name, item in (*containers.items(), *networks.items()):
+        labels = item.get("labels") or {}
+        if (name.startswith("tgcloud-") or labels.get(MANAGED) == "true"
+                or labels.get(COMPOSE + "project", "").startswith("tgcloud-")):
+            return True
+    if other_edition_present(("clouddrive2",), containers):
+        return True
+    roots = [*(Path(p.install_dir) for p in PRODUCTS.values()), *(Path(p.backup_dir) for p in PRODUCTS.values()),
+             *(LAN_ROOT / key for key in PRODUCTS), PROXY_BACKUP_ROOT,
+             *(Path("/opt/tgcloud-webdav") / key / "config.json" for key in PRODUCTS)]
+    if any(path.exists() or path.is_symlink() for path in roots):
+        return True
+    state = read_state()
+    if state["domains"] or state.get("external_webdav") or state.get("version") == 3:
+        return True
+    for item in containers.values():
+        if mount_overlaps(item, runtime.ROOT) or mount_overlaps(item, runtime.COMMAND):
+            return True
+    return any(point == runtime.ROOT or point.is_relative_to(runtime.ROOT) or point == runtime.COMMAND for point in mountpoints())
+
+
+def cleanup_manager(session: LocalSession, log: SafeLog) -> str:
+    if not any(path.exists() or path.is_symlink() for path in (runtime.ROOT, runtime.COMMAND)):
+        return "absent"
+    try:
+        with runtime.lifecycle_lock(), ExitStack() as locks:
+            for key in sorted(PRODUCTS):
+                locks.enter_context(edition_lock(LOCK_ROOT / (key + ".lock")))
+            locks.enter_context(session.hold_lock(proxy_lock_command()))
+            if manager_in_use(session):
+                log("仍有实例、入口、保留数据/备份或相关资源；保留 tgcloud 管理命令及其代码。")
+                return "retained"
+            if runtime.remove(root=runtime.ROOT, command=runtime.COMMAND):
+                log("最后一个实例已完整卸载：tgcloud 快捷命令及受管管理代码已移除。")
+                return "removed"
+            return "absent"
+    except (ValueError, RuntimeError, OSError, TimeoutError):
+        log("警告：业务卸载已完成，但管理代码清理未确认；可能忙碌、归属不明或部分完成，不继续删除，请人工核对。")
+        return "incomplete"
+
+
+def preview(plan: Plan, log: SafeLog) -> None:
+    log("TGCloud 卸载计划（确认前不停止容器、不修改路由）")
+    log("实例：" + ", ".join(PRODUCTS[key].display_name for key in plan.editions))
+    log("容器：" + (", ".join(sorted(plan.containers)) or "无"))
+    log("网络：" + (", ".join(sorted(plan.networks)) or "无"))
+    log("移除所选实例的 HTTPS 路由和独立 LAN 管理入口；其他项目资源保留。")
+    log("共享 Nginx/Certbot：" + ("没有剩余 HTTPS 路由，移除受管容器" if plan.remove_proxy else "保留，其他部署仍在使用"))
+    for key in plan.editions:
+        log(("删除本地数据：" if plan.purge_data else "保留本地配置/数据：") + PRODUCTS[key].install_dir)
+        log(("删除历史备份：" if plan.purge_backups else "历史备份保留：") + PRODUCTS[key].backup_dir)
+    if PROXY_BACKUP_ROOT in plan.backups:
+        log("删除不再使用的共享代理备份：" + str(PROXY_BACKUP_ROOT))
+    else:
+        log("共享代理历史备份保留；所选范围之外的数据不会清理。")
+    log("镜像缓存、并发锁元数据和系统软件保留。")
+    log("最后一套完整清理后，若无其他实例/入口/保留数据依赖，将核验并移除 tgcloud 命令及其代码；否则保留。")
+    log("请先结束进行中的传输并自行备份；停止容器会中断任务。不要同时运行 EXE/其他安装器。")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="仅卸载受管 TGCloud；不卸载系统 Docker/Nginx")
+    parser.add_argument("--edition", choices=tuple(PRODUCTS), default="clouddrive2", help="仅 CloudDrive2（默认）；不接管其他项目")
+    parser.add_argument("--check", action="store_true", help="只读预览，无需确认，不执行卸载")
+    cleanup = parser.add_mutually_exclusive_group()
+    cleanup.add_argument("--purge-all", dest="cleanup", action="store_const", const="all",
+                         help="默认模式：双重确认后删除所选实例数据和可识别历史备份")
+    cleanup.add_argument("--purge-data", dest="cleanup", action="store_const", const="data",
+                         help="双重确认后删除实例数据，保留历史备份（兼容原选项）")
+    cleanup.add_argument("--keep-data", dest="cleanup", action="store_const", const="runtime",
+                         help="只移除运行资源，保留实例数据、证书和历史备份")
+    parser.set_defaults(cleanup="all")
+    args = parser.parse_args(argv)
+    log = SafeLog()
+    ui = None
+    try:
+        session = LocalSession(log)
+        validate_environment(session)
+        key = args.edition
+        editions = (key,)
+        plan = build_plan(editions, session, purge_data=args.cleanup != "runtime", purge_backups=args.cleanup == "all")
+        preview(plan, log)
+        if args.check:
+            log("TGCLOUD_UNINSTALL_CHECK=OK；只是预检，不是已经卸载")
+            return 0
+        ui = ui or terminal.Terminal()
+        if not ui.confirm("是否执行以上 TGCloud 资源卸载？"):
+            log("TGCLOUD_UNINSTALL_RESULT=CANCELLED；未执行卸载")
+            return 0
+        if plan.purge_data:
+            log("危险：删除 .env、Session、SQLite、下载、日志、云网关授权配置后不能自动恢复；"
+                + ("历史备份也删除，不能使用原备份恢复。" if plan.purge_backups else "历史备份保留。"))
+            token = ("DELETE ALL " if plan.purge_backups else "DELETE ") + key
+            if ui.ask("请输入 " + token + " 确认删除上述本地数据", validate=lambda value: value) != token:
+                log("TGCLOUD_UNINSTALL_RESULT=CANCELLED；删除确认不匹配，未执行卸载")
+                return 0
+        execute(plan, session, log)
+        if plan.purge_backups and cleanup_manager(session, log) == "incomplete":
+            log("TGCLOUD_UNINSTALL_RESULT=PARTIAL；实例资源清理已完成，管理命令/代码尚未确认完全清理；请核对后使用兼容卸载入口重试，不要重装。")
+            return 1
+        log("TGCLOUD_UNINSTALL_RESULT=OK；所选受管运行资源及路由已移除，系统应用未卸载。")
+        if not plan.purge_data:
+            log("--keep-data 保留本地实例数据/证书/备份；再次安装前请按卸载文档处理残留目录，不会静默覆盖。")
+        elif plan.purge_backups:
+            log("所选实例数据和已核对的备份已清理；共享资源按剩余部署保留，镜像缓存/锁元数据与系统应用未清理。")
+        return 0
+    except (KeyboardInterrupt, EOFError):
+        log("TGCLOUD_UNINSTALL_RESULT=INTERRUPTED；可能部分完成，请用 --check 核对；不自动重装/删除数据。")
+        return 130
+    except Exception as exc:  # noqa: BLE001 - secret-safe user-facing boundary
+        log("TGCLOUD_UNINSTALL_RESULT=FAILED；停止后续操作，可能部分完成；请重新 --check 核对。")
+        # Only our static messages are safe; parser/OS errors can contain data.
+        log(str(exc) if isinstance(exc, UninstallError) else "错误类型：" + type(exc).__name__)
+        return 1
+    finally:
+        if ui:
+            ui.close()

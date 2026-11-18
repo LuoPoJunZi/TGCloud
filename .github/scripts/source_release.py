@@ -53,7 +53,8 @@ def helpers_in_tree(files: set[str]) -> set[str]:
     result = {"scripts/run_source.py", "src/tgcloud/__init__.py", "src/tgcloud/version.py", "src/tgcloud/config.py"} | {
         path for path in files if path.endswith(".py") and path.startswith(("src/tgcloud/cli/", "src/tgcloud/deployment/", "src/tgcloud/addons/"))
     }
-    if {"src/tgcloud/deployment/backup.py", "src/tgcloud/cli/naming.py"} & files:
+    if {"src/tgcloud/deployment/lifecycle/backup.py", "src/tgcloud/deployment/backup.py",
+        "src/tgcloud/cli/naming.py"} & files:
         result.update("src/tgcloud/" + name for name in (
             "persistence/__init__.py", "persistence/backup.py", "persistence/bundle.py",
             "domain/__init__.py", "domain/naming.py"))
