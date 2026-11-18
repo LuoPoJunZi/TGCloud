@@ -25,7 +25,7 @@ def check_manifests(root: Path) -> None:
 
 
 def check_helpers(root: Path) -> None:
-    release_metadata.linux_entries(root, release_metadata.source_version(root))
+    release_metadata.linux_entry(root)
 
 
 def inspect(root: Path = ROOT) -> dict:

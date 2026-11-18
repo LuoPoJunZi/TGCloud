@@ -6,8 +6,8 @@ on:
     branches: [main]
     paths:
       - "install.sh"
-      - "install-lan.sh"
       - "tests/test_online_installer.py"
+      - "tests/local_project_fixture.py"
       - "tests/addons/**"
       - "scripts/**"
       - "src/**"
@@ -60,8 +60,8 @@ on:
     branches: [main]
     paths:
       - "install.sh"
-      - "install-lan.sh"
       - "tests/test_online_installer.py"
+      - "tests/local_project_fixture.py"
       - "tests/addons/**"
       - "scripts/**"
       - "src/**"
@@ -159,8 +159,7 @@ jobs:
       - name: Shell syntax and lint
         run: |
           bash -n install.sh
-          bash -n install-lan.sh
-          shellcheck install.sh install-lan.sh
+          shellcheck install.sh
       - name: Offline tests (no VPS or Docker calls)
         run: |
           python .github/scripts/check_python.py test --scope cli

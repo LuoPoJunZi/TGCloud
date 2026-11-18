@@ -46,7 +46,7 @@ class SourceSelectionTests(unittest.TestCase):
         manager, instance, ui = self.manager()
         with tempfile.TemporaryDirectory() as temporary, patch.object(management, "SOURCE_ROOT", Path(temporary)), \
                 patch.object(Path, "cwd", return_value=ROOT), patch.object(manager, "mode", return_value=None), \
-                patch.object(vps, "main") as execute, self.assertRaisesRegex(ValueError, "完整 TGCloud 安装源码"):
+                patch.object(vps, "main") as execute, self.assertRaisesRegex(ValueError, r"完整 TGCloud 安装源码.*sudo bash install\.sh --lan"):
             manager.upgrade(instance)
         execute.assert_not_called()
         ui.ask.assert_not_called()

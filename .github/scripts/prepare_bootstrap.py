@@ -40,13 +40,12 @@ def runtime_files(root: Path) -> list[str]:
     return sorted(paths)
 
 
-def render_entry(root: Path, name: str) -> str:
-    if name not in ("install.sh", "install-lan.sh"):
-        raise ValueError("unknown TGCloud source entry")
-    text = (root / name).read_text(encoding="utf-8")
-    command = "lan" if name == "install-lan.sh" else "install"
-    if 'exec python3 -B "$script_root/scripts/run_source.py" ' + command + ' "$@"' not in text:
-        raise ValueError("source entry does not dispatch the current command")
+def render_entry(root: Path) -> str:
+    text = (root / "install.sh").read_text(encoding="utf-8")
+    local = text.partition("# TGCloud online bootstrap.")[0]
+    for command in ("install", "lan"):
+        if 'exec python3 -B "$script_root/scripts/run_source.py" ' + command + ' "$@"' not in local:
+            raise ValueError("source entry does not dispatch " + command)
     return text
 
 
@@ -64,9 +63,8 @@ def main() -> int:
             raise ValueError(f"{name} manifest stale; regenerate after reviewing added source files")
     if args.directory:
         args.directory.mkdir(mode=0o700, parents=True, exist_ok=False)
-        for name in ("install.sh", "install-lan.sh"):
-            (args.directory / name).write_text(render_entry(ROOT, name), encoding="utf-8", newline="\n")
-        print("CANDIDATE_ONLY: local TGCloud source entries; no network installation or publication")
+        (args.directory / "install.sh").write_text(render_entry(ROOT), encoding="utf-8", newline="\n")
+        print("CANDIDATE_ONLY: TGCloud source entry; no network installation or publication")
     print("BOOTSTRAP_MANIFEST=OK")
     return 0
 

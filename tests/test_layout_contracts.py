@@ -176,15 +176,15 @@ class BootstrapLayoutTests(unittest.TestCase):
             manifest = json.loads((ROOT / f"packaging/{name}-manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest, {"format": 1, "files": paths})
 
-    def test_candidates_preserve_local_dispatch_before_online_bootstrap(self):
-        for name, command in (("install.sh", "install"), ("install-lan.sh", "lan")):
-            original = (ROOT / name).read_text(encoding="utf-8")
-            candidate = bootstrap.render_entry(ROOT, name)
-            self.assertEqual(candidate, original)
-            local = candidate.partition("# TGCloud online bootstrap.")[0]
+    def test_candidate_preserves_both_local_modes_before_online_bootstrap(self):
+        original = (ROOT / "install.sh").read_text(encoding="utf-8")
+        candidate = bootstrap.render_entry(ROOT)
+        self.assertEqual(candidate, original)
+        local = candidate.partition("# TGCloud online bootstrap.")[0]
+        for command in ("install", "lan"):
             self.assertIn('exec python3 -B "$script_root/scripts/run_source.py" ' + command + ' "$@"', local)
-            self.assertNotIn("installer_commit", candidate)
-            self.assertNotIn("curl", local)
+        self.assertNotIn("installer_commit", candidate)
+        self.assertNotIn("curl", local)
 
     def test_complete_local_helper_bundle_runs_without_checkout_or_bot_packages(self):
         with tempfile.TemporaryDirectory() as private:

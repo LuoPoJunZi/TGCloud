@@ -1,3 +1,3 @@
 """Single source of truth for deployer and Bot release version."""
 
-VERSION = "0.0.3"
+VERSION = "0.0.4"

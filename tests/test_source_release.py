@@ -32,8 +32,7 @@ class SourceReleaseTests(unittest.TestCase):
         for product in PRODUCTS.values():
             names.update(path.relative_to(ROOT).as_posix() for path in payload_sources(ROOT, product).values())
         cls.snapshot = {name: (ROOT / name).read_bytes() for name in names}
-        for name in ("install.sh", "install-lan.sh"):
-            cls.snapshot[name] = bootstrap.render_entry(ROOT, name).encode()
+        cls.snapshot["install.sh"] = bootstrap.render_entry(ROOT).encode()
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -59,10 +58,9 @@ class SourceReleaseTests(unittest.TestCase):
         package.git(self.root, "config", "maintenance.auto", "false")
         self.commit()
         pin = package.git(self.root, "rev-parse", "HEAD").decode().strip()
-        for name in ("install.sh", "install-lan.sh"):
-            path = self.root / name
-            text = re.sub(r'^(installer_commit\s*=\s*)"[0-9a-f]{40}"$', lambda match: match[1] + f'"{pin}"', path.read_text(encoding="utf-8"), flags=re.MULTILINE)
-            path.write_text(text, encoding="utf-8", newline="\n")
+        path = self.root / "install.sh"
+        text = re.sub(r'^(installer_commit\s*=\s*)"[0-9a-f]{40}"$', lambda match: match[1] + f'"{pin}"', path.read_text(encoding="utf-8"), flags=re.MULTILINE)
+        path.write_text(text, encoding="utf-8", newline="\n")
         tree = ast.parse((self.root / "src/tgcloud/version.py").read_text(encoding="utf-8"))
         version = next(node.value.value for node in tree.body if hasattr(node, "targets"))
         self.tag = "v" + version
@@ -81,7 +79,10 @@ class SourceReleaseTests(unittest.TestCase):
         self.build()
         package.verify(self.output, self.tag)
         with tarfile.open(self.output / package.artifact_name(self.tag)) as archive:
-            self.assertFalse(any("private-untracked" in member.name for member in archive))
+            names = archive.getnames()
+            self.assertFalse(any("private-untracked" in name for name in names))
+            self.assertIn(f"TGCloud-{self.tag}/install.sh", names)
+            self.assertNotIn(f"TGCloud-{self.tag}/install-lan.sh", names)
         with self.assertRaisesRegex(ValueError, "refusing to replace"):
             self.build()
 
@@ -183,12 +184,12 @@ class SourceReleaseTests(unittest.TestCase):
         path.write_bytes(original)
 
     def test_complete_source_dispatch_precedes_the_online_bootstrap(self):
-        for name in ("install.sh", "install-lan.sh"):
-            text = (ROOT / name).read_text(encoding="utf-8")
-            self.assertIn("scripts/run_source.py", text)
-            local = text.partition("# TGCloud online bootstrap.")[0]
-            for remote in ("installer_commit", "curl", "https://"):
-                self.assertNotIn(remote, local)
+        text = (ROOT / "install.sh").read_text(encoding="utf-8")
+        local = text.partition("# TGCloud online bootstrap.")[0]
+        for command in ("install", "lan"):
+            self.assertIn('exec python3 -B "$script_root/scripts/run_source.py" ' + command + ' "$@"', local)
+        for remote in ("installer_commit", "curl", "https://"):
+            self.assertNotIn(remote, local)
 
     def test_download_only_entry_is_rejected_before_packaging(self):
         (self.root / "install.sh").write_text('#!/bin/bash\ncurl https://example.invalid/bootstrap\n', encoding="utf-8")

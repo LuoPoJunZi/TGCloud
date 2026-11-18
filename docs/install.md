@@ -28,7 +28,7 @@ sudo apt-get install -y curl python3 ca-certificates
 bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh)
 ```
 
-入口自动下载 `v0.0.3` 正式源码包，校验 SHA256 并安全解包到私有临时目录，再运行原有交互向导；不要求安装 Git、克隆仓库或输入源码目录。退出时清理本次临时源码，不删除运行实例。下载、校验失败会停止，不改用开发分支业务代码。
+入口自动下载 `v0.0.4` 正式源码包，校验 SHA256 并安全解包到私有临时目录，再运行原有交互向导；不要求安装 Git、克隆仓库或输入源码目录。退出时清理本次临时源码，不删除运行实例。下载、校验失败会停止，不改用开发分支业务代码。
 
 仅安装 CloudDrive2，不出现版本选择；向导检查容器、目录和资源，展示计划后由你确认安装或升级。已有实例会按当前工具的归属与配置规则检查，不重新初始化数据。
 
@@ -42,10 +42,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/inst
 
 ## 已有完整源码
 
-完整源码内仍使用原有 `sudo bash install.sh` 或 `sudo bash install-lan.sh`。需要固定版本的 Git 工作副本时另行安装 Git，并执行：
+在完整源码目录中运行 `sudo bash install.sh` 或 `sudo bash install.sh --lan`。需要固定版本的 Git 工作副本时另行安装 Git，并执行：
 
 ```bash
-git clone --depth 1 --branch v0.0.3 https://github.com/LuoPoJunZi/TGCloud.git TGCloud && cd TGCloud && sudo bash install.sh
+git clone --depth 1 --branch v0.0.4 https://github.com/LuoPoJunZi/TGCloud.git TGCloud && cd TGCloud && sudo bash install.sh
 ```
 
 目标 `TGCloud` 源码目录须尚不存在。这是可选的源码安装方式。
@@ -55,11 +55,11 @@ git clone --depth 1 --branch v0.0.3 https://github.com/LuoPoJunZi/TGCloud.git TG
 不使用 Git 时，在一个空下载目录执行以下命令。需要 curl、tar 和 sha256sum；脚本仍从完整源码运行：
 
 ```bash
-curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.3/TGCloud-v0.0.3-source.tar.gz &&
-curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.3/SHA256SUMS.txt &&
+curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.4/TGCloud-v0.0.4-source.tar.gz &&
+curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.4/SHA256SUMS.txt &&
 sha256sum -c SHA256SUMS.txt &&
-tar --no-same-owner -xzf TGCloud-v0.0.3-source.tar.gz &&
-cd TGCloud-v0.0.3 &&
+tar --no-same-owner -xzf TGCloud-v0.0.4-source.tar.gz &&
+cd TGCloud-v0.0.4 &&
 sudo bash install.sh
 ```
 
@@ -67,7 +67,7 @@ sudo bash install.sh
 
 从完整源码运行脚本时会自动识别源码目录，无需重复输入。新默认目录只用于新安装；已有实例按自身目录核验，不自动搬迁数据库或 Session。检测到其他目录中的残留 TGCloud 数据时会停止新建实例。
 
-可信内网部署使用 `sudo bash install-lan.sh`，按向导填写主机内网 IPv4。公网管理优先采用 HTTPS；两种入口使用相同的 Bot 与 CloudDrive2 核心。
+可信内网部署使用 `sudo bash install.sh --lan`，按向导填写主机内网 IPv4。公网管理优先采用 HTTPS；两种入口使用相同的 Bot 与 CloudDrive2 核心。
 
 ## 配置 CloudDrive2
 

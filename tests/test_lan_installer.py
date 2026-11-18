@@ -664,7 +664,7 @@ class MainBootstrapTests(unittest.TestCase):
         self.assertIn("不假定已恢复", "\n".join(self.messages))
 
     def test_local_lan_entry_is_stdlib_only_and_has_no_download_fallback(self):
-        text = (ROOT / "install-lan.sh").read_text(encoding="utf-8")
+        text = (ROOT / "install.sh").read_text(encoding="utf-8").partition("# TGCloud online bootstrap.")[0]
         self.assertIn('exec python3 -B "$script_root/scripts/run_source.py" lan "$@"', text)
         self.assertNotIn("installer_commit", text)
         self.assertNotIn("curl", text)
@@ -681,13 +681,13 @@ class MainBootstrapTests(unittest.TestCase):
 
     def test_local_entry_rejects_incomplete_source_without_online_fallback(self):
         from local_project_fixture import check_shell_entry
-        content = (ROOT / "install-lan.sh").read_text(encoding="utf-8")
+        content = (ROOT / "install.sh").read_text(encoding="utf-8").partition("# TGCloud online bootstrap.")[0]
         self.assertNotRegex(content, r"https?://|curl|wget|installer_commit")
-        check_shell_entry(self, BASH, "install-lan.sh", "lan", ["--check"])
+        check_shell_entry(self, BASH, "lan", ["--check"])
 
-    def test_process_substitution_forwards_arguments_exit_and_cleans_own_directory(self):
+    def test_local_lan_entry_preserves_terminal_input_arguments_and_exit(self):
         from local_project_fixture import check_shell_entry
-        check_shell_entry(self, BASH, "install-lan.sh", "lan", ["--lan-ip", IP, "--check"])
+        check_shell_entry(self, BASH, "lan", ["--lan-ip", IP, "--check"])
 
     @unittest.skipUnless(BASH, "Bash unavailable")
     def test_local_lan_entry_from_another_working_directory_forwards_arguments_and_exit(self):
@@ -701,8 +701,8 @@ class MainBootstrapTests(unittest.TestCase):
                                   encoding="utf-8", newline="\n")
                 python.chmod(0o700)
                 arguments = ["--edition", "clouddrive2", "--lan-ip", IP, "--check"]
-                command = "PATH=" + shlex.quote(bash_path(tools)) + ':"$PATH" bash ' + shlex.quote(bash_path(ROOT / "install-lan.sh"))
-                command += " " + " ".join(map(shlex.quote, arguments))
+                command = "PATH=" + shlex.quote(bash_path(tools)) + ':"$PATH" bash ' + shlex.quote(bash_path(ROOT / "install.sh"))
+                command += " --lan " + " ".join(map(shlex.quote, arguments))
                 output = directory / "arguments"
                 result = subprocess.run([BASH, "-c", command], cwd=directory,
                                         env={**os.environ, "FIXTURE_ARGS": bash_path(output), "FIXTURE_EXIT": str(code)},
@@ -729,7 +729,7 @@ class MainBootstrapTests(unittest.TestCase):
             git = shutil.which("git")
             bash = str(Path(git).parents[1] / "bin/bash.exe") if git else None
         if bash:
-            result = subprocess.run([bash, "-n", str(ROOT / "install-lan.sh")], capture_output=True, text=True, timeout=15, check=False)
+            result = subprocess.run([bash, "-n", str(ROOT / "install.sh")], capture_output=True, text=True, timeout=15, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
 
 

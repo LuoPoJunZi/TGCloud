@@ -278,7 +278,7 @@ class Management:
             local_source.content(source)
         except (ValueError, OSError, SyntaxError, UnicodeError) as from_source:
             raise ValueError("当前路径不包含完整 TGCloud 安装源码；请在完整源码目录运行 sudo bash install.sh，"
-                             "内网使用 install-lan.sh；也可使用 tgcloud manage --source-dir /absolute/TGCloud 指定完整源码") from from_source
+                             "内网使用 sudo bash install.sh --lan；也可使用 tgcloud manage --source-dir /absolute/TGCloud 指定完整源码") from from_source
         self.log("TGCloud 安装文件已准备就绪。")
         arguments = ["--edition", self.product.key, "--source-dir", str(source)]
         if use_lan:
