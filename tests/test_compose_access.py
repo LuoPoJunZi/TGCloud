@@ -59,7 +59,7 @@ class AccessTests(unittest.TestCase):
         return write_candidate(self.root / edition)
 
     def initialize(self, root, ui):
-        with patch.object(runtime.shutil, "disk_usage", return_value=NS(free=100 * 1024**3)), \
+        with patch.object(runtime.shutil, "disk_usage", return_value=NS(total=200 * 1024**3, free=100 * 1024**3)), \
                 patch.object(runtime.os, "chown", create=True), redirect_stdout(io.StringIO()):
             return runtime.setup(root, ui)
 

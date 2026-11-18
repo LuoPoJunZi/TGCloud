@@ -34,7 +34,7 @@ class ManagementTests(unittest.TestCase):
         with patch.object(host, "request", return_value=record):
             host.manage(manager, SimpleNamespace(running=True, version="1.4.4", config={"ALLOWED_USER_ID": "123"}))
         text = "\n".join(call.args[0] for call in manager.log.call_args_list)
-        for label in ("TGCloud · 版本 1.4.4", "成员列表", "管理操作", "0. 返回主菜单"):
+        for label in ("Bot 版本：v1.4.4", "成员列表", "管理操作", "0. 返回主菜单"):
             self.assertIn(label, text)
         manager.ui.private.assert_any_call("成员 1", "合成成员 · 456 · 启用")
         self.assertNotIn("456", text)

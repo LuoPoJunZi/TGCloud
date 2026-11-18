@@ -1,47 +1,81 @@
 # TGCloud
 
-TGCloud automates Telegram file transfers to cloud storage mounted in **CloudDrive2**. It combines a private Telegram Bot, persistent task queues, rule-based naming, authorized source monitoring, and Linux deployment tools.
+**Telegram file automation · CloudDrive2 · Linux deployment**
 
-Version: **0.0.2**. The [release](https://github.com/LuoPoJunZi/TGCloud/releases/tag/v0.0.2) provides source and Compose archives with SHA256 checksums. Build the Bot image locally on the deployment host.
+[Latest release](https://github.com/LuoPoJunZi/TGCloud/releases/latest) · [Documentation](docs/README.md) · [中文](README.md)
 
-## Features
+TGCloud transfers files sent or forwarded to your Telegram Bot into cloud storage mounted in CloudDrive2. It provides persistent queues, recovery, classification and naming, streaming, administrator/member controls, authorized source monitoring, WebDAV validation, diagnostics and backups.
 
-- Persistent queues, task recovery, optional streaming and resource limits.
-- Classification and names derived from filenames and captions.
-- Administrator/member access controls and quotas.
-- Explicitly authorized channel/group monitoring with source filters and transfer plans.
-- WebDAV validation, HTTPS management, optional read-only external access, diagnostics and snapshots.
+Current stable release: **[v0.0.3](https://github.com/LuoPoJunZi/TGCloud/releases/tag/v0.0.3)**. GitHub Actions validates and builds the source and Compose archives and checksum files. The Bot image is built locally on the deployment host.
 
-A successful upload and size check do not establish content-hash equality or final cloud-provider processing.
+## Quick install
 
-## Install
+Use native AMD64 or ARM64 Debian/Ubuntu Linux with `/dev/fuse`, an interactive root terminal, curl, Python 3.10+ and CA certificates. Bot images use Python 3.12. Prepare your Telegram API ID, API Hash, Bot Token and administrator ID.
 
-Use a native AMD64 or ARM64 Debian/Ubuntu Linux host with Docker Compose v2 and `/dev/fuse`. Host commands require Python 3.10+; Bot images use Python 3.12.
+For a public VPS with a domain pointing to it and TCP ports 80/443 available:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh)
 ```
 
-Run in a root terminal (`sudo -i` first if needed), with curl, Python 3.10+ and CA certificates installed. The online entry downloads and verifies the stable `v0.0.2` source archive before opening the existing CloudDrive2 wizard. No Git checkout or source-path input is required. Append `--lan` for a trusted LAN; run `tgcloud` for management. A complete local source tree still supports `sudo bash install.sh` and `sudo bash install-lan.sh`.
+Run `sudo -i` first if needed. The entry downloads and verifies the stable `v0.0.3` source archive before opening the wizard. No Git checkout, source-path input or edition selection is required. Resource recommendations use measured host resources. The default instance directory is `/opt/tgcloud`; run `tgcloud` for management.
+
+For a trusted LAN:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh) --lan
+```
+
+Keep HTTP within the host or a trusted LAN. A complete local source tree still supports `sudo bash install.sh` and `sudo bash install-lan.sh`.
 
 ## Docker Compose
 
-Choose either managed script installation or standalone Compose. In a Linux root terminal with Docker Compose v2 available:
+Choose either managed script installation or standalone Compose. Prepare Docker Engine, Compose v2, FUSE, Python 3.10+, curl, tar and sha256sum. In a Linux root terminal:
 
 ```bash
-mkdir -m 700 TGCloud-compose-0.0.2 && cd TGCloud-compose-0.0.2 &&
-curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.2/TGCloud-v0.0.2-compose.tar.gz &&
-curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.2/COMPOSE-SHA256SUMS.txt &&
-sha256sum -c COMPOSE-SHA256SUMS.txt &&
-mkdir deployment &&
-tar --no-same-owner -xzf TGCloud-v0.0.2-compose.tar.gz --strip-components=1 -C deployment &&
-cd deployment && bash manage.sh
+tgcloud_download_dir="$(mktemp -d)" &&
+tgcloud_tag="$(
+  curl -fsSL https://api.github.com/repos/LuoPoJunZi/TGCloud/releases/latest |
+    python3 -c 'import json, re, sys
+release = json.load(sys.stdin)
+tag = release["tag_name"]
+if release.get("draft") or release.get("prerelease") or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
+    raise SystemExit("Invalid stable release tag")
+print(tag)'
+)" &&
+curl -fL -o "$tgcloud_download_dir/TGCloud-${tgcloud_tag}-compose.tar.gz" \
+  "https://github.com/LuoPoJunZi/TGCloud/releases/download/${tgcloud_tag}/TGCloud-${tgcloud_tag}-compose.tar.gz" &&
+curl -fL -o "$tgcloud_download_dir/COMPOSE-SHA256SUMS.txt" \
+  "https://github.com/LuoPoJunZi/TGCloud/releases/download/${tgcloud_tag}/COMPOSE-SHA256SUMS.txt" &&
+(cd "$tgcloud_download_dir" && sha256sum -c COMPOSE-SHA256SUMS.txt) &&
+mkdir -m 700 /root/TGCloud-Compose &&
+tar --no-same-owner -xzf "$tgcloud_download_dir/TGCloud-${tgcloud_tag}-compose.tar.gz" \
+  --strip-components=1 -C /root/TGCloud-Compose &&
+rm -f -- "$tgcloud_download_dir/TGCloud-${tgcloud_tag}-compose.tar.gz" "$tgcloud_download_dir/COMPOSE-SHA256SUMS.txt" &&
+rmdir -- "$tgcloud_download_dir" &&
+cd /root/TGCloud-Compose &&
+bash manage.sh
 ```
 
-The new download directory must not already exist. The Bot image is built locally. Follow the [step-by-step Compose guide](docs/compose-guide.md) to check the host, initialize private configuration, configure CloudDrive2 and its dedicated WebDAV account, then start and test the Bot.
+The `/root/TGCloud-Compose` directory must not already exist. The command resolves the latest stable GitHub release and downloads its matching archive and checksum file. Deployment files are extracted directly into `/root/TGCloud-Compose`.
 
-Read the [documentation index](docs/README.md), [installation guide](docs/install.md), [Compose guide](docs/compose-guide.md), [Bot guide](docs/bot-guide.md), [configuration reference](docs/configuration-guide.md), and [security notes](docs/security.md). Never commit credentials, Sessions, databases or private backups.
+Initialize configuration, start the gateway, mount cloud storage and create the dedicated WebDAV account in CloudDrive2, then start and test the Bot. Disk defaults are calculated from the deployment volume; setup does not inspect host CPU, RAM or the Docker data filesystem. For later management:
 
-## License
+```bash
+cd /root/TGCloud-Compose
+bash manage.sh
+```
 
-[MIT](LICENSE). Copyright and third-party component notices are retained in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+## First transfer and documentation
+
+Run the readiness and WebDAV checks, send a small file to the Bot, inspect `/queue` or `/tasks`, and check it in the cloud provider's official client. An upload and size check do not establish content-hash equality or final provider processing.
+
+Read the [installation guide](docs/install.md), [Compose guide](docs/compose-guide.md), [Bot guide](docs/bot-guide.md), [naming guide](docs/naming-guide.md), [monitoring guide](docs/listening-guide.md), [configuration reference](docs/configuration-guide.md), [operations guide](docs/operations-guide.md), [backup guide](docs/backup-and-recovery.md), [FAQ](docs/faq.md), and [development guide](docs/development.md). See the [documentation index](docs/README.md) for all topics.
+
+Never commit credentials, Sessions, databases or private backups. Base64 is encoding, not encryption. See the [security notes](docs/security.md).
+
+## Acknowledgements and license
+
+Thanks to [whyhhh20/TG115](https://github.com/whyhhh20/TG115) for its open-source contribution. The original `TG115 Contributors` copyright remains in [LICENSE](LICENSE), under the MIT license.
+
+Dependencies and bundled components retain their own licenses. Thanks to Telethon, rclone, Docker, Nginx and Certbot. CloudDrive2 is governed by its official terms. TGCloud has no official affiliation with Telegram, CloudDrive2 or cloud-storage providers.

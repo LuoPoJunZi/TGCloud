@@ -296,6 +296,8 @@ def parse_probe_output(output: str) -> VpsResources:
 
 def _performance_profile(resources: VpsResources) -> str:
     memory_gb = resources.memory_total_bytes / GIB
+    if resources.memory_available_bytes / GIB < min(2.0, memory_gb * 0.25):
+        return "保守"
     if resources.cpu_cores >= 4 and memory_gb >= 7.5:
         return "批量"
     if resources.cpu_cores >= 2 and memory_gb >= 3.5:
@@ -358,14 +360,13 @@ def _make_plan(
     key: str,
     label: str,
     raw_budget_gb: float,
-    maximum_budget_gb: int,
     reserve_gb: int,
     available_gb: float,
     occupied_gb: float,
     overhead_gb: int,
 ) -> StoragePlan:
     occupied_ceiling = math.ceil(occupied_gb)
-    budget_gb = max(occupied_ceiling, min(maximum_budget_gb, math.floor(raw_budget_gb)))
+    budget_gb = max(occupied_ceiling, math.floor(raw_budget_gb))
     additional_budget = max(0.0, budget_gb - occupied_gb)
     required = reserve_gb + overhead_gb + additional_budget
     safe = budget_gb >= 2 and available_gb + 1e-9 >= required
@@ -386,6 +387,15 @@ def _make_plan(
     )
 
 
+def storage_defaults(total_bytes: int, available_bytes: int, *, overhead_gb: int = 6) -> tuple[int, int, int]:
+    """Disk-derived stream/balanced budgets and reserve, without fixed budget caps."""
+    if total_bytes <= 0 or not 0 <= available_bytes <= total_bytes:
+        raise ValueError("磁盘容量探测结果不合理，不能生成推荐值")
+    reserve_gb = max(8, math.ceil(total_bytes / GIB * 0.20))
+    pool_gb = max(0.0, available_bytes / GIB - reserve_gb - overhead_gb)
+    return math.floor(pool_gb * 0.25), math.floor(pool_gb * 0.60), reserve_gb
+
+
 def recommend_storage(
     resources: VpsResources,
     *,
@@ -402,13 +412,12 @@ def recommend_storage(
     available_gb = resources.storage_available_bytes / GIB
     occupied_gb = resources.downloads_used_bytes / GIB
     overhead_gb = _installation_headroom_gb(resources, managed_storage)
-    reserve_gb = max(8, min(20, math.ceil(total_gb * 0.20)))
-    safe_pool_gb = available_gb - overhead_gb - reserve_gb
+    stream_budget, balanced_budget, reserve_gb = storage_defaults(
+        resources.storage_total_bytes, resources.storage_available_bytes, overhead_gb=overhead_gb)
     balanced = _make_plan(
         key="balanced",
         label="均衡模式",
-        raw_budget_gb=max(0.0, safe_pool_gb) * 0.60,
-        maximum_budget_gb=20,
+        raw_budget_gb=balanced_budget,
         reserve_gb=reserve_gb,
         available_gb=available_gb,
         occupied_gb=occupied_gb,
@@ -417,8 +426,7 @@ def recommend_storage(
     stream_first = _make_plan(
         key="stream_first",
         label="流式优先",
-        raw_budget_gb=max(0.0, safe_pool_gb) * 0.50,
-        maximum_budget_gb=8,
+        raw_budget_gb=stream_budget,
         reserve_gb=reserve_gb,
         available_gb=available_gb,
         occupied_gb=occupied_gb,
@@ -433,8 +441,9 @@ def recommend_storage(
     if blocker:
         balanced = replace(balanced, safe=False, reason=blocker)
         stream_first = replace(stream_first, safe=False, reason=blocker)
+    profile = _performance_profile(resources)
     if stream_first.safe and (
-        total_gb < 50 or available_gb < 40 or balanced.budget_gb < 12
+        profile == "保守" or total_gb < 50 or available_gb < 40 or balanced.budget_gb < 12
     ):
         preferred_key = stream_first.key
     elif balanced.safe:
@@ -444,7 +453,7 @@ def recommend_storage(
     else:
         preferred_key = None
     return StorageAdvice(
-        performance_profile=_performance_profile(resources),
+        performance_profile=profile,
         preferred_key=preferred_key,
         balanced=balanced,
         stream_first=stream_first,

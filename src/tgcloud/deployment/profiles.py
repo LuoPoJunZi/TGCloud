@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from tgcloud.version import VERSION as RELEASE_VERSION
 
 SHARED_PAYLOAD_FILES = (
-    "THIRD_PARTY_NOTICES.md",
     "packaging/hooks/clouddrive2/backup_retention.sh",
     "packaging/hooks/clouddrive2/preserve_runtime_config.sh",
     "packaging/.dockerignore", "packaging/Dockerfile", "requirements/bot.lock.txt",

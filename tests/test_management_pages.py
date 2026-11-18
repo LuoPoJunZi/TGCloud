@@ -44,7 +44,7 @@ class ManagementPagesTests(unittest.TestCase):
 
     def test_status_uses_real_version_chinese_fields_and_preserves_local_only_boundary(self):
         self.manager.status(self.instance)
-        for label in ("── 查看运行状态 ──", "TGCloud · 版本 1.4.4", "请稍候", "Bot 状态：运行中",
+        for label in ("── 查看运行状态 ──", "Bot 版本：v1.4.4", "请稍候", "Bot 状态：运行中",
                       "Bot 健康：通过（容器检查）", "网关状态：运行中", "管理地址：https://manage.example.test",
                       "证书到期：2027-03-01", "续期检查：", "不代表外网可达", "不代表实际续签"):
             self.assertIn(label, self.text())
@@ -78,8 +78,8 @@ class ManagementPagesTests(unittest.TestCase):
         new = replace(self.instance, version="1.4.5")
         self.manager.discover.return_value = new
         self.manager.read_page(self.instance, self.manager.status, "重新检查")
-        self.assertIn("版本 1.4.4", self.text())
-        self.assertIn("版本 1.4.5", self.text())
+        self.assertIn("Bot 版本：v1.4.4", self.text())
+        self.assertIn("Bot 版本：v1.4.5", self.text())
         self.assertEqual(self.text().count("── 查看运行状态 ──"), 2)
         self.assertNotIn("── TGCloud 本地管理 ──", self.text())
         self.manager.discover.assert_called_once()
@@ -200,7 +200,7 @@ class ManagementPagesTests(unittest.TestCase):
         self.assertIn("短暂停止所选 Bot 与网关", self.ui.confirm.call_args.args[0])
 
     def test_heading_and_report_helpers_do_not_need_runtime_dependencies(self):
-        self.assertEqual(page_heading("查看运行日志", PRODUCTS["clouddrive2"]), "\n── 查看运行日志 ──\n\nTGCloud\n")
+        self.assertEqual(page_heading("查看运行日志", PRODUCTS["clouddrive2"]), "\n── 查看运行日志 ──\n")
         original = "# Title\n\n## Heading\ntext\n"
         self.assertEqual(terminal_report(original), "── Heading ──\ntext")
         self.assertEqual(original, "# Title\n\n## Heading\ntext\n")
@@ -217,7 +217,7 @@ class ManagementPagesTests(unittest.TestCase):
                 with patch.object(manager, "mode", return_value=None), patch.object(manager, "proxy", return_value=self.proxy):
                     manager.status(current)
                     manager.logs(current)
-                self.assertIn("TGCloud · 版本 1.4.4", self.text())
+                self.assertIn("Bot 版本：v1.4.4", self.text())
                 self.assertIn("── " + product.display_name + " 日志 ──", self.text())
                 for call in self.session.run.call_args_list:
                     self.assertTrue(call.args[0].endswith((product.bot_container, product.storage_container)))

@@ -14,6 +14,7 @@ import stat
 import uuid
 from pathlib import Path
 
+from tgcloud.cli.presentation import InstallerLog
 from tgcloud.compose import packaging, runtime
 from tgcloud.deployment import architecture, uninstall
 from tgcloud.deployment.host import LocalSession, SafeLog
@@ -514,7 +515,7 @@ def main(argv=None, *, session=None, ui=None, log=None):
     parser.add_argument("action", nargs="?", choices=("configure", "status", "check", "renewal-dry-run", "remove", "export-existing", "proxy-backup"))
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="实际 Compose 部署目录的绝对路径")
     args = parser.parse_args(argv)
-    log = log or SafeLog()
+    log = log or InstallerLog(SafeLog())
     owned_ui = False
     try:
         if os.name != "posix" or os.geteuid() != 0:
@@ -540,9 +541,9 @@ def main(argv=None, *, session=None, ui=None, log=None):
             else:
                 while True:
                     log("\n── Compose HTTPS 管理 ──")
-                    log(instance.product.display_name + " · v" + instance.info["version"])
+                    log("TGCloud · v" + instance.info["version"])
                     for line in ("1. 配置 HTTPS", "2. 查看运行状态", "3. 证书续期演练", "4. 移除当前入口",
-                                 "5. 导出反代配置", "6. 备份共享代理", "0. 退出"):
+                                 "5. 导出代理配置", "6. 备份共享代理", "0. 退出"):
                         log(line)
                     choice = ui.ask("选择操作", default="0", validate=lambda value: runtime.checked(r"[0-6]", value))
                     if choice == "0":

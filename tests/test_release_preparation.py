@@ -136,7 +136,7 @@ class ValidationTests(unittest.TestCase):
         for text in ('docker push', 'publish-index', 'packages: write'):
             self.assertNotIn(text, bundle)
 
-    def test_readme_online_entry_downloads_the_current_immutable_release(self):
+    def test_online_source_stays_pinned_and_compose_resolves_latest_stable_tag(self):
         version = planning.source_version(ROOT)
         for name in ('README.md', 'README_EN.md', 'docs/install.md'):
             text = (ROOT / name).read_text(encoding='utf-8')
@@ -145,8 +145,10 @@ class ValidationTests(unittest.TestCase):
         self.assertIn('tgcloud_tag=v' + version, online)
         self.assertIn('/releases/download/${tgcloud_tag}', online)
         compose = (ROOT / 'docs/compose-guide.md').read_text(encoding='utf-8')
-        for text in ('TGCloud-v' + version + '-compose.tar.gz', 'sha256sum -c COMPOSE-SHA256SUMS.txt',
-                     '--strip-components=1 -C deployment', 'sudo docker compose run', 'sudo docker compose up'):
+        for text in ('https://api.github.com/repos/LuoPoJunZi/TGCloud/releases/latest',
+                     'releases/download/${tgcloud_tag}/TGCloud-${tgcloud_tag}-compose.tar.gz',
+                     'sha256sum -c COMPOSE-SHA256SUMS.txt', '--strip-components=1 -C /root/TGCloud-Compose',
+                     'sudo docker compose run', 'sudo docker compose up'):
             self.assertIn(text, compose)
 
 
@@ -170,7 +172,8 @@ class ComposeReleaseTests(unittest.TestCase):
         self.assertEqual(info, self.metadata)
         self.assertTrue(info['image'].startswith('tgcloud-local:'))
         self.assertIn('LICENSE', info['files'])
-        self.assertIn('THIRD_PARTY_NOTICES.md', info['files'])
+        self.assertIn('build-context/LICENSE', info['files'])
+        self.assertFalse(any(name.endswith('THIRD_PARTY_NOTICES.md') for name in info['files']))
         self.assertEqual({p.name for p in self.directory.iterdir()},
                          {compose_release.artifact_name(self.tag), 'COMPOSE-SHA256SUMS.txt'})
 

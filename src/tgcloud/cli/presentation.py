@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from tgcloud.deployment.host import SafeLog
@@ -32,6 +33,62 @@ def classify_install_line(line: str, *, base: bool = False) -> tuple[str, str, s
     if line.startswith("[TGCloud]"):
         return "信息", "", ""
     return "", "", ""
+
+
+def display_width(text: str) -> int:
+    return sum(0 if unicodedata.combining(char) else
+               2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+               for char in text)
+
+
+def status_rows(items, *, indent: str = "") -> list[str]:
+    return [indent + label + "：" + value for label, value in items]
+
+
+def terminal_text(text: str, *, columns: int = 72) -> str:
+    """Wrap human text by terminal columns; keep ASCII URLs/paths intact."""
+    lines = []
+    for original in text.split("\n"):
+        match = re.match(r"VPS 本机 (https://\S+) 自检通过；证书到期日 ([^。]*)。", original)
+        if match:
+            expiry, _, remaining = match[2].partition("，")
+            trailing = original[match.end():].replace("公网连通性仍需从你的电脑或外部网络单独验收。",
+                                                       "公网访问：待电脑或外部网络验收。", 1)
+            original = "管理地址：" + match[1] + "\n本机 HTTPS：通过\n证书到期：" + (expiry or "未核实")
+            if remaining:
+                original += "\n证书剩余：" + remaining.removeprefix("剩余约 ")
+            original += "\n" + trailing
+        if original.startswith("[错误] 操作失败：首次安装 HTTPS 前置检查未通过："):
+            original = original.replace("[错误] 操作失败：首次安装 HTTPS 前置检查未通过：",
+                                        "[错误] 首次安装 HTTPS 前置检查未通过\n原因：", 1)
+            original = original.replace("。请等待", "。\n处理建议：请等待", 1).replace("；Cloudflare", "\nCloudflare", 1)
+        if original.startswith("DNS A："):
+            original = original.replace("；", "\n").replace("\nAAAA：", "\nDNS AAAA：")
+        elif original.startswith("80 端口："):
+            original = original.replace("；", "\n")
+        for line in original.split("\n"):
+            if display_width(line) <= columns:
+                lines.append(line)
+                continue
+            indent = re.match(r" *", line)[0]
+            # Prefer natural Chinese clauses over splitting a word or leaving
+            # a closing punctuation mark alone on the next line.
+            clauses = re.split(r"(?<=[，。；！？])", line[len(indent):])
+            current = indent
+            for clause in filter(None, clauses):
+                if (current.strip() and display_width(current + clause) > columns
+                        and display_width(indent + clause) <= columns):
+                    lines.append(current.rstrip())
+                    current = indent
+                for token in re.findall(r"[!-~]+[，。；！？、：）】》]*|[^\x21-\x7e][，。；！？、：）】》]*", clause):
+                    if current.strip() and display_width(current + token) > columns:
+                        lines.append(current.rstrip())
+                        current = indent + "  " + token.lstrip()
+                    else:
+                        current += token
+            if current.strip():
+                lines.append(current.rstrip())
+    return "\n".join(lines)
 
 
 @dataclass
@@ -119,7 +176,7 @@ class OperationReport:
             ready = all(value == "ok" for value in self.readiness.values())
             lines.append("业务就绪：" + ("基础条件通过（最近观察，不代表写入）" if ready else "尚未全部确认（最近观察）"))
             from tgcloud.deployment.readiness import LABELS, STATES
-            lines.extend("  " + LABELS[key] + "：" + STATES[value] for key, value in self.readiness.items())
+            lines.extend(status_rows((LABELS[key], STATES[value]) for key, value in self.readiness.items()))
         lines += ["WebDAV 写入与大小复验：" + state("webdav"), "实际 Telegram 转存：待人工验收",
                   ("公网访问：待外部网络验收" if self.mode == "https" else "局域网客户端访问：待其他设备验收"),
                   "\n下一步："]
@@ -142,8 +199,7 @@ def numbered_menu(items) -> str:
 
 
 def page_heading(title: str, product, version: str = "") -> str:
-    context = "TGCloud" + (" · 版本 " + version if version else "")
-    return f"\n── {title} ──\n\n{context}\n"
+    return f"\n── {title} ──\n" + (f"\nBot 版本：v{version}\n" if version else "")
 
 
 def terminal_report(markdown: str) -> str:
@@ -263,7 +319,9 @@ class InstallerLog:
             elif line.startswith("TGCLOUD_"):
                 line = friendly_marker(line)
             lines.append(line)
-        self.log("\n".join(lines))
+        rendered = "\n".join(lines)
+        # Classify the original evidence, then redact before any display wrapping.
+        self.log(terminal_text(self.log.clean(rendered)) if self.friendly else rendered)
 
 
 def edition_menu(ui, log, *, default: str = "1", both: bool = False, title: str = "安装向导") -> str:

@@ -65,7 +65,8 @@ class Terminal:
             try:
                 termios.tcsetattr(self.tty.fileno(), termios.TCSANOW, active)
                 suffix = (f"（回车默认 {default}）" if self.friendly is True else f" [{default}]") if default and not secret and "回车默认" not in prompt else ""
-                self.output.write(prompt + suffix + ": ")
+                from tgcloud.cli.presentation import terminal_text
+                self.output.write((terminal_text(prompt + suffix) if self.friendly else prompt + suffix) + ": ")
                 self.output.flush()
                 line = self.read_line()
             finally:
@@ -186,8 +187,8 @@ def collect_config(ui: Terminal, product: ProductProfile, *, storage: tuple[str,
         "webdav_user": ui.ask("WebDAV 用户名（回车默认 tgcloud）", default="tgcloud"),
         "webdav_password": ui.ask("WebDAV 密码（回车自动生成；隐藏输入）", secret=True, default=generated_password()),
         "target": ui.ask("Bot 保存子目录（可留空；账号根目录在管理页设置）", validate=target),
-        "budget": storage[0] if storage else ui.ask("本地任务预算 GB", default="20", validate=configuration.size_gb),
-        "reserve": storage[1] if storage else ui.ask("磁盘最少保留 GB", default="8", validate=configuration.size_gb),
+        "budget": storage[0] if storage else ui.ask("本地任务预算 GB", validate=configuration.size_gb),
+        "reserve": storage[1] if storage else ui.ask("磁盘最少保留 GB", validate=configuration.size_gb),
         "timezone": "Asia/Shanghai",
     }
     if float(values["reserve"]) < 8:

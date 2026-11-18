@@ -97,14 +97,16 @@ class LogClassificationTests(unittest.TestCase):
         self.assertNotIn("FAKE_PRIVATE_PASSWORD", repr(report))
         self.assertTrue(messages[-1].startswith("[错误]"))
 
-    def test_repeated_log_lines_keep_original_warning_but_only_explain_once(self):
+    def test_wrapped_repeated_logs_keep_every_warning_word_but_only_explain_once(self):
         messages = []
         log = InstallerLog(SafeLog(messages.append))
         log.operation = feedback()
         log.operation.stage = "基础安装与升级"
         for _ in range(10):
             log(PIP_WARNING)
-        self.assertEqual("\n".join(messages).count(PIP_WARNING), 10)
+        # Display wrapping may add whitespace; every original warning word remains.
+        normalized = " ".join("\n".join(messages).split())
+        self.assertEqual(normalized.count(PIP_WARNING), 10)
         self.assertEqual("\n".join(messages).count("不代表 Bot 的运行身份"), 1)
 
 

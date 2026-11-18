@@ -33,7 +33,7 @@ assert pwd.getpwuid(os.getuid()).pw_name == 'tgcloud'
 assert pwd.getpwuid(os.getuid()).pw_dir == '/nonexistent'
 assert Path.cwd() == Path('/opt/tgcloud')
 assert os.environ['PYTHONPATH'] == '/opt/tgcloud:/opt/tgcloud/app'
-for name in ('LICENSE', 'THIRD_PARTY_NOTICES.md'):
+for name in ('LICENSE',):
     notice = Path('/usr/share/doc/tgcloud') / name
     assert notice.is_file() and notice.stat().st_size > 0, str(notice)
     assert os.access(notice, os.R_OK) and not os.access(notice, os.W_OK), str(notice)

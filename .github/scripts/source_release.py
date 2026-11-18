@@ -21,7 +21,7 @@ MODERN_REQUIRED = {
     "scripts/run_source.py", "src/tgcloud/__init__.py", "src/tgcloud/version.py",
     "src/tgcloud/app.py", "src/tgcloud/deployment/profiles.py",
     "src/tgcloud/deployment/fingerprints.py", "src/tgcloud/cli/commands.py",
-    "requirements/bot.lock.txt", "requirements/dev.lock.txt", "packaging/Dockerfile", "THIRD_PARTY_NOTICES.md",
+    "requirements/bot.lock.txt", "requirements/dev.lock.txt", "packaging/Dockerfile",
     "packaging/compose/docker-compose.clouddrive2.yml",
     "packaging/bootstrap-manifest.json", "packaging/runtime-manifest.json",
 }

@@ -134,12 +134,17 @@ def bundle_files(root: Path, edition: str = EDITION, image: str | None = None,
     for name in ("LICENSE", "NOTICE", "README.md"):
         if name in source:
             context_files["build-context/" + name] = source[name]
+    # Reproduce the manifest of an older deployment when verifying it.
+    notices = {}
+    if local_source.LEGACY_NOTICE in source:
+        notice = local_source.LEGACY_NOTICE
+        notices = {notice: source[notice], "build-context/" + notice: source[notice]}
     files = {
+        **notices,
         "docker-compose.yml": render(root, edition, image, source_digest=source_digest).encode(),
         ".env.example": b"# Run the local setup service to generate the private .env. Never store secrets here.\nTGCLOUD_BIND_IP=127.0.0.1\n",
         "README.md": (root / "docs/compose-guide.md").read_bytes(),
         "LICENSE": (root / "LICENSE").read_bytes(),
-        "THIRD_PARTY_NOTICES.md": (root / "THIRD_PARTY_NOTICES.md").read_bytes(),
         **https_tools(root), **context_files,
         **{"local-source/" + name: body for name, body in sorted(source.items())},
     }

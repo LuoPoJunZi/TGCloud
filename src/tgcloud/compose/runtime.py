@@ -14,10 +14,12 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from tgcloud.cli.presentation import terminal_text
 from tgcloud.compose.access import ACCESS_FILE, choose_access, next_steps, read_access
 from tgcloud.config import Settings
 from tgcloud.deployment import configuration
 from tgcloud.deployment.profiles import PRODUCTS
+from tgcloud.deployment.resources import GIB, storage_defaults
 from tgcloud.persistence.bundle import pack
 from tgcloud.version import VERSION
 
@@ -73,13 +75,19 @@ def checked(pattern, value):
     return value
 
 
-def collect(ui, product, access_plan=None):
+def collect(ui, product, access_plan=None, *, disk=None):
     from tgcloud.domain.classification import safe_directory
     def reserve(value):
         configuration.size_gb(value)
         if float(value) < 8:
             raise ComposeError("至少保留 8GB 空闲空间")
         return value
+    disk = disk if disk is not None else shutil.disk_usage(Path.cwd())
+    _, budget, reserve_gb = storage_defaults(disk.total, disk.free)
+    print(terminal_text(f"部署目录所在磁盘：总计 {disk.total / GIB:.1f}GB；可用 {disk.free / GIB:.1f}GB"))
+    print(terminal_text("以下默认值按实际部署磁盘计算；此容器不检测宿主 CPU、内存或 Docker 数据盘。"))
+    if budget < 2:
+        print(terminal_text("当前可用空间不足以采用建议保留线，请手动填写预算和保留空间。"))
     values = {
         "api_id": ui.ask("Telegram API ID", validate=configuration.positive),
         "api_hash": ui.ask("Telegram API Hash（隐藏输入）", secret=True,
@@ -92,8 +100,8 @@ def collect(ui, product, access_plan=None):
         "webdav_password": ui.ask("WebDAV 密码（回车自动生成；隐藏输入）", secret=True,
                                   default=secrets.token_urlsafe(12)),
         "target": ui.ask("Bot 保存子目录（可留空）", validate=safe_directory),
-        "budget": ui.ask("任务暂存预算 GB", default="20", validate=configuration.size_gb),
-        "reserve": ui.ask("最少保留空间 GB", default="8", validate=reserve),
+        "budget": ui.ask("任务暂存预算 GB", default=str(budget) if budget >= 2 else "", validate=configuration.size_gb),
+        "reserve": ui.ask("最少保留空间 GB", default=str(reserve_gb) if budget >= 2 else "", validate=reserve),
         "timezone": "Asia/Shanghai", "admin_password": secrets.token_urlsafe(24),
     }
     result = configuration.new_config(product, values)
@@ -212,13 +220,16 @@ def setup(root, ui):
                 if child.is_symlink() or not child.is_dir() or child.relative_to(root).as_posix() not in allowed:
                     raise ComposeError("已有目录或数据未登记，停止；不覆盖旧安装")
     access_plan = {}
-    config = collect(ui, product, access_plan)
+    config = collect(ui, product, access_plan, disk=shutil.disk_usage(root))
     settings = validate_config(root, config, product.key)
     free = shutil.disk_usage(root).free
     if free < settings.local_budget_bytes + settings.min_free_disk_bytes:
         raise ComposeError("安装文件系统空间不足，请调整暂存预算；未写入配置")
-    print(f"计划：{product.display_name}；Compose 独立安装；暂存预算 {config['LOCAL_TEMP_BUDGET_GB']}GB；保留 {config['MIN_FREE_DISK_GB']}GB")
-    print("仅生成本目录配置和权限；请先确认没有另一实例使用同一 Bot Token。")
+    print(terminal_text("\n── TGCloud Compose 初始化计划 ──"))
+    print(terminal_text("部署方式：独立 Docker Compose"))
+    print(terminal_text("任务暂存预算：" + config["LOCAL_TEMP_BUDGET_GB"] + "GB"))
+    print(terminal_text("最少保留空间：" + config["MIN_FREE_DISK_GB"] + "GB"))
+    print(terminal_text("仅生成本目录配置和权限；请先确认没有另一实例使用同一 Bot Token。"))
     if not ui.confirm("确认初始化"):
         return False
     for name in ("data", "downloads", "logs", "config"):
@@ -241,7 +252,7 @@ def setup(root, ui):
         for name in created:
             (root / name).unlink()
         raise
-    print("配置初始化完成；请先启动网关，在后台挂载云存储并创建专用 WebDAV 用户，再启动 Bot。")
+    print(terminal_text("配置初始化完成。\n请先启动网关，在后台挂载云存储并创建专用 WebDAV 用户，再启动 Bot。"))
     credentials(ui, product, config)
     next_steps(access_plan)
     return True
@@ -290,7 +301,7 @@ def main(argv=None):
                 try:
                     if args.action == "setup":
                         if not setup(root, ui):
-                            print("配置保留，未重新生成。")
+                            print(terminal_text("配置保留，未重新生成。"))
                     else:
                         credentials(ui, PRODUCTS[info["edition"]], saved_config(root, info["edition"]))
                 finally:
@@ -307,14 +318,14 @@ def main(argv=None):
                     backup.chmod(0o700)
                     archive = Path("/backups") / ("TGCloud-" + info["edition"] + "-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + secrets.token_hex(4) + ".tar.gz")
                     pack(root, archive, info["edition"], VERSION)
-                    print("离线配置／数据库备份完成：backups/" + archive.name)
-                    print("不含 downloads、logs 或共享 HTTPS；备份包含秘密，请妥善保管。")
+                    print(terminal_text("离线配置／数据库备份完成：backups/" + archive.name))
+                    print(terminal_text("不含 downloads、logs 或共享 HTTPS；备份包含秘密，请妥善保管。"))
                 else:
-                    print(f"Compose 配置检查通过：{info['edition']} / v{VERSION}；不代表 Telegram、WebDAV 或实际转存通过。")
+                    print(terminal_text(f"Compose 配置检查通过：{info['edition']} / v{VERSION}；不代表 Telegram、WebDAV 或实际转存通过。"))
         return 0
     except ComposeError as exc:
-        print("操作未完成：" + str(exc))
+        print(terminal_text("操作未完成：" + str(exc)))
         return 1
     except (Exception, KeyboardInterrupt):  # noqa: BLE001 - never print private exception details
-        print("操作未完成；请核对部署包版本、目录归属、剩余空间和初始化状态。未输出凭据。")
+        print(terminal_text("操作未完成；请核对部署包版本、目录归属、剩余空间和初始化状态。未输出凭据。"))
         return 1

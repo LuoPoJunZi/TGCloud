@@ -180,7 +180,7 @@ class VpsResourceRecommendationTests(unittest.TestCase):
         self.assertEqual(advice.preferred_key, "stream_first")
         self.assertEqual(
             (advice.stream_first.budget_gb, advice.stream_first.reserve_gb),
-            (8, 8),
+            (4, 8),
         )
         self.assertTrue(advice.stream_first.safe)
 
@@ -203,7 +203,7 @@ class VpsResourceRecommendationTests(unittest.TestCase):
         self.assertEqual(large.preferred_key, "balanced")
         self.assertEqual(
             (large.balanced.budget_gb, large.balanced.reserve_gb),
-            (20, 20),
+            (38, 20),
         )
 
     def test_insufficient_disk_has_no_applicable_plan(self) -> None:
@@ -1542,7 +1542,6 @@ class PayloadTests(unittest.TestCase):
             "Dockerfile",
             ".dockerignore",
             "LICENSE",
-            "THIRD_PARTY_NOTICES.md",
             "docker-compose.yml",
             "remote_install.sh",
             "repair_clouddrive_network.sh",
@@ -1623,7 +1622,7 @@ class PayloadTests(unittest.TestCase):
         dockerignore = (PAYLOAD / ".dockerignore").read_text(encoding="utf-8")
         self.assertEqual(
             dockerignore.splitlines(),
-            ["*", "!Dockerfile", "!requirements.txt", "!LICENSE", "!THIRD_PARTY_NOTICES.md", "!app/", "!app/**"],
+            ["*", "!Dockerfile", "!requirements.txt", "!LICENSE", "!app/", "!app/**"],
         )
         self.assertNotIn("!.env", dockerignore)
         self.assertNotIn("!downloads", dockerignore)

@@ -17,7 +17,7 @@ python3 --version
 df -h
 ```
 
-需要 Docker 客户端与服务端均可用、Compose v2、原生 `x86_64`／`aarch64`、FUSE 设备、Python 3.10+。默认暂存预算 20GB、保留空闲 8GB，另给镜像、日志及 CloudDrive2 缓存留足空间。暂存预算可以在初始化时调整。
+需要 Docker 客户端与服务端均可用、Compose v2、原生 `x86_64`／`aarch64`、FUSE 设备、Python 3.10+。初始化默认预算按部署盘总容量和可用空间计算，最少保留 8GB；另给镜像、日志及 CloudDrive2 缓存留足空间。可手动调整。setup 容器仅能给出部署盘默认值，不把它当作宿主 CPU、内存或 Docker 数据盘的完整检测。
 
 未安装 Docker 时，按主机系统使用官方 [Ubuntu 安装说明](https://docs.docker.com/engine/install/ubuntu/)或 [Debian 安装说明](https://docs.docker.com/engine/install/debian/)，同时安装 Compose 插件。已有 Docker 或 NAS 容器套件按原方式维护；无需重装现有引擎。缺少 FUSE 时先解决宿主机支持，再继续部署。
 
@@ -34,43 +34,62 @@ df -h
 
 Bot 凭据获取步骤见[安装指南](install.md)。所有密码在私有终端输入。主机需能访问 GitHub、Docker 镜像仓库、Python 软件源、Telegram 及云存储；Bot 镜像在本机构建。
 
-## 2. 下载版本部署包
+## 2. 下载最新正式部署包
 
-在支持 Docker Compose v2 和 FUSE 的 Linux 主机执行。需要 curl、tar、sha256sum 和 Python 3.10+；`TGCloud-compose-0.0.2` 目录须尚不存在：
+在支持 Docker Compose v2 和 FUSE 的 Linux 主机执行。需要 curl、tar、sha256sum 和 Python 3.10+；`/root/TGCloud-Compose` 目录须尚不存在：
 
 ```bash
-mkdir -m 700 TGCloud-compose-0.0.2 &&
-cd TGCloud-compose-0.0.2 &&
-curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.2/TGCloud-v0.0.2-compose.tar.gz &&
-curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.2/COMPOSE-SHA256SUMS.txt &&
-sha256sum -c COMPOSE-SHA256SUMS.txt &&
-mkdir deployment &&
-tar --no-same-owner -xzf TGCloud-v0.0.2-compose.tar.gz --strip-components=1 -C deployment &&
-cd deployment &&
-sudo bash manage.sh
+tgcloud_download_dir="$(mktemp -d)" &&
+tgcloud_tag="$(
+  curl -fsSL https://api.github.com/repos/LuoPoJunZi/TGCloud/releases/latest |
+    python3 -c 'import json, re, sys
+release = json.load(sys.stdin)
+tag = release["tag_name"]
+if release.get("draft") or release.get("prerelease") or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
+    raise SystemExit("Invalid stable release tag")
+print(tag)'
+)" &&
+curl -fL -o "$tgcloud_download_dir/TGCloud-${tgcloud_tag}-compose.tar.gz" \
+  "https://github.com/LuoPoJunZi/TGCloud/releases/download/${tgcloud_tag}/TGCloud-${tgcloud_tag}-compose.tar.gz" &&
+curl -fL -o "$tgcloud_download_dir/COMPOSE-SHA256SUMS.txt" \
+  "https://github.com/LuoPoJunZi/TGCloud/releases/download/${tgcloud_tag}/COMPOSE-SHA256SUMS.txt" &&
+(cd "$tgcloud_download_dir" && sha256sum -c COMPOSE-SHA256SUMS.txt) &&
+mkdir -m 700 /root/TGCloud-Compose &&
+tar --no-same-owner -xzf "$tgcloud_download_dir/TGCloud-${tgcloud_tag}-compose.tar.gz" \
+  --strip-components=1 -C /root/TGCloud-Compose &&
+rm -f -- "$tgcloud_download_dir/TGCloud-${tgcloud_tag}-compose.tar.gz" "$tgcloud_download_dir/COMPOSE-SHA256SUMS.txt" &&
+rmdir -- "$tgcloud_download_dir" &&
+cd /root/TGCloud-Compose &&
+bash manage.sh
 ```
 
-下载和校验文件保留在部署目录之外。管理菜单会检查源码身份和文件清单，在本机构建镜像并初始化配置。仅解压单个 Compose YAML 不构成完整部署包。
+命令先查询 GitHub 最新正式发行版，再按该标签下载部署包及对应校验文件，避免混用不同版本。部署目录固定为 `/root/TGCloud-Compose`，不随版本号变化。已有实例请按本文的升级步骤操作。
+
+下载和校验在私有临时目录进行，成功解包后清理本次下载文件，不混入运行目录。管理菜单会检查源码身份和文件清单，在本机构建镜像并初始化配置。仅解压单个 Compose YAML 不构成完整部署包。
 
 ## 可选：从源码生成部署包
 
 也可克隆固定版本，从源码生成相同部署内容。需要 Git 和 Python 3.10+：
 
 ```bash
-git clone --depth 1 --branch v0.0.2 https://github.com/LuoPoJunZi/TGCloud.git TGCloud
+git clone --depth 1 --branch v0.0.3 https://github.com/LuoPoJunZi/TGCloud.git TGCloud
 cd TGCloud
-python3 -B scripts/build_compose.py --output "$PWD/build/compose"
-cd build/compose/clouddrive2
+python3 -B scripts/build_compose.py --output "$PWD/build/compose" &&
+(cd build/compose && sha256sum -c COMPOSE-SHA256SUMS.txt) &&
+mkdir -m 700 /root/TGCloud-Compose &&
+tar --no-same-owner -xzf build/compose/TGCloud-v0.0.3-compose-*.tar.gz \
+  --strip-components=1 -C /root/TGCloud-Compose &&
+cd /root/TGCloud-Compose &&
 sudo bash manage.sh
 ```
 
-输出目录必须尚不存在。生成 `clouddrive2/`、带源码摘要的 `TGCloud-v0.0.2-compose-*.tar.gz` 和 `COMPOSE-SHA256SUMS.txt`。部署包包含程序源码、构建上下文、私有配置向导和宿主管理工具。
+打包输出目录 `build/compose` 和部署目录 `/root/TGCloud-Compose` 必须尚不存在。打包输出包含 `clouddrive2/`、带源码摘要的 `TGCloud-v0.0.3-compose-*.tar.gz` 和 `COMPOSE-SHA256SUMS.txt`。部署包包含程序源码、构建上下文、私有配置向导和宿主管理工具。
 
 Bot 使用 `tgcloud-local:` 加源码摘要的本地镜像名；CloudDrive2 使用 Compose 文件声明的固定摘要镜像。这里不依赖预发布的 Bot 镜像。
 
 ## 3. 构建镜像并初始化配置
 
-下载附件时进入上方 `deployment/`，源码构建时进入 `build/compose/clouddrive2/`：
+下载附件和从源码生成部署包后，均进入 `/root/TGCloud-Compose`：
 
 ```bash
 sudo bash manage.sh
@@ -83,7 +102,7 @@ sudo docker compose build --pull tgcloud-clouddrive2-bot setup
 sudo docker compose run --rm --no-deps --pull never setup
 ```
 
-`setup` 会逐项询问 Telegram 凭据、WebDAV 专用用户、保存子目录、暂存预算和访问方案。WebDAV 密码可回车自动生成；在私有终端记录它，稍后在 CloudDrive2 中填写。首次建议保持管理页回环地址 `127.0.0.2`，通过 SSH 隧道访问。
+`setup` 会逐项询问 Telegram 凭据、WebDAV 专用用户、保存子目录、暂存预算和访问方案。WebDAV 密码可回车自动生成；在私有终端记录它，稍后在 CloudDrive2 中填写。首次建议保持管理页回环地址 `127.0.0.1`，通过 SSH 隧道访问。
 
 核对计划并确认后，生成 `.env`、`tgcloud-compose.json` 和访问方案。`.env` 归 root 所有、权限为 600。再次运行 `setup` 会校验并保留配置，不重新生成密码；初始化成功不代表 Telegram 登录或网盘写入已通过。
 
@@ -103,12 +122,12 @@ sudo docker compose ps
 回环地址仅能在服务器本机访问。从自己的电脑另开终端，将 `SERVER_HOST` 换成服务器地址：
 
 ```bash
-ssh -N -L 19798:127.0.0.2:19798 root@SERVER_HOST
+ssh -N -L 19798:127.0.0.1:19798 root@SERVER_HOST
 ```
 
-保持隧道运行，在电脑浏览器打开 `http://127.0.0.2:19798`。登录 CloudDrive2，完成云存储挂载；创建与初始化向导中一致的 WebDAV 用户及密码，授予 Bot 目标目录的写入权限。
+保持隧道运行，在电脑浏览器打开 `http://127.0.0.1:19798`。登录 CloudDrive2，完成云存储挂载；创建与初始化向导中一致的 WebDAV 用户及密码，授予 Bot 目标目录的写入权限。
 
-Bot 使用容器内部地址 `http://tgcloud-clouddrive2:19798/dav`，不要将它改成电脑的 `127.0.0.2`。保存子目录相对于该 WebDAV 用户可见根目录，不是服务器 `/opt/` 下的文件夹。
+Bot 使用容器内部地址 `http://tgcloud-clouddrive2:19798/dav`，不要将它改成电脑的 `127.0.0.1`。保存子目录相对于该 WebDAV 用户可见根目录，不是服务器 `/opt/` 下的文件夹。
 
 选择可信内网地址时，在同一内网访问 `http://主机内网IPv4:19798`。HTTPS 配置使用 `sudo bash manage.sh` 的“7. HTTPS 与管理”，或随包 `https.sh`；具体步骤见[网络指南](network-guide.md)。
 
@@ -126,7 +145,7 @@ sudo docker compose up -d --no-build --pull never tgcloud-clouddrive2-bot
 
 ## 6. 日常管理、日志与故障检查
 
-重新登录 SSH 后，先回到本次的 `TGCloud-compose-0.0.2/deployment` 目录；不用重新下载或初始化。以下命令都在包含 `docker-compose.yml` 的同一目录执行：
+重新登录 SSH 后，先回到本次的 `/root/TGCloud-Compose` 目录；不用重新下载或初始化。以下命令都在包含 `docker-compose.yml` 的同一目录执行：
 
 ```bash
 sudo docker compose ps
@@ -146,7 +165,17 @@ sudo docker compose up -d --no-build --pull never tgcloud-clouddrive2-bot
 
 继续使用本目录的 `sudo bash manage.sh`，或从完整源码运行 `python3 -B scripts/run_source.py compose --root /absolute/deployment`。脚本部署与独立 Compose 分别管理各自实例。
 
-升级使用完整 TGCloud 源码或新生成的部署包，先备份，再核对配置、来源和候选镜像。卸载前审阅菜单给出的数据删除范围；保留独立备份，不用 `docker system prune` 代替项目卸载。
+升级使用完整 TGCloud 源码或新生成的部署包。先做独立备份，暂停新任务并等活动任务结束，再核对升级计划。
+
+从 0.0.1／0.0.2 升级到 0.0.3 时，旧管理工具仍要求新版已移除的独立声明文件。将校验过的 v0.0.3 源码包解压到独立目录，用新版工具进入旧实例的升级流程：
+
+```bash
+sudo python3 -B /absolute/TGCloud-v0.0.3/scripts/run_source.py compose upgrade --root /absolute/deployment
+```
+
+把 `/absolute/deployment` 换成现有实例的绝对路径。向导询问候选目录时，填写已解压的 v0.0.3 源码目录或对应 Compose 包目录。确认升级完成后，在原部署目录重新运行 `sudo bash manage.sh`。
+
+卸载前审阅菜单给出的数据删除范围，保留独立备份。
 
 卸载入口为管理菜单“14. 卸载当前实例”。`docker compose stop` 只是停止服务；不要直接删除部署目录、数据库或云挂载目录来代替卸载。
 

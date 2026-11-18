@@ -81,7 +81,7 @@ class ComposeManagement(Management):
         actions = {"1": "configure", "2": "status", "3": "renewal-dry-run", "4": "remove",
                    "5": "export-existing", "6": "proxy-backup"}
         self.log(numbered_menu(((1, "配置 HTTPS"), (2, "检查 HTTPS"), (3, "证书续期演练"),
-                                 (4, "移除管理域名"), (5, "导出已有代理配置"), (6, "备份共享代理"), (0, "返回主菜单"))))
+                                 (4, "移除管理域名"), (5, "导出代理配置"), (6, "备份共享代理"), (0, "返回主菜单"))))
         selected = choose(self.ui, "选择操作", ("0", *actions), "0")
         if selected != "0":
             self.recheck(instance)
@@ -195,7 +195,11 @@ def main(argv=None, *, session=None, ui=None, log=None):
         if root.resolve() != root:
             raise ValueError("Compose 目录经过链接；停止")
         from tgcloud.compose.releases import verify_tools
-        runtime.metadata(root)
+        # A newer helper may verify and upgrade an older installed bundle.
+        if args.action == "upgrade":
+            runtime.metadata(root, expected_version=None)
+        else:
+            runtime.metadata(root)
         verify_tools(root)
         initialize(root, session, log, ui)
         manager = ComposeManagement(root, session, log, ui)
