@@ -5,7 +5,7 @@ import hashlib
 import io
 import json
 import os
-import runpy
+import re
 import shlex
 import shutil
 import subprocess
@@ -19,8 +19,9 @@ from tests.fixtures import ROOT
 
 SCRIPT = (ROOT / "install.sh").read_text(encoding="utf-8")
 VALIDATOR = SCRIPT.split("python3 -c '\n", 1)[1].split("\n' \"$tgcloud_work\"", 1)[0]
-VERSION = runpy.run_path(str(ROOT / "src/tgcloud/version.py"))["VERSION"]
-TAG = "v" + VERSION
+# The standalone bootstrap downloads the pinned stable release.
+TAG, = re.findall(r"^tgcloud_tag=(v[0-9]+\.[0-9]+\.[0-9]+)$", SCRIPT, re.MULTILINE)
+STABLE_VERSION = TAG[1:]
 ASSET = "TGCloud-" + TAG + "-source.tar.gz"
 
 
@@ -37,7 +38,7 @@ class OnlineInstallerTests(unittest.TestCase):
         self.downloads = self.root / "downloads"
         self.downloads.mkdir()
 
-    def archive(self, *, version=VERSION, extra=()):
+    def archive(self, *, version=STABLE_VERSION, extra=()):
         bodies = {
             "scripts/run_source.py": b'import json,sys; print("FIXTURE_WIZARD="+json.dumps({"args":sys.argv[1:],"stdin":sys.stdin.read()})); sys.exit(7)\n',
             "src/tgcloud/cli/commands.py": b"# synthetic fixture only\n",
