@@ -5,6 +5,7 @@ import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from tgcloud.cli import terminal
 from tgcloud.cli.presentation import InstallerLog, OperationReport
@@ -30,6 +31,9 @@ from tgcloud.deployment.proxy.state import (
     nat_public_ipv4_candidate,
     public_endpoint_error,
 )
+
+if TYPE_CHECKING:
+    from tgcloud.deployment.proxy.lan import Plan as LanPlan
 
 
 @dataclass
@@ -159,7 +163,7 @@ def make_plan(
     return plan
 
 
-def apply_base(plan: Plan, release: releases.Release, source: Path, session: LocalSession, log: SafeLog) -> None:
+def apply_base(plan: Plan | LanPlan, release: releases.Release, source: Path, session: LocalSession, log: SafeLog) -> None:
     instance = plan.instance
     if plan.action not in {"install", "upgrade"}:
         return
@@ -168,8 +172,10 @@ def apply_base(plan: Plan, release: releases.Release, source: Path, session: Loc
         root = Path(private)
         payload_dir = root / "payload"
         payload.build_payload(source, instance.product, payload_dir)
-        from tgcloud.deployment.proxy.external_entry import apply_payload_network
-        apply_payload_network(plan.manager, payload_dir / "docker-compose.yml")
+        if isinstance(plan, Plan):
+            # Only VPS plans can attach their payload to an existing HTTPS proxy.
+            from tgcloud.deployment.proxy.external_entry import apply_payload_network
+            apply_payload_network(plan.manager, payload_dir / "docker-compose.yml")
         from tgcloud.deployment.local_source import marker_for, write_marker
         write_marker(payload_dir, marker_for(payload_dir, release))
         candidate = root / "config.env"

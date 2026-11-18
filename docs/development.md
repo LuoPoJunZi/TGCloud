@@ -16,7 +16,7 @@
 | `tests/` | 合成回归及按环境显式启用的集成测试 |
 | `docs/` | 安装、使用、维护和开发文档 |
 
-Telegram 事件进入持久化任务和计划，经资源窗口调度下载／流式传输，再由 rclone 写入 CloudDrive2 WebDAV。宿主 CLI 延迟导入，帮助和版本检查不要求 Bot 依赖。版本唯一来源是 `src/tgcloud/version.py`，当前为 0.0.4。
+Telegram 事件进入持久化任务和计划，经资源窗口调度下载／流式传输，再由 rclone 写入 CloudDrive2 WebDAV。宿主 CLI 延迟导入，帮助和版本检查不要求 Bot 依赖。版本唯一来源是 `src/tgcloud/version.py`，当前为 0.0.5。
 
 ## 开发环境
 

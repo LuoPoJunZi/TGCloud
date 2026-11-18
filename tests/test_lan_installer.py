@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import io
 import json
 import os
 import shlex
@@ -11,7 +12,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack, nullcontext, redirect_stdout
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
@@ -24,10 +26,13 @@ import tgcloud.deployment.payload as tgdep_payload
 import tgcloud.deployment.preflight as tgdep_preflight
 import tgcloud.deployment.releases as tgdep_releases
 import tgcloud.deployment.upgrade as tgdep_upgrade
-from tgcloud.deployment import local_source
+from tgcloud.cli import commands, management
+from tgcloud.cli.presentation import terminal_text
+from tgcloud.deployment import local_source, runtime
 from tgcloud.deployment.host import SafeLog
 from tgcloud.deployment.profiles import PRODUCTS
 from tgcloud.deployment.proxy import lan
+from tgcloud.deployment.resources import GIB, VpsResources
 
 ROOT = Path(__file__).resolve().parents[1]
 IP = "192.168.26.5"
@@ -578,6 +583,191 @@ class PlanExecutionTests(unittest.TestCase):
                     self.assertLess(self.messages.index(url_line), self.messages.index("OFFLINE_VERIFY_PROMPT"))
                     self.assertIn("完成后再确认写入验收", "\n".join(self.messages))
                     self.assertNotIn("FAKE_OFFLINE_SECRET", "\n".join(self.messages))
+
+
+class FreshLanInstallFlowTests(unittest.TestCase):
+    def run_installation(self, directory):
+        product = replace(PRODUCTS["clouddrive2"], install_dir=str(directory))
+        fresh = instance(product, present=False)
+        deployed = fresh
+        lan_state = None
+        containers = set()
+        events = []
+        output = io.StringIO()
+        token = "123456789:FAKE_LAN_INSTALL_TEST_TOKEN_123"
+        password = "FAKE_LAN_INSTALL_PASSWORD"
+        answers = iter(("y", IP, "", "12345678", "a" * 32, token, "123456789", "", password,
+                        "Telegram/Downloads", "y", "y", "7", "0", "0"))
+        ui = Mock(spec=tgdep_terminal.Terminal)
+        resources = VpsResources(
+            "amd64", 2, 4 * GIB, 3 * GIB, 0, "ext4", 200 * GIB, 180 * GIB, 100000, 90000,
+            False, 0, 0, 0, True, False, 0, 0, 0, 0, True,
+        )
+
+        def ask(prompt, *, default="", secret=False, validate=str):
+            value = next(answers)
+            if prompt.startswith("确认上述内网 HTTP 计划？"):
+                events.append("confirmed")
+            if default and not secret and "回车默认" not in prompt:
+                prompt += f"（回车默认 {default}）"
+            print(terminal_text(prompt) + ": " + ("〔输入不回显〕" if secret else value or "〔回车〕"))
+            return validate(value or default)
+
+        def save_state(selected, address):
+            nonlocal lan_state
+            self.assertEqual(events, ["confirmed"])
+            lan_state = lan.state_for(selected, address)
+
+        def run(command, *, timeout, stream=None):
+            nonlocal deployed
+            if command.startswith("INSTALL_DIR="):
+                self.assertEqual(events, ["confirmed"])
+                self.assertEqual(lan_state["bind_ip"], IP)
+                target, interpreter, hook, bundle, candidate = shlex.split(command)
+                bundle = Path(bundle)
+                self.assertEqual((target, interpreter, Path(hook), timeout),
+                                 ("INSTALL_DIR=" + str(directory), "bash", bundle / "remote_install.sh", 2400))
+                self.assertEqual(Path(hook).read_bytes(),
+                                 (ROOT / "packaging/hooks/clouddrive2/remote_install.sh").read_bytes())
+                self.assertEqual((bundle / "docker-compose.yml").read_bytes(),
+                                 (ROOT / "packaging/compose/docker-compose.clouddrive2.yml").read_bytes())
+                marker = local_source.verify_installed(bundle, expected_version=product.app_version, allow_pending=True)
+                raw = Path(candidate).read_bytes()
+                config = tgdep_install.configuration.parse_config(raw)
+                self.assertEqual(config["BOT_TOKEN_B64"], tgdep_install.configuration.encoded(token))
+                self.assertEqual(config["LOCAL_TEMP_BUDGET_GB"], "80")
+                self.assertEqual(config["MIN_FREE_DISK_GB"], "40")
+                shutil.copytree(bundle, directory)
+                (directory / ".env").write_bytes(raw)
+                containers.update((product.bot_container, product.storage_container))
+                deployed = replace(fresh, present=True, running=True, version=product.app_version,
+                                   config=config, raw_config=raw, source_digest=marker["source_sha256"])
+                events.append("base")
+                result = ("TGCLOUD_STAGE=GATEWAY\nTGCLOUD_STAGE=BOT\nTGCLOUD_STAGE=HEALTH\n"
+                          "TGCLOUD_CODE=OK\nTGCLOUD_BOT_HEALTH=healthy\nTGCLOUD_RESULT=SUCCESS\n"
+                          f"TGCLOUD_VERSION={product.app_version}\n")
+                stream(result)
+                return 0, result
+            if command == "command -v docker >/dev/null 2>&1":
+                return (0 if containers else 1), ""
+            if command.endswith(" bash ./manage.sh ready"):
+                self.assertIn(product.bot_container, containers)
+                events.append("ready")
+                return 0, ""
+            if command.endswith(" bash ./manage.sh verify"):
+                self.assertIn(lan.container_name(product), containers)
+                events.append("webdav")
+                stream("TGCLOUD_DESTINATION=OK")
+                return 0, "TGCLOUD_DESTINATION=OK\n"
+            if "PortBindings" in command:
+                return 0, '{"19798/tcp":[{"HostIp":"127.0.0.1","HostPort":"19798"}]}'
+            if command.startswith("docker container inspect "):
+                name = shlex.split(command)[-1]
+                if "LogConfig" in command and name not in containers:
+                    return 1, ""
+                self.assertIn(name, containers)
+                if "LogConfig" in command:
+                    service = {product.bot_container: product.bot_service, product.storage_container: product.key}[name]
+                    return 0, json.dumps({"driver": "json-file", "size": "10m", "files": "3",
+                                          "directory": str(directory), "service": service})
+                if "ReadonlyRootfs" in command:
+                    return 0, json.dumps(inspected(product))
+                return 0, json.dumps({"image": "sha256:" + "b" * 64, "running": True, "health": "healthy"})
+            if command.startswith("docker inspect ") and ".State.Status" in command:
+                self.assertIn(shlex.split(command)[-1], containers)
+                return 0, "running healthy"
+            if command == "docker exec " + product.bot_container + " python -B -m tgcloud.monitoring.readiness":
+                self.assertIn(product.bot_container, containers)
+                return 0, json.dumps({"schema": 1, "version": deployed.version, "ready": True,
+                                      "checks": dict.fromkeys(tgdep_install.readiness.LABELS, "ok")})
+            for arguments in ("config --quiet", "pull lan", "run --rm --no-deps lan -t", "up -d lan"):
+                if command == lan.compose_command(product, arguments):
+                    events.append(arguments)
+                    if arguments == "up -d lan":
+                        containers.add(lan.container_name(product))
+                    return 0, ""
+            raise AssertionError("unexpected install command: " + command)
+
+        session = Mock(run=Mock(side_effect=run))
+        ui.ask.side_effect = ask
+        confirm = tgdep_terminal.Terminal.confirm
+        ui.confirm.side_effect = lambda prompt: confirm(ui, prompt)
+        ui.private.side_effect = lambda label, value: print(label + "：" + ("〔已遮盖〕" if value == password else value))
+
+        def request_status(selected, address, path, _method):
+            self.assertEqual((selected, address), (product, IP))
+            self.assertIn(lan.container_name(product), containers)
+            return (200 if path == "/" else 403), product.key
+
+        host = tgdep_install.architecture.NativeHost("amd64", "x86_64", "Ubuntu 24.04 LTS")
+
+        def describe(_session, *, log=None):
+            if log is not None:
+                host.describe(log)
+
+        with ExitStack() as stack:
+            stack.enter_context(redirect_stdout(output))
+            stack.enter_context(patch.dict(PRODUCTS, {product.key: product}))
+            for target, names in (
+                (management.preflight, ("validate_host",)),
+                (management.uninstall, ("validate_environment",)),
+                (tgdep_install.architecture, ("check_docker", "check_image", "ensure_image")),
+                (tgdep_instances, ("check_foreign_gateway",)),
+                (lan, ("check_port",)),
+                (runtime, ("check_destination",)),
+                (commands.signal, ("signal",)),
+            ):
+                for name in names:
+                    stack.enter_context(patch.object(target, name))
+            for target, values in (
+                (management, {"LocalSession": session}),
+                (tgdep_terminal, {"Terminal": ui}),
+                (tgdep_preflight, {"probe_resources": resources}),
+                (runtime, {"lifecycle_lock": nullcontext(), "install_release": {
+                    "version": product.app_version, "matches": True, "state": "ok",
+                }}),
+                (lan, {"LocalSession": session, "edition_lock": nullcontext(), "validate_local_ip": IP}),
+            ):
+                for name, value in values.items():
+                    stack.enter_context(patch.object(target, name, return_value=value))
+            for target, name, effect in (
+                (tgdep_instances, "discover", lambda *_args, **_kwargs: deployed),
+                (tgdep_instances, "docker_inventory", lambda _session: set(containers)),
+                (lan, "load_state", lambda _product: lan_state),
+                (lan, "save_state", save_state),
+                (lan, "validate_environment", describe),
+                (lan, "request_status", request_status),
+            ):
+                stack.enter_context(patch.object(target, name, side_effect=effect))
+            stack.enter_context(patch.object(lan, "HTTPS_STATE", directory.parent / "unused-https.json"))
+            with patch("tgcloud.deployment.proxy.external_entry.apply_payload_network") as external_network:
+                self.assertEqual(commands.main(["lan"]), 0, output.getvalue())
+                external_network.assert_not_called()
+            self.assertEqual(commands.main([]), 0, output.getvalue())
+
+        self.assertEqual(events, ["confirmed", "base", "ready", "config --quiet", "pull lan",
+                                  "run --rm --no-deps lan -t", "up -d lan", "webdav"])
+        self.assertEqual(local_source.verify_installed(directory)["state"], "ready")
+        return output.getvalue()
+
+    def test_confirmed_fresh_lan_install_reaches_healthy_bot_and_management_menu(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            text = self.run_installation(Path(temporary).resolve() / "tgcloud")
+        for expected in (
+            "安装状态：未安装",
+            "构建并启动 TGCloud Bot",
+            "Bot 基础健康：通过",
+            "TGCloud 内网管理页：http://" + IP + ":19798",
+            "本机内网入口：通过",
+            "WebDAV 写入与大小复验：通过",
+            "安装状态：已安装\nBot 状态：运行中",
+            "16. 监听转存管理",
+            "Bot 健康：通过（容器检查）",
+            "入口检查：本机通过",
+        ):
+            self.assertIn(expected, text)
+        self.assertNotIn("本次操作未完成", text)
+        self.assertNotIn("FAKE_LAN_INSTALL_", text)
 
 
 class MainBootstrapTests(unittest.TestCase):
