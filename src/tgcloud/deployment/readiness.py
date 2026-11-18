@@ -214,8 +214,9 @@ def check(instance, session, log) -> bool:
         log("业务就绪未核实：运行中的 Bot 可能未支持本协议，或返回不完整；请核对版本与运行日志，不重启／重装。")
         return False
     checks = report["checks"]
-    for key, label in LABELS.items():
-        log(label + "：" + STATES[checks[key]])
+    from tgcloud.cli.presentation import status_rows
+    for line in status_rows(((label, STATES[checks[key]]) for key, label in LABELS.items()), indent=""):
+        log(line)
     log(listener_line(report.get("listener")))
     for line in admission_lines(report.get("admission")):
         log(line)

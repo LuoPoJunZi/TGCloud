@@ -55,6 +55,8 @@ def choose_storage(instance: instances.Instance, session: LocalSession, log: Saf
     log(f"CPU {resources.cpu_cores} 核；内存 {resources.memory_total_bytes / GIB:.1f}GB；可用 {resources.memory_available_bytes / GIB:.1f}GB")
     if resources.docker_root_detected and not resources.docker_same_filesystem:
         log(f"Docker 使用独立文件系统，可用 {resources.docker_storage_available_bytes / GIB:.1f}GB；与安装目录分别校验")
+    log("性能档位：" + advice.performance_profile)
+    log("以下预算与保留空间由本次资源探测计算，执行前会再次校验。")
     log("任务预算是暂存额度，不是磁盘分区，也不限制网关全部缓存。")
     plans = {"1": advice.stream_first, "2": advice.balanced}
     for key, plan in plans.items():
@@ -73,8 +75,9 @@ def choose_storage(instance: instances.Instance, session: LocalSession, log: Saf
     while True:
         selected = ui.ask("存储方案", default=default, validate=choice)
         if selected == "3":
-            budget = ui.ask("本地任务预算 GB", default="20", validate=configuration.size_gb)
-            reserve = ui.ask("磁盘最少保留 GB", default="8", validate=configuration.size_gb)
+            suggested = advice.preferred
+            budget = ui.ask("本地任务预算 GB", default=str(suggested.budget_gb) if suggested else "", validate=configuration.size_gb)
+            reserve = ui.ask("磁盘最少保留 GB", default=str(suggested.reserve_gb) if suggested else "", validate=configuration.size_gb)
         else:
             plan = plans[selected]
             if not plan.safe:

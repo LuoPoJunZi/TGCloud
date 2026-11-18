@@ -270,7 +270,7 @@ class RepositoryContractTests(unittest.TestCase):
 
     def test_consistency_checks_run_when_source_version_or_docs_change(self):
         docs = (ROOT / ".github/workflows/docs.yml").read_text(encoding="utf-8")
-        for path in ("docs/**", "THIRD_PARTY_NOTICES.md", "README.md", "README_EN.md", "CHANGELOG.md", "src/tgcloud/version.py"):
+        for path in ("docs/**", "LICENSE", "README.md", "README_EN.md", "CHANGELOG.md", "src/tgcloud/version.py"):
             self.assertEqual(docs.count(f'"{path}"'), 2, path)
         self.assertIn("-p test_repository.py", docs)
 
@@ -326,14 +326,14 @@ class UserDocumentationTests(unittest.TestCase):
         self.assertEqual(versions, sorted(versions, key=lambda value: tuple(map(int, value.split("."))), reverse=True))
         self.assertNotRegex(text, r"TG2Cloud|原项目|历史档案|迁移")
 
-    def test_product_docs_stand_alone_and_preserve_separate_legal_notices(self):
+    def test_product_docs_stand_alone_and_preserve_license_and_attribution(self):
         for name in self.GUIDES:
             text = (ROOT / name).read_text(encoding="utf-8")
             with self.subTest(document=name):
                 self.assertNotRegex(text, r"TG2Cloud|原项目|旧项目|历史档案|历史归档|精简版|UnsupportedGateway")
                 self.assertNotRegex(text, r"https://[^)\s]+/releases/download/[^)\s]+\.exe")
         self.assertIn("TG115 Contributors", (ROOT / "LICENSE").read_text(encoding="utf-8"))
-        self.assertIn("whyhhh20/TG115", (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8"))
+        self.assertIn("whyhhh20/TG115", (ROOT / "README.md").read_text(encoding="utf-8"))
 
     def test_product_tree_has_no_retired_documentation_directories(self):
         for name in ("archive", "legacy", "history", "old-docs"):
@@ -492,7 +492,7 @@ class PublicFileTests(unittest.TestCase):
             "src/tgcloud/deployment/profiles.py", "install.sh", "tests/test_repository.py", ".github/workflows/release.yml",
             ".github/CONTRIBUTING.md", ".github/SECURITY.md", "packaging/Dockerfile",
             "docs/填写信息清单.md", "docs/configuration-guide.md", "docs/development.md",
-            "LICENSE", "THIRD_PARTY_NOTICES.md", "packaging/hooks/clouddrive2/.env.example",
+            "LICENSE", "packaging/hooks/clouddrive2/.env.example",
         ):
             with self.subTest(name=name):
                 self.assertIsNone(repository.forbidden_reason(name))
@@ -563,10 +563,10 @@ class RepositoryGuardrailTests(unittest.TestCase):
     def test_missing_payload_and_excluded_legal_notice_are_reported(self):
         files = self.build_fixture()
         (self.root / "packaging/compose/docker-compose.clouddrive2.yml").unlink()
-        files.remove("THIRD_PARTY_NOTICES.md")
+        files.remove("LICENSE")
         errors = repository.check_build_inputs(self.root, files)
         self.assertTrue(any("packaging/compose/docker-compose.clouddrive2.yml: required build input missing" in error for error in errors))
-        self.assertTrue(any("THIRD_PARTY_NOTICES.md: required build input excluded" in error for error in errors))
+        self.assertTrue(any("LICENSE: required build input excluded" in error for error in errors))
 
     def test_directory_cannot_replace_build_file(self):
         files = self.build_fixture()

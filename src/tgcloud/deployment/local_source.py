@@ -18,6 +18,7 @@ OWNER = "tgcloud.local-source"
 MAX_FILE = 2 * 1024**2
 MAX_TOTAL = 32 * 1024**2
 MAX_FILES = 1000
+LEGACY_NOTICE = "THIRD_PARTY_NOTICES.md"
 SHA = re.compile(r"[0-9a-f]{64}")
 
 
@@ -83,12 +84,15 @@ def content(root: Path) -> dict[str, bytes]:
                      "packaging/bootstrap-manifest.json"))
     if (root / "NOTICE").exists():
         selected.add("NOTICE")
+    # Older deployment manifests include this file in their source fingerprint.
+    version = source_version(root)
+    if version in {"0.0.1", "0.0.2"} and (root / LEGACY_NOTICE).exists():
+        selected.add(LEGACY_NOTICE)
     if len(selected) > MAX_FILES:
         raise ValueError("源码文件数超过安全上限")
     result = {name: regular_bytes(root / name) for name in sorted(selected)}
     if sum(map(len, result.values())) > MAX_TOTAL:
         raise ValueError("源码大小超过安全上限")
-    source_version(root)
     return result
 
 
@@ -134,8 +138,9 @@ def _relative(name: str) -> None:
 
 
 def _managed(name: str) -> bool:
+    # Recognize recorded program files from existing TGCloud instances during upgrade.
     return (name.startswith("app/") and name.endswith(".py") or name in {
-        ".dockerignore", "Dockerfile", "docker-compose.yml", "requirements.txt", "LICENSE", "NOTICE", "README.md", "THIRD_PARTY_NOTICES.md",
+        ".dockerignore", "Dockerfile", "docker-compose.yml", "requirements.txt", "LICENSE", "NOTICE", "README.md", LEGACY_NOTICE,
         "backup_retention.sh", "preserve_runtime_config.sh", "repair_clouddrive_network.sh", "manage.sh", "remote_install.sh",
     })
 

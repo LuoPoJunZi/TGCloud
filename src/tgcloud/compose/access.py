@@ -6,6 +6,7 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
+from tgcloud.cli.presentation import terminal_text
 from tgcloud.deployment.profiles import PRODUCTS
 from tgcloud.deployment.proxy.state import validate_domain, validate_email
 
@@ -70,10 +71,10 @@ def choose_access(ui, edition: str, current: dict | None = None) -> dict:
         raise ValueError("未知实例")
     current = validate_access(current, edition) if current is not None else None
     selected = next((key for key, mode in MODES.items() if current and mode == current["mode"]), "1")
-    print("\n── 管理页访问方式 ──")
-    print("1. 本机或可信内网")
-    print("2. 自动配置 HTTPS")
-    print("3. 接入已有反向代理")
+    print(terminal_text("\n── 管理页访问方式 ──"))
+    print(terminal_text("1. 本机或可信内网"))
+    print(terminal_text("2. 自动配置 HTTPS"))
+    print(terminal_text("3. 接入已有反向代理"))
 
     def selection(value):
         if value not in MODES:
@@ -86,16 +87,16 @@ def choose_access(ui, edition: str, current: dict | None = None) -> dict:
         domain = ui.ask("管理页域名（只填域名）", default=current["domain"] if current else "", validate=validate_domain)
         if mode == "managed":
             email = ui.ask("Let's Encrypt 邮箱（可留空）", default=current["email"] if current else "", validate=validate_email)
-        print("管理端口保持 127.0.0.1；本步只保存计划，尚未配置反代或签发证书。")
-        print("自动 HTTPS 使用共享 Nginx＋Certbot；已有代理只生成接入配置，不自动修改原站点。")
+        print(terminal_text("管理端口保持 127.0.0.1；本步只保存计划，尚未配置反代或签发证书。"))
+        print(terminal_text("自动 HTTPS 使用共享 Nginx＋Certbot；已有代理只生成接入配置，不自动修改原站点。"))
     return validate_access({"format": 1, "owner": OWNER, "edition": edition, "mode": mode,
                             "domain": domain, "email": email}, edition)
 
 
 def next_steps(plan: dict) -> None:
-    print("管理入口方案：" + LABELS[plan["mode"]])
+    print(terminal_text("管理入口方案：" + LABELS[plan["mode"]]))
     if plan["mode"] != "local":
-        print("网关启动并完成后台设置后，在宿主机部署目录运行：bash https.sh")
-        print("HTTPS 向导需要宿主机 Python 3.10+ 和本机 Docker；不向初始化容器挂载 Docker Socket。")
+        print(terminal_text("网关启动并完成后台设置后，在宿主机部署目录运行：bash https.sh"))
+        print(terminal_text("HTTPS 向导需要宿主机 Python 3.10+ 和本机 Docker；不向初始化容器挂载 Docker Socket。"))
         if plan["mode"] == "external":
-            print("已有代理的网络、证书及接入需按导出计划确认；未完成前不显示 HTTPS 已启用。")
+            print(terminal_text("已有代理的网络、证书及接入需按导出计划确认；未完成前不显示 HTTPS 已启用。"))

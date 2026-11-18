@@ -421,9 +421,9 @@ class ManagementTests(unittest.TestCase):
             self.assertEqual(self.manager.run(), 0)
         text = "\n".join(self.messages)
         self.assertEqual(text.count("── TGCloud 本地管理 ──"), 1)
-        self.assertLess(text.index("── TGCloud 本地管理 ──"), text.index("TGCloud · 版本 1.3.1"))
+        self.assertLess(text.index("── TGCloud 本地管理 ──"), text.index("Bot 状态：运行中"))
         self.assertLess(text.index("安装目录："), text.index("1.  安装与升级"))
-        expected = ("\n── TGCloud 本地管理 ──\n\nTGCloud · 版本 1.3.1 · Bot 运行中\n"
+        expected = ("\n── TGCloud 本地管理 ──\n\n安装状态：已安装\nBot 状态：运行中\n"
                     + f"安装目录：{self.instance.directory}\n管理工具（当前进程）：v{VERSION}\n\n" + management.MENU)
         self.assertEqual(text, expected)
 

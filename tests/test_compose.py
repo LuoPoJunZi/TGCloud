@@ -65,7 +65,7 @@ class ComposeTests(unittest.TestCase):
         return write_candidate(self.root / "clouddrive2")
 
     def initialize(self, path, ui=None):
-        with patch.object(runtime.shutil, "disk_usage", return_value=NS(free=100 * 1024**3)), patch.object(runtime.os, "chown", create=True):
+        with patch.object(runtime.shutil, "disk_usage", return_value=NS(total=200 * 1024**3, free=100 * 1024**3)), patch.object(runtime.os, "chown", create=True):
             return runtime.setup(path, ui or UI())
 
     def test_cd2_keeps_native_gateway_bot_security_and_isolated_local_context(self):
@@ -149,7 +149,7 @@ class ComposeTests(unittest.TestCase):
 
     def test_disk_pressure_rejects_before_any_private_file(self):
         path = self.candidate()
-        with patch.object(runtime.shutil, "disk_usage", return_value=NS(free=1)), self.assertRaises(ValueError):
+        with patch.object(runtime.shutil, "disk_usage", return_value=NS(total=200 * 1024**3, free=1)), self.assertRaises(ValueError):
             runtime.setup(path, UI())
         self.assertFalse((path / ".env").exists())
 

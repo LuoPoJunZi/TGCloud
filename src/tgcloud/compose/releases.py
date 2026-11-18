@@ -12,7 +12,8 @@ from tgcloud.compose import packaging
 from tgcloud.deployment import local_source
 
 PUBLIC_DIRS = {"build-context", "https-tools", "local-source"}
-PUBLIC_FILES = {"docker-compose.yml", "compose-bundle.json", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", ".env.example", "https.sh", "manage.sh"}
+# Optional names also recognize recorded files in existing TGCloud deployment roots.
+PUBLIC_FILES = {"docker-compose.yml", "compose-bundle.json", "README.md", "LICENSE", local_source.LEGACY_NOTICE, ".env.example", "https.sh", "manage.sh"}
 PRIVATE_DIRS = {"data", "downloads", "logs", "config", "clouddrive", "backups"}
 PRIVATE_FILES = {".env", "tgcloud-compose.json", "compose-access.json", ".compose-upgrade.json", ".tgcloud-compose.lock"}
 RESOURCES = {"packaging/compose/docker-compose.clouddrive2.yml", "packaging/compose-https.sh",

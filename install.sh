@@ -27,7 +27,7 @@ fi
 
 # TGCloud online bootstrap.
 if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then
-  printf 'TGCloud 在线安装入口\n用法：bash install.sh [--lan] [向导参数]\n自动下载并校验 v0.0.2 正式源码；--lan 使用可信内网向导。\n请先 sudo -i 进入 root 终端。不会安装 Git 或 Python 依赖。\n'
+  printf 'TGCloud 在线安装入口\n用法：bash install.sh [--lan] [向导参数]\n自动下载并校验 v0.0.3 正式源码；--lan 使用可信内网向导。\n请先 sudo -i 进入 root 终端。不会安装 Git 或 Python 依赖。\n'
   exit 0
 fi
 if [[ "$(id -u)" != 0 ]]; then
@@ -41,7 +41,7 @@ for tgcloud_tool in curl mktemp; do
   }
 done
 
-tgcloud_tag=v0.0.2
+tgcloud_tag=v0.0.3
 tgcloud_command=install
 if [[ "${1:-}" == --lan ]]; then
   tgcloud_command=lan
@@ -106,7 +106,7 @@ try:
                 with bundle.extractfile(member) as reader, target.open("xb") as writer:
                     shutil.copyfileobj(reader, writer)
                 target.chmod(0o600)
-    for required in ("scripts/run_source.py", "src/tgcloud/cli/commands.py", "LICENSE", "THIRD_PARTY_NOTICES.md"):
+    for required in ("scripts/run_source.py", "src/tgcloud/cli/commands.py", "LICENSE"):
         if not (root / required).is_file():
             raise ValueError("源码包不完整")
     module = ast.parse((root / "src/tgcloud/version.py").read_text(encoding="utf-8"))

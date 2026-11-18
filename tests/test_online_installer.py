@@ -42,7 +42,6 @@ class OnlineInstallerTests(unittest.TestCase):
             "src/tgcloud/cli/commands.py": b"# synthetic fixture only\n",
             "src/tgcloud/version.py": ("VERSION = " + repr(version) + "\n").encode(),
             "LICENSE": b"synthetic test license\n",
-            "THIRD_PARTY_NOTICES.md": b"synthetic test attribution\n",
         }
         with tarfile.open(self.downloads / ASSET, "w:gz") as bundle:
             for name, body in bodies.items():

@@ -27,7 +27,7 @@ BUILD_FILES = (
     "src/tgcloud/addons/external_webdav/service.py",
     "packaging/bootstrap-manifest.json", "packaging/runtime-manifest.json",
     ".github/scripts/build_payload.py", ".github/scripts/prepare_bootstrap.py", ".github/scripts/lock_dependencies.py",
-    "LICENSE", "THIRD_PARTY_NOTICES.md", ".github/CONTRIBUTING.md", ".github/SECURITY.md",
+    "LICENSE", ".github/CONTRIBUTING.md", ".github/SECURITY.md",
 )
 LOCAL_DIRECTORIES = frozenset({
     "build", "dist", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache",

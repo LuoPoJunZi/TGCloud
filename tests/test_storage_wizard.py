@@ -53,8 +53,37 @@ class StorageWizardTests(unittest.TestCase):
         self.assertIn("（推荐）", "\n".join(self.messages))
 
     def test_large_disk_prefers_balanced(self):
-        self.assertEqual(self.choose(resources(storage_total_bytes=200 * GIB, storage_available_bytes=180 * GIB)), ("20", "20"))
+        self.assertEqual(self.choose(resources(storage_total_bytes=200 * GIB, storage_available_bytes=180 * GIB)), ("80", "40"))
         self.assertEqual(self.ui.ask.call_args.kwargs["default"], "2")
+
+    def test_recommendations_scale_with_measured_capacity_and_free_space(self):
+        cases = ((40, 35, 5, 12, 8), (100, 90, 16, 38, 20),
+                 (200, 180, 33, 80, 40), (500, 450, 86, 206, 100))
+        for total, free, stream, balanced, reserve in cases:
+            with self.subTest(total=total, free=free):
+                advice = recommend_storage(resources(storage_total_bytes=total * GIB,
+                    storage_available_bytes=free * GIB), **tgdep_preflight.storage_options(self.product))
+                self.assertEqual((advice.stream_first.budget_gb, advice.balanced.budget_gb,
+                                  advice.balanced.reserve_gb), (stream, balanced, reserve))
+                self.assertTrue(advice.stream_first.safe)
+                self.assertTrue(advice.balanced.safe)
+        less_free = recommend_storage(resources(storage_total_bytes=200 * GIB,
+            storage_available_bytes=90 * GIB), **tgdep_preflight.storage_options(self.product))
+        self.assertEqual((less_free.stream_first.budget_gb, less_free.balanced.budget_gb), (11, 26))
+
+    def test_cpu_or_live_memory_pressure_changes_default_to_stream_first(self):
+        large = resources(storage_total_bytes=200 * GIB, storage_available_bytes=180 * GIB)
+        self.assertEqual(self.choose(large), ("80", "40"))
+        for sample in (replace(large, cpu_cores=1), replace(large, memory_available_bytes=GIB // 2)):
+            with self.subTest(sample=sample):
+                self.assertEqual(self.choose(sample), ("33", "40"))
+                self.assertEqual(self.ui.ask.call_args.kwargs["default"], "1")
+
+    def test_manual_entry_defaults_use_actual_recommendation(self):
+        self.ui.ask.side_effect = lambda prompt, **kwargs: "3" if prompt == "存储方案" else kwargs["default"]
+        self.assertEqual(self.choose(resources(storage_total_bytes=200 * GIB,
+                                              storage_available_bytes=180 * GIB)), ("80", "40"))
+        self.assertEqual([call.kwargs["default"] for call in self.ui.ask.call_args_list], ["2", "80", "40"])
 
     def test_manual_valid_values_preserve_decimals(self):
         self.ui.ask.side_effect = ["3", "6.5", "8.5"]
@@ -72,7 +101,7 @@ class StorageWizardTests(unittest.TestCase):
     def test_invalid_manual_values_can_be_reselected(self):
         self.ui.ask.side_effect = ["3", "100", "8", "1"]
         self.ui.confirm.return_value = True
-        self.assertEqual(self.choose(resources()), ("8", "8"))
+        self.assertEqual(self.choose(resources()), ("5", "8"))
 
     def test_independent_docker_full_disk_blocks_otherwise_safe_choice(self):
         self.ui.ask.side_effect = ["1"]
