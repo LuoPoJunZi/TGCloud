@@ -68,31 +68,17 @@ bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/inst
 一键脚本和独立 Compose 选择一种。先准备 Docker Engine、Compose v2、FUSE、Python 3.10+、curl、tar 和 sha256sum，在 Linux root 终端执行：
 
 ```bash
-tgcloud_download_dir="$(mktemp -d)" &&
-tgcloud_tag="$(
-  curl -fsSL https://api.github.com/repos/LuoPoJunZi/TGCloud/releases/latest |
-    python3 -c 'import json, re, sys
-release = json.load(sys.stdin)
-tag = release["tag_name"]
-if release.get("draft") or release.get("prerelease") or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
-    raise SystemExit("Invalid stable release tag")
-print(tag)'
-)" &&
-curl -fL -o "$tgcloud_download_dir/TGCloud-${tgcloud_tag}-compose.tar.gz" \
-  "https://github.com/LuoPoJunZi/TGCloud/releases/download/${tgcloud_tag}/TGCloud-${tgcloud_tag}-compose.tar.gz" &&
-curl -fL -o "$tgcloud_download_dir/COMPOSE-SHA256SUMS.txt" \
-  "https://github.com/LuoPoJunZi/TGCloud/releases/download/${tgcloud_tag}/COMPOSE-SHA256SUMS.txt" &&
-(cd "$tgcloud_download_dir" && sha256sum -c COMPOSE-SHA256SUMS.txt) &&
-mkdir -m 700 /root/TGCloud-Compose &&
-tar --no-same-owner -xzf "$tgcloud_download_dir/TGCloud-${tgcloud_tag}-compose.tar.gz" \
-  --strip-components=1 -C /root/TGCloud-Compose &&
-rm -f -- "$tgcloud_download_dir/TGCloud-${tgcloud_tag}-compose.tar.gz" "$tgcloud_download_dir/COMPOSE-SHA256SUMS.txt" &&
-rmdir -- "$tgcloud_download_dir" &&
-cd /root/TGCloud-Compose &&
-bash manage.sh
+mkdir -m 700 /root/TGCloud-Compose && \
+cd /root/TGCloud-Compose && \
+curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.6/TGCloud-v0.0.6-compose.tar.gz && \
+curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.6/COMPOSE-SHA256SUMS.txt && \
+sha256sum -c COMPOSE-SHA256SUMS.txt && \
+tar --no-same-owner -xzf TGCloud-v0.0.6-compose.tar.gz --strip-components=1
 ```
 
-命令查询最新正式发行版，并按同一标签下载部署包和 SHA256 校验文件。部署目录固定为 `/root/TGCloud-Compose`，首次运行前须尚不存在；安装文件直接位于该目录，不再增加 `deployment/` 子目录。
+命令下载 `v0.0.6` 正式部署包和对应的 SHA256 校验文件。部署目录固定为 `/root/TGCloud-Compose`，首次运行前须尚不存在；安装文件直接位于该目录，不再增加 `deployment/` 子目录。
+
+解压成功后，在同一目录运行 `bash manage.sh` 进入初始化菜单。
 
 首次运行 `manage.sh` 后，按顺序完成：初始化配置 → 启动网关 → 在后台挂载云存储并配置专用 WebDAV 用户 → 启动 Bot → 验收转存。Compose 初始化的预算默认值按部署磁盘计算，不代替完整宿主资源检查。
 
