@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 TAG = re.compile(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:alpha|beta|rc)\.[1-9][0-9]*)?")
 LIMIT = 100 * 1024 * 1024
 MODERN_REQUIRED = {
-    "install.sh", "install-lan.sh", "LICENSE", "pyproject.toml",
+    "install.sh", "LICENSE", "pyproject.toml",
     "scripts/run_source.py", "src/tgcloud/__init__.py", "src/tgcloud/version.py",
     "src/tgcloud/app.py", "src/tgcloud/deployment/profiles.py",
     "src/tgcloud/deployment/fingerprints.py", "src/tgcloud/cli/commands.py",
@@ -84,21 +84,17 @@ def validate_pins(root: Path, commit: str) -> None:
         raise ValueError("source archive missing required TGCloud inputs")
     manifest_files(git(root, "show", f"{commit}:packaging/bootstrap-manifest.json"), helpers_in_tree(files))
     unified_layout(git(root, "show", f"{commit}:packaging/external-webdav.json"), has_addon=True)
-    for name, command in (("install.sh", "install"), ("install-lan.sh", "lan")):
-        text = git(root, "show", f"{commit}:{name}").decode("utf-8")
-        expected = 'exec python3 -B "$script_root/scripts/run_source.py" ' + command + ' "$@"'
-        local, separator, online = text.partition("# TGCloud online bootstrap.")
-        # A complete source tree must dispatch locally without any downloads.
-        # The standalone fallback may fetch only this project's stable assets.
-        online_valid = not separator or (
-            name == "install.sh"
-            and re.findall(r"https?://[^\s\"']+", online) == [
+    text = git(root, "show", f"{commit}:install.sh").decode("utf-8")
+    local, separator, online = text.partition("# TGCloud online bootstrap.")
+    dispatches = ('exec python3 -B "$script_root/scripts/run_source.py" ' + command + ' "$@"'
+                  for command in ("install", "lan"))
+    # Validate both local modes and restrict the fallback to TGCloud release assets.
+    if (not all(dispatch in local for dispatch in dispatches) or not separator
+            or re.findall(r"https?://[^\s\"']+", online) != [
                 "https://github.com/LuoPoJunZi/TGCloud/releases/download/${tgcloud_tag}"]
-            and len(re.findall(r"(?m)^curl -fL ", online)) == 2
-        )
-        if (expected not in local or not online_valid
-                or any(item in local for item in ("installer_commit", "https://", "http://", "curl", "wget"))):
-            raise ValueError("invalid local-source Linux entry")
+            or len(re.findall(r"(?m)^curl -fL ", online)) != 2
+            or any(item in local for item in ("installer_commit", "https://", "http://", "curl", "wget"))):
+        raise ValueError("invalid local-source Linux entry: install.sh")
 
 
 def safe_path(name: str) -> bool:

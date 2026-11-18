@@ -843,21 +843,20 @@ class EntryAndReleaseTests(unittest.TestCase):
 
     def test_main_installers_and_bot_do_not_opt_in(self):
         block = re.compile(r"<<'PY'[^\n]*\n(.*?)^PY\s*$", re.MULTILINE | re.DOTALL)
-        for name in ("install.sh", "install-lan.sh"):
-            source = (ROOT / name).read_text(encoding="utf-8")
-            self.assertNotIn("external_webdav", block.sub("", source))
-            self.assertNotIn("install-webdav.sh", source)
-            self.assertNotIn("tgcloud-webdav", source)
-            for embedded in block.findall(source):
-                tree = ast.parse(embedded)
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "files" for target in node.targets):
-                        # Downloading shared compatibility modules is not an
-                        # activation. Exclude only the literal file allowlist,
-                        # never executable statements or imports, from this guard.
-                        self.assertTrue(all(isinstance(path, str) for path in ast.literal_eval(node.value)))
-                        node.value = ast.Tuple(elts=[], ctx=ast.Load())
-                self.assertNotIn("external_webdav", ast.unparse(tree))
+        source = (ROOT / "install.sh").read_text(encoding="utf-8")
+        self.assertNotIn("external_webdav", block.sub("", source))
+        self.assertNotIn("install-webdav.sh", source)
+        self.assertNotIn("tgcloud-webdav", source)
+        for embedded in block.findall(source):
+            tree = ast.parse(embedded)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "files" for target in node.targets):
+                    # Downloading shared compatibility modules is not an
+                    # activation. Exclude only the literal file allowlist,
+                    # never executable statements or imports, from this guard.
+                    self.assertTrue(all(isinstance(path, str) for path in ast.literal_eval(node.value)))
+                    node.value = ast.Tuple(elts=[], ctx=ast.Load())
+            self.assertNotIn("external_webdav", ast.unparse(tree))
         for name in ("src/tgcloud/cli/vps.py", "src/tgcloud/app.py"):
             self.assertNotIn("external_webdav", (ROOT / name).read_text(encoding="utf-8"))
 

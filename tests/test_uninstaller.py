@@ -856,12 +856,11 @@ class EntryTests(unittest.TestCase):
             self.assertNotIn(forbidden, source)
         self.assertNotIn("PySide6", source)
         self.assertFalse((ROOT / "uninstall.sh").exists())
-        for name in ("install.sh", "install-lan.sh"):
-            bootstrap = (ROOT / name).read_text(encoding="utf-8")
-            self.assertNotIn("installer_commit", bootstrap)
-            self.assertIn("scripts/run_source.py", bootstrap)
-            self.assertNotIn("curl", bootstrap.partition("# TGCloud online bootstrap.")[0])
-            self.assertNotIn("packaging/hooks/unsupported/remote_install.sh", bootstrap)
+        bootstrap = (ROOT / "install.sh").read_text(encoding="utf-8")
+        self.assertNotIn("installer_commit", bootstrap)
+        self.assertIn("scripts/run_source.py", bootstrap)
+        self.assertNotIn("curl", bootstrap.partition("# TGCloud online bootstrap.")[0])
+        self.assertNotIn("packaging/hooks/unsupported/remote_install.sh", bootstrap)
 
     def test_unified_dispatch_retains_all_edition_cleanup_and_preview_flags(self):
         from tgcloud.cli import commands

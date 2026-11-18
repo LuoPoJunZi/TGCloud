@@ -26,30 +26,22 @@ def source_version(root: Path) -> str:
     return values[0]
 
 
-def linux_entry_names(root: Path) -> tuple[str, ...]:
+def linux_entry(root: Path) -> None:
     value = json.loads((root / "packaging/external-webdav.json").read_text(encoding="utf-8"))
     if value != {"api": 2, "proxy_schema": 2, "owner": "tgcloud.external_webdav"}:
         raise ValueError("unsupported TGCloud external WebDAV contract")
-    return ("install.sh", "install-lan.sh")
 
-
-def linux_entries(root: Path, version: str) -> None:
-    for name in linux_entry_names(root):
-        text = (root / name).read_text(encoding="utf-8")
-        command = "lan" if name == "install-lan.sh" else "install"
-        expected = 'exec python3 -B "$script_root/scripts/run_source.py" ' + command + ' "$@"'
-        local, separator, online = text.partition("# TGCloud online bootstrap.")
-        # A complete source tree must dispatch locally without any downloads.
-        # The standalone fallback may fetch only this project's stable assets.
-        online_valid = not separator or (
-            name == "install.sh"
-            and re.findall(r"https?://[^\s\"']+", online) == [
+    text = (root / "install.sh").read_text(encoding="utf-8")
+    local, separator, online = text.partition("# TGCloud online bootstrap.")
+    dispatches = ('exec python3 -B "$script_root/scripts/run_source.py" ' + command + ' "$@"'
+                  for command in ("install", "lan"))
+    # Validate both local modes and restrict the fallback to TGCloud release assets.
+    if (not all(dispatch in local for dispatch in dispatches) or not separator
+            or re.findall(r"https?://[^\s\"']+", online) != [
                 "https://github.com/LuoPoJunZi/TGCloud/releases/download/${tgcloud_tag}"]
-            and len(re.findall(r"(?m)^curl -fL ", online)) == 2
-        )
-        if (expected not in local or not online_valid
-                or any(item in local for item in ("installer_commit", "https://", "http://", "curl", "wget"))):
-            raise ValueError("invalid local-source Linux entry: " + name)
+            or len(re.findall(r"(?m)^curl -fL ", online)) != 2
+            or any(item in local for item in ("installer_commit", "https://", "http://", "curl", "wget"))):
+        raise ValueError("invalid local-source Linux entry: install.sh")
 
 
 def release_metadata(root: Path, tag: str) -> dict[str, str]:
@@ -64,7 +56,7 @@ def release_metadata(root: Path, tag: str) -> dict[str, str]:
     versions = re.findall(rf"TGCloud (v{CORE}(?:-(?:alpha|beta|rc)\.[1-9][0-9]*)?)", notes)
     if not versions or versions[0] != tag:
         raise ValueError("Release Notes identity must match the exact release tag")
-    linux_entries(root, version)
+    linux_entry(root)
     title = f"TGCloud v{version}"
     if match[2]:
         title += f" {match[2].upper()}{match[3]}"

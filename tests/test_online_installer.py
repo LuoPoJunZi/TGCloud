@@ -156,13 +156,15 @@ cp "$TGCLOUD_FIXTURE_DOWNLOADS/${url##*/}" "$output"
         return result
 
     def test_standalone_lan_forwards_terminal_arguments_and_exit_code(self):
-        result = self.launch("--lan", "--check", "space value")
+        result = self.launch("--lan", "--check", "space value", stream_entry=True)
         self.assertEqual(result.returncode, 7, result.stderr)
         record = json.loads(next(line.split("=", 1)[1] for line in result.stdout.splitlines()
                                  if line.startswith("FIXTURE_WIZARD=")))
         self.assertEqual(record, {"args": ["lan", "--check", "space value"], "stdin": "terminal answer\n"})
-        self.assertTrue(all("/releases/download/" + TAG + "/" in url
-                            for url in (self.root / "urls").read_text().splitlines()))
+        urls = (self.root / "urls").read_text().splitlines()
+        self.assertEqual(urls[0], "https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh")
+        self.assertEqual(len(urls), 3)
+        self.assertTrue(all("/releases/download/" + TAG + "/" in url for url in urls[1:]))
 
     def test_failed_download_never_opens_wizard(self):
         result = self.launch(failed_download=True)

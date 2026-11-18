@@ -330,7 +330,7 @@ class ReleaseMetadataTests(unittest.TestCase):
     def test_rc_requires_exact_notes_identity(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            for path in ("src/tgcloud/version.py", "CHANGELOG.md", "RELEASE_NOTES.md", "install.sh", "install-lan.sh", "packaging/external-webdav.json"):
+            for path in ("src/tgcloud/version.py", "CHANGELOG.md", "RELEASE_NOTES.md", "install.sh", "packaging/external-webdav.json"):
                 target = root / path
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes((ROOT / path).read_bytes())
@@ -345,7 +345,7 @@ class ReleaseMetadataTests(unittest.TestCase):
     def test_future_linux_version_does_not_require_any_desktop_files(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            for name in ("src/tgcloud/version.py", "CHANGELOG.md", "RELEASE_NOTES.md", "install.sh", "install-lan.sh", "packaging/external-webdav.json"):
+            for name in ("src/tgcloud/version.py", "CHANGELOG.md", "RELEASE_NOTES.md", "install.sh", "packaging/external-webdav.json"):
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes((ROOT / name).read_bytes())
@@ -361,19 +361,20 @@ class ReleaseMetadataTests(unittest.TestCase):
     def test_release_requires_local_dispatch_and_rejects_untrusted_downloads(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            for name in ("install.sh", "install-lan.sh", "packaging/external-webdav.json"):
+            for name in ("install.sh", "packaging/external-webdav.json"):
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes((ROOT / name).read_bytes())
-            release.linux_entries(root, RELEASE_VERSION)
+            release.linux_entry(root)
             entry = root / "install.sh"
             entry.write_text(entry.read_text() + "\ncurl https://example.invalid/installer\n")
             with self.assertRaisesRegex(ValueError, "local-source"):
-                release.linux_entries(root, RELEASE_VERSION)
+                release.linux_entry(root)
             entry.write_bytes((ROOT / "install.sh").read_bytes())
-            (root / "install-lan.sh").write_text('installer_commit=""\n', encoding="utf-8")
+            original = entry.read_text(encoding="utf-8")
+            entry.write_text(original.replace(' lan "$@"', ' install "$@"', 1), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "invalid local-source Linux entry"):
-                release.linux_entries(root, RELEASE_VERSION)
+                release.linux_entry(root)
 
     def test_workflow_uses_validated_tag_and_reuses_one_build(self):
         text = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")

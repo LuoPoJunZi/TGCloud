@@ -46,8 +46,9 @@ def host_source(directory):
     return source().origin
 
 
-def check_shell_entry(test, bash, script, command, arguments):
+def check_shell_entry(test, bash, command, arguments):
     """Execute the real local Shell entry with a recording child in a private tree."""
+    flags = ["--lan"] if command == "lan" else []
     def bash_path(path):
         value = path.as_posix()
         return "/" + value[0].lower() + value[2:] if os.name == "nt" else value
@@ -55,8 +56,8 @@ def check_shell_entry(test, bash, script, command, arguments):
     for exit_code in (0, 7):
         with tempfile.TemporaryDirectory(prefix="tgcloud-local-entry-") as private:
             root = Path(private).resolve()
-            target = root / script
-            target.write_bytes((ROOT / script).read_bytes())
+            target = root / "install.sh"
+            target.write_bytes((ROOT / "install.sh").read_bytes())
             source = root / "scripts/run_source.py"
             source.parent.mkdir()
             source.write_text("import json,os,sys\nprint(json.dumps({'args':sys.argv[1:],'stdin':sys.stdin.read()}))\nsys.exit(int(os.environ['FIXTURE_EXIT']))\n", encoding="utf-8")
@@ -68,15 +69,22 @@ def check_shell_entry(test, bash, script, command, arguments):
             wrapper = binaries / "python3"
             wrapper.write_text("#!/bin/sh\nexec " + shlex.quote(bash_path(Path(sys.executable))) + ' "$@"\n', encoding="utf-8", newline="\n")
             wrapper.chmod(0o755)
-            environment = dict(os.environ, PATH=str(binaries) + os.pathsep + os.environ.get("PATH", ""), FIXTURE_EXIT=str(exit_code))
-            result = subprocess.run([bash, bash_path(target), *arguments], cwd=root.parent,
+            curl = binaries / "curl"
+            curl.write_text('#!/bin/sh\nprintf "unexpected download\\n" > "$FIXTURE_CURL"\nexit 73\n',
+                            encoding="utf-8", newline="\n")
+            curl.chmod(0o755)
+            download = root / "curl-invoked"
+            environment = dict(os.environ, PATH=str(binaries) + os.pathsep + os.environ.get("PATH", ""),
+                               FIXTURE_EXIT=str(exit_code), FIXTURE_CURL=bash_path(download))
+            result = subprocess.run([bash, bash_path(target), *flags, *arguments], cwd=root.parent,
                                     input="synthetic stdin\n", text=True, capture_output=True,
                                     timeout=20, check=False, env=environment)
             test.assertEqual(result.returncode, exit_code, result.stderr)
             record = json.loads(result.stdout)
             test.assertEqual(record, {"args": [command, *arguments], "stdin": "synthetic stdin\n"})
             marker.unlink()
-            rejected = subprocess.run([bash, bash_path(target), *arguments], cwd=root.parent,
+            rejected = subprocess.run([bash, bash_path(target), *flags, *arguments], cwd=root.parent,
                                       text=True, capture_output=True, timeout=20, check=False, env=environment)
             test.assertEqual(rejected.returncode, 2, rejected.stderr)
+            test.assertFalse(download.exists())
             test.assertFalse((root / "data").exists())

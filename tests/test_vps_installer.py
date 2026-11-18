@@ -1181,7 +1181,7 @@ class LocalRuntimeTests(unittest.TestCase):
 
     def test_process_substitution_forwards_args_exit_and_cleans_bootstrap(self):
         from local_project_fixture import check_shell_entry
-        check_shell_entry(self, self.bash(), "install.sh", "install", ["--source-dir", "a directory with spaces", "--check"])
+        check_shell_entry(self, self.bash(), "install", ["--source-dir", "a directory with spaces", "--check"])
 
     def test_help_without_root_or_qt(self):
         import sys
