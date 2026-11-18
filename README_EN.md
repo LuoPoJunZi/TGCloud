@@ -33,31 +33,17 @@ Keep HTTP within the host or a trusted LAN. A complete local source tree still s
 Choose either managed script installation or standalone Compose. Prepare Docker Engine, Compose v2, FUSE, Python 3.10+, curl, tar and sha256sum. In a Linux root terminal:
 
 ```bash
-tgcloud_download_dir="$(mktemp -d)" &&
-tgcloud_tag="$(
-  curl -fsSL https://api.github.com/repos/LuoPoJunZi/TGCloud/releases/latest |
-    python3 -c 'import json, re, sys
-release = json.load(sys.stdin)
-tag = release["tag_name"]
-if release.get("draft") or release.get("prerelease") or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
-    raise SystemExit("Invalid stable release tag")
-print(tag)'
-)" &&
-curl -fL -o "$tgcloud_download_dir/TGCloud-${tgcloud_tag}-compose.tar.gz" \
-  "https://github.com/LuoPoJunZi/TGCloud/releases/download/${tgcloud_tag}/TGCloud-${tgcloud_tag}-compose.tar.gz" &&
-curl -fL -o "$tgcloud_download_dir/COMPOSE-SHA256SUMS.txt" \
-  "https://github.com/LuoPoJunZi/TGCloud/releases/download/${tgcloud_tag}/COMPOSE-SHA256SUMS.txt" &&
-(cd "$tgcloud_download_dir" && sha256sum -c COMPOSE-SHA256SUMS.txt) &&
-mkdir -m 700 /root/TGCloud-Compose &&
-tar --no-same-owner -xzf "$tgcloud_download_dir/TGCloud-${tgcloud_tag}-compose.tar.gz" \
-  --strip-components=1 -C /root/TGCloud-Compose &&
-rm -f -- "$tgcloud_download_dir/TGCloud-${tgcloud_tag}-compose.tar.gz" "$tgcloud_download_dir/COMPOSE-SHA256SUMS.txt" &&
-rmdir -- "$tgcloud_download_dir" &&
-cd /root/TGCloud-Compose &&
-bash manage.sh
+mkdir -m 700 /root/TGCloud-Compose && \
+cd /root/TGCloud-Compose && \
+curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.6/TGCloud-v0.0.6-compose.tar.gz && \
+curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.6/COMPOSE-SHA256SUMS.txt && \
+sha256sum -c COMPOSE-SHA256SUMS.txt && \
+tar --no-same-owner -xzf TGCloud-v0.0.6-compose.tar.gz --strip-components=1
 ```
 
-The `/root/TGCloud-Compose` directory must not already exist. The command resolves the latest stable GitHub release and downloads its matching archive and checksum file. Deployment files are extracted directly into `/root/TGCloud-Compose`.
+The `/root/TGCloud-Compose` directory must not already exist. These commands download the `v0.0.6` deployment archive and its SHA256 checksum file. Deployment files are extracted directly into `/root/TGCloud-Compose`.
+
+After extraction, run `bash manage.sh` from the same directory to open the setup menu.
 
 Initialize configuration, start the gateway, mount cloud storage and create the dedicated WebDAV account in CloudDrive2, then start and test the Bot. Disk defaults are calculated from the deployment volume; setup does not inspect host CPU, RAM or the Docker data filesystem. For later management:
 
