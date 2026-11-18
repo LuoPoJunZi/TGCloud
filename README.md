@@ -1,4 +1,4 @@
-# TGCloud
+<h1 align="center">TGCloud</h1>
 
 <p align="center"><strong>Telegram 文件自动转存 · CloudDrive2 · Linux 一键部署</strong></p>
 <p align="center">
