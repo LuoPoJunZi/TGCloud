@@ -2,19 +2,16 @@
 from __future__ import annotations
 
 import io
-import json
 import os
 import re
-import shlex
-import shutil
 import subprocess
-import sys
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from tests.fixtures import ROOT
+from tests.fixtures.shell import BASH
 from tgcloud.cli import management
 from tgcloud.cli.presentation import (
     InstallerLog,
@@ -190,68 +187,67 @@ class ComposeDownloadDocumentationTests(unittest.TestCase):
         for name in ("README.md", "README_EN.md", "docs/compose-guide.md"):
             text = (ROOT / name).read_text(encoding="utf-8")
             blocks = re.findall(r"```bash\n(.*?)\n```", text, re.DOTALL)
-            selected = [block for block in blocks if "api.github.com/repos/LuoPoJunZi/TGCloud/releases/latest" in block]
+            selected = [block for block in blocks
+                        if "github.com/LuoPoJunZi/TGCloud/releases/download/" in block
+                        and "COMPOSE-SHA256SUMS.txt" in block]
             self.assertEqual(len(selected), 1, name)
             self.assertIn("/root/TGCloud-Compose", selected[0])
             self.assertNotIn("TGCloud-compose-", text)
             self.assertNotIn("/root/TGCloud-Compose/deployment", text)
-            self.assertIn("--strip-components=1 -C /root/TGCloud-Compose", selected[0])
             commands.extend(selected)
         self.assertEqual(commands, [commands[0]] * 3)
         return commands[0]
 
-    def run_command(self, *, release=None, network_failure=False, checksum_failure=False, existing_instance=False):
+    def run_command(self, *, failed_download="", checksum_failure=False, existing_instance=False):
         command = self.command()
-        candidates = (shutil.which("bash"), "F:/Program Files/Git/bin/bash.exe", "C:/Program Files/Git/bin/bash.exe")
-        shell = next((value for value in candidates if value and Path(value).is_file() and "system32" not in value.lower()), None)
-        self.assertIsNotNone(shell, "Bash is required to verify documented deployment commands")
-        executable = Path(sys.executable).as_posix()
-        if os.name == "nt":
-            executable = "/" + executable[0].lower() + executable[2:]
-        payload = json.dumps(release or {"tag_name": "v0.0.3", "draft": False, "prerelease": False})
+        self.assertIsNotNone(BASH, "Bash is required to verify documented deployment commands")
         prefix = "\n".join((
             'mkdir() { printf "MKDIR %s\\n" "$*"; return ' + ("1" if existing_instance else "0") + '; }',
-            'mktemp() { printf "/synthetic/tgcloud-download\\n"; }',
-            'rm() { printf "REMOVE_DOWNLOAD %s\\n" "$*"; }',
-            'rmdir() { printf "REMOVE_DOWNLOAD_DIR %s\\n" "$*"; }',
             'cd() { printf "CD %s\\n" "$*"; }',
+            (
+                'curl() { printf "DOWNLOAD %s\\n" "$*"; '
+                'case "$TGCLOUD_TEST_FAILED_DOWNLOAD:$2" in '
+                'archive:*.tar.gz|checksum:*/COMPOSE-SHA256SUMS.txt) return 22 ;; esac; }'
+            ),
+            'sha256sum() { printf "SHA256 %s\\n" "$*"; return ' + ("1" if checksum_failure else "0") + '; }',
             'tar() { printf "TAR %s\\n" "$*"; }',
             'bash() { printf "INITIALIZATION_CALLED\\n"; }',
-            'sha256sum() { return ' + ("1" if checksum_failure else "0") + '; }',
-            'python3() { ' + shlex.quote(executable) + ' "$@"; }',
-            'curl() { if [[ "$*" == *releases/latest* ]]; then ' +
-            ('return 22;' if network_failure else 'printf "%s\\n" ' + shlex.quote(payload) + ';') +
-            ' else printf "DOWNLOAD %s\\n" "$*"; fi; }',
         ))
-        return subprocess.run([shell, "-c", prefix + "\n" + command], capture_output=True, text=True,
+        return subprocess.run([BASH, "-c", prefix + "\n" + command], capture_output=True, text=True,
                               encoding="utf-8", timeout=20, check=False,
-                              env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+                              env=dict(os.environ, TGCLOUD_TEST_FAILED_DOWNLOAD=failed_download))
 
-    def test_latest_release_downloads_matching_future_assets_into_fixed_directory(self):
+    def test_pinned_stable_assets_are_verified_and_extracted_into_fixed_directory(self):
+        online = (ROOT / "install.sh").read_text(encoding="utf-8")
+        tag, = re.findall(r"^tgcloud_tag=(v(?:[0-9]+\.){2}[0-9]+)$", online, re.MULTILINE)
+        archive = f"TGCloud-{tag}-compose.tar.gz"
+        base = f"https://github.com/LuoPoJunZi/TGCloud/releases/download/{tag}"
         result = self.run_command()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("/v0.0.3/TGCloud-v0.0.3-compose.tar.gz", result.stdout)
-        self.assertIn("/v0.0.3/COMPOSE-SHA256SUMS.txt", result.stdout)
-        self.assertIn("TAR --no-same-owner -xzf /synthetic/tgcloud-download/TGCloud-v0.0.3-compose.tar.gz --strip-components=1 -C /root/TGCloud-Compose", result.stdout)
-        self.assertIn("REMOVE_DOWNLOAD_DIR -- /synthetic/tgcloud-download", result.stdout)
-        self.assertNotIn("MKDIR deployment", result.stdout)
-        self.assertIn("INITIALIZATION_CALLED", result.stdout)
+        self.assertEqual(result.stdout.splitlines(), [
+            "MKDIR -m 700 /root/TGCloud-Compose",
+            "CD /root/TGCloud-Compose",
+            f"DOWNLOAD -fLO {base}/{archive}",
+            f"DOWNLOAD -fLO {base}/COMPOSE-SHA256SUMS.txt",
+            "SHA256 -c COMPOSE-SHA256SUMS.txt",
+            f"TAR --no-same-owner -xzf {archive} --strip-components=1",
+        ])
 
-    def test_invalid_release_network_and_checksum_failures_stop_initialization(self):
-        cases = ({"release": {"tag_name": "v0.0.3;echo unexpected"}},
-                 {"release": {"tag_name": "v0.0.3-rc.1", "prerelease": True}},
-                 {"network_failure": True}, {"checksum_failure": True})
-        for options in cases:
+    def test_network_and_checksum_failures_stop_before_extraction(self):
+        cases = (({"failed_download": "archive"}, 22),
+                 ({"failed_download": "checksum"}, 22),
+                 ({"checksum_failure": True}, 1))
+        for options, exit_code in cases:
             with self.subTest(options=options):
                 result = self.run_command(**options)
-                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.returncode, exit_code, result.stderr)
+                self.assertNotIn("TAR ", result.stdout)
                 self.assertNotIn("INITIALIZATION_CALLED", result.stdout)
 
     def test_existing_deployment_directory_is_never_extracted_over(self):
         result = self.run_command(existing_instance=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn("TAR ", result.stdout)
-        self.assertNotIn("INITIALIZATION_CALLED", result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout.splitlines(), ["MKDIR -m 700 /root/TGCloud-Compose"])
 
     def test_loopback_examples_match_actual_default_instead_of_version_number(self):
         for name in ("docs/install.md", "docs/compose-guide.md"):
