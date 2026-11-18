@@ -34,38 +34,22 @@ df -h
 
 Bot 凭据获取步骤见[安装指南](install.md)。所有密码在私有终端输入。主机需能访问 GitHub、Docker 镜像仓库、Python 软件源、Telegram 及云存储；Bot 镜像在本机构建。
 
-## 2. 下载最新正式部署包
+## 2. 下载正式部署包
 
 在支持 Docker Compose v2 和 FUSE 的 Linux 主机执行。需要 curl、tar、sha256sum 和 Python 3.10+；`/root/TGCloud-Compose` 目录须尚不存在：
 
 ```bash
-tgcloud_download_dir="$(mktemp -d)" &&
-tgcloud_tag="$(
-  curl -fsSL https://api.github.com/repos/LuoPoJunZi/TGCloud/releases/latest |
-    python3 -c 'import json, re, sys
-release = json.load(sys.stdin)
-tag = release["tag_name"]
-if release.get("draft") or release.get("prerelease") or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
-    raise SystemExit("Invalid stable release tag")
-print(tag)'
-)" &&
-curl -fL -o "$tgcloud_download_dir/TGCloud-${tgcloud_tag}-compose.tar.gz" \
-  "https://github.com/LuoPoJunZi/TGCloud/releases/download/${tgcloud_tag}/TGCloud-${tgcloud_tag}-compose.tar.gz" &&
-curl -fL -o "$tgcloud_download_dir/COMPOSE-SHA256SUMS.txt" \
-  "https://github.com/LuoPoJunZi/TGCloud/releases/download/${tgcloud_tag}/COMPOSE-SHA256SUMS.txt" &&
-(cd "$tgcloud_download_dir" && sha256sum -c COMPOSE-SHA256SUMS.txt) &&
-mkdir -m 700 /root/TGCloud-Compose &&
-tar --no-same-owner -xzf "$tgcloud_download_dir/TGCloud-${tgcloud_tag}-compose.tar.gz" \
-  --strip-components=1 -C /root/TGCloud-Compose &&
-rm -f -- "$tgcloud_download_dir/TGCloud-${tgcloud_tag}-compose.tar.gz" "$tgcloud_download_dir/COMPOSE-SHA256SUMS.txt" &&
-rmdir -- "$tgcloud_download_dir" &&
-cd /root/TGCloud-Compose &&
-bash manage.sh
+mkdir -m 700 /root/TGCloud-Compose && \
+cd /root/TGCloud-Compose && \
+curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.6/TGCloud-v0.0.6-compose.tar.gz && \
+curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.6/COMPOSE-SHA256SUMS.txt && \
+sha256sum -c COMPOSE-SHA256SUMS.txt && \
+tar --no-same-owner -xzf TGCloud-v0.0.6-compose.tar.gz --strip-components=1
 ```
 
-命令先查询 GitHub 最新正式发行版，再按该标签下载部署包及对应校验文件，避免混用不同版本。部署目录固定为 `/root/TGCloud-Compose`，不随版本号变化。已有实例请按本文的升级步骤操作。
+命令下载 `v0.0.6` 正式部署包和对应的 SHA256 校验文件。校验通过后，部署文件直接解压到部署目录。部署目录固定为 `/root/TGCloud-Compose`，不随版本号变化。已有实例请按本文的升级步骤操作。
 
-下载和校验在私有临时目录进行，成功解包后清理本次下载文件，不混入运行目录。管理菜单会检查源码身份和文件清单，在本机构建镜像并初始化配置。仅解压单个 Compose YAML 不构成完整部署包。
+解压成功后，在同一目录运行 `bash manage.sh` 进入初始化菜单。管理菜单会检查源码身份和文件清单，在本机构建镜像并初始化配置。仅解压单个 Compose YAML 不构成完整部署包。
 
 ## 可选：从源码生成部署包
 
