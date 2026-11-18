@@ -27,8 +27,8 @@ from tgcloud.addons.external_webdav import (
     verification,
 )
 from tgcloud.addons.external_webdav.service import Service
-from tgcloud.deployment import uninstall
 from tgcloud.deployment.host import SafeLog
+from tgcloud.deployment.lifecycle import uninstall
 from tgcloud.deployment.profiles import PRODUCTS
 from tgcloud.deployment.proxy import maintenance
 from tgcloud.deployment.proxy.manager import (
@@ -863,7 +863,7 @@ class EntryAndReleaseTests(unittest.TestCase):
     def test_main_dispatch_does_not_call_addon_installer(self):
         from tgcloud.cli import commands
 
-        for command, target in (("install", "tgcloud.cli.vps.main"), ("lan", "tgcloud.deployment.proxy.lan.main")):
+        for command, target in (("install", "tgcloud.cli.vps.main"), ("lan", "tgcloud.deployment.lifecycle.lan.main")):
             with self.subTest(command=command), patch(target, return_value=0) as operation, patch.object(cli, "main") as addon, patch.object(commands.signal, "signal"):
                 self.assertEqual(commands.main([command, "--help"]), 0)
                 operation.assert_called_once_with(["--help"])
@@ -942,7 +942,7 @@ class RuntimeInstallTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.source = self.root / "source"
-        from local_project_fixture import host_source
+        from tests.fixtures.local_project import host_source
         host_source(self.source)
         self.service = Service(PRODUCTS["clouddrive2"], Mock(), Mock(), Mock(), root=self.root / "addon")
         self.launcher = self.root / "bin/tgcloud-webdav"

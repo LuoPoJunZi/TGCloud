@@ -33,4 +33,4 @@ jobs:
         run: python -B .github/scripts/check_repository.py
 
       - name: Offline repository regression
-        run: python -B -m unittest discover -s tests -p test_repository.py -v
+        run: python -B -m unittest tests.repository.test_repository -v

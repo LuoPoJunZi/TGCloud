@@ -50,7 +50,9 @@ def files(source: Path) -> dict[str, bytes]:
     names = ["scripts/run_source.py", "src/tgcloud/__init__.py", "src/tgcloud/version.py", "src/tgcloud/config.py"]
     # Old installed manager bundles remain verifiable under their original
     # layout. New commands explicitly require these stdlib-only shared helpers.
-    if (source / "src/tgcloud/deployment/backup.py").is_file() or (source / "src/tgcloud/cli/naming.py").is_file():
+    if ((source / "src/tgcloud/deployment/lifecycle/backup.py").is_file()
+            or (source / "src/tgcloud/deployment/backup.py").is_file()
+            or (source / "src/tgcloud/cli/naming.py").is_file()):
         names.extend("src/tgcloud/" + name for name in (
             "persistence/__init__.py", "persistence/backup.py", "persistence/bundle.py",
             "domain/__init__.py", "domain/naming.py"))

@@ -20,9 +20,10 @@ from tgcloud.deployment import (
     local_source,
     preflight,
     runtime,
-    uninstall,
 )
 from tgcloud.deployment.host import LocalSession, SafeLog, edition_lock
+from tgcloud.deployment.lifecycle import lan as lan_installer
+from tgcloud.deployment.lifecycle import uninstall
 from tgcloud.deployment.profiles import PRODUCTS
 from tgcloud.deployment.proxy import lan
 from tgcloud.deployment.proxy.certificates import parse_certificate_enddate
@@ -284,7 +285,7 @@ class Management:
         if use_lan:
             if instance.directory != Path(self.product.install_dir):
                 raise ValueError("内网安装仅支持标准实例目录，不隐式搬迁")
-            result = lan.main(arguments, friendly=True)
+            result = lan_installer.main(arguments, friendly=True)
         else:
             from tgcloud.cli import vps
             result = vps.main([*arguments, "--install-dir", str(instance.directory)], friendly=True)
@@ -358,7 +359,7 @@ class Management:
                 self.log("没有受管实例历史备份。")
             return True
         if action in {"6", "7"}:
-            from tgcloud.deployment import backup
+            from tgcloud.deployment.lifecycle import backup
             from tgcloud.persistence import bundle
             parent = Path(self.ui.ask("私密备份目录", default="/opt/tgcloud-snapshots/" + self.product.key))
             backup.output_directory(parent, instance)

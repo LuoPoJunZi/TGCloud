@@ -23,10 +23,12 @@ BUILD_FILES = (
     "src/tgcloud/deployment/profiles.py", "src/tgcloud/deployment/fingerprints.py",
     "src/tgcloud/cli/commands.py", "packaging/Dockerfile",
     "src/tgcloud/cli/management.py", "src/tgcloud/deployment/uninstall.py",
+    "src/tgcloud/deployment/lifecycle/uninstall.py", "src/tgcloud/deployment/lifecycle/lan.py",
+    "src/tgcloud/deployment/proxy/ownership.py", "src/tgcloud/deployment/ownership.py",
     "src/tgcloud/addons/external_webdav/entry.py", "src/tgcloud/addons/external_webdav/cli.py",
     "src/tgcloud/addons/external_webdav/service.py",
     "packaging/bootstrap-manifest.json", "packaging/runtime-manifest.json",
-    ".github/scripts/build_payload.py", ".github/scripts/prepare_bootstrap.py", ".github/scripts/lock_dependencies.py",
+    ".github/scripts/build_payload.py", ".github/scripts/prepare_bootstrap.py", "scripts/dev/lock_dependencies.py",
     "LICENSE", ".github/CONTRIBUTING.md", ".github/SECURITY.md",
 )
 LOCAL_DIRECTORIES = frozenset({

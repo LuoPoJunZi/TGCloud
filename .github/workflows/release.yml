@@ -172,7 +172,7 @@ jobs:
         run: python -B -m unittest discover -s tests -p test_docker.py -v
 
       - name: Isolated existing Nginx single-hop, reload and original-site preservation
-        if: hashFiles('tests/test_external_nginx_docker.py') != ''
+        if: hashFiles('tests/integration/test_external_nginx_docker.py', 'tests/test_external_nginx_docker.py') != ''
         env:
           TGCLOUD_TEST_EXTERNAL_NGINX_DOCKER: "1"
         run: python -B -m unittest discover -s tests -p test_external_nginx_docker.py -v

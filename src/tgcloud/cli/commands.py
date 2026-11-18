@@ -37,11 +37,11 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "install":
         from .vps import main as operation
     elif args.command == "lan":
-        from tgcloud.deployment.proxy.lan import main as operation
+        from tgcloud.deployment.lifecycle.lan import main as operation
     elif args.command == "webdav":
         from tgcloud.addons.external_webdav.cli import main as operation
     elif args.command == "manage":
         from .management import main as operation
     else:
-        from tgcloud.deployment.uninstall import main as operation
+        from tgcloud.deployment.lifecycle.uninstall import main as operation
     return operation(remaining)
