@@ -6,7 +6,7 @@
 
 TGCloud transfers files sent or forwarded to your Telegram Bot into cloud storage mounted in CloudDrive2. It provides persistent queues, recovery, classification and naming, streaming, administrator/member controls, authorized source monitoring, WebDAV validation, diagnostics and backups.
 
-Current stable release: **[v0.0.5](https://github.com/LuoPoJunZi/TGCloud/releases/tag/v0.0.5)**. GitHub Actions validates and builds the source and Compose archives and checksum files. The Bot image is built locally on the deployment host.
+Current stable release: **[v0.0.6](https://github.com/LuoPoJunZi/TGCloud/releases/tag/v0.0.6)**. GitHub Actions validates and builds the source and Compose archives and checksum files. The Bot image is built locally on the deployment host.
 
 ## Quick install
 
@@ -18,7 +18,7 @@ For a public VPS with a domain pointing to it and TCP ports 80/443 available:
 bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh)
 ```
 
-Run `sudo -i` first if needed. The entry downloads and verifies the stable `v0.0.5` source archive before opening the wizard. No Git checkout, source-path input or edition selection is required. Resource recommendations use measured host resources. The default instance directory is `/opt/tgcloud`; run `tgcloud` for management.
+Run `sudo -i` first if needed. The entry downloads and verifies the stable `v0.0.6` source archive before opening the wizard. No Git checkout, source-path input or edition selection is required. Resource recommendations use measured host resources. The default instance directory is `/opt/tgcloud`; run `tgcloud` for management.
 
 For a trusted LAN:
 
