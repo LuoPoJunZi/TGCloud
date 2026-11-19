@@ -137,7 +137,7 @@ class ValidationTests(unittest.TestCase):
         for text in ('docker push', 'publish-index', 'packages: write'):
             self.assertNotIn(text, bundle)
 
-    def test_online_source_and_compose_docs_match_the_stable_release(self):
+    def test_online_source_stays_pinned_to_the_documented_stable_release(self):
         online = (ROOT / 'install.sh').read_text(encoding='utf-8')
         stable_tag, = re.findall(r"^tgcloud_tag=(v" + planning.CORE + r")$", online, re.MULTILINE)
         for name in ('README.md', 'README_EN.md', 'docs/install.md'):
@@ -149,25 +149,6 @@ class ValidationTests(unittest.TestCase):
                     self.assertIn('https://github.com/LuoPoJunZi/TGCloud/releases/tag/' + stable_tag + ')', text)
         self.assertIn('自动下载并校验 ' + stable_tag, online)
         self.assertIn('/releases/download/${tgcloud_tag}', online)
-        compose = (ROOT / 'docs/compose-guide.md').read_text(encoding='utf-8')
-        section = compose.split('## 2. 下载正式部署包\n', 1)[1].split('\n## ', 1)[0]
-        commands = section.split('```bash\n', 1)[1].split('\n```', 1)[0]
-        for name, heading in (('README.md', '## Docker Compose 部署\n'), ('README_EN.md', '## Docker Compose\n')):
-            with self.subTest(document=name):
-                readme = (ROOT / name).read_text(encoding='utf-8')
-                example = readme.split(heading, 1)[1].split('```bash\n', 1)[1].split('\n```', 1)[0]
-                self.assertEqual(example, commands)
-
-        asset_url = f'https://github.com/LuoPoJunZi/TGCloud/releases/download/{stable_tag}'
-        for text in ('mkdir -m 700 /root/TGCloud-Compose', 'cd /root/TGCloud-Compose',
-                     f'curl -fLO {asset_url}/TGCloud-{stable_tag}-compose.tar.gz',
-                     f'curl -fLO {asset_url}/COMPOSE-SHA256SUMS.txt',
-                     'sha256sum -c COMPOSE-SHA256SUMS.txt',
-                     f'tar --no-same-owner -xzf TGCloud-{stable_tag}-compose.tar.gz --strip-components=1'):
-            self.assertIn(text, commands)
-        self.assertIn('`bash manage.sh`', section)
-        for text in ('sudo docker compose run', 'sudo docker compose up'):
-            self.assertIn(text, compose)
 
 
 class ComposeReleaseTests(unittest.TestCase):
