@@ -20,6 +20,7 @@ from tgcloud.persistence import bundle
 from tgcloud.version import VERSION
 
 IMAGE = "ghcr.io/owner/tgcloud@sha256:" + "a" * 64
+DISK = NS(total=200 * 1024**3, free=100 * 1024**3)
 
 
 class Answers(UI):
@@ -57,7 +58,7 @@ class AccessTests(unittest.TestCase):
         return write_candidate(self.root / edition)
 
     def initialize(self, root, ui):
-        with patch.object(runtime.shutil, "disk_usage", return_value=NS(total=200 * 1024**3, free=100 * 1024**3)), \
+        with patch.object(runtime.shutil, "disk_usage", return_value=DISK), \
                 patch.object(runtime.os, "chown", create=True), redirect_stdout(io.StringIO()):
             return runtime.setup(root, ui)
 
@@ -72,7 +73,7 @@ class AccessTests(unittest.TestCase):
             with patch("subprocess.run", side_effect=AssertionError("offline setup")), \
                     patch("socket.create_connection", side_effect=AssertionError("offline setup")), \
                     redirect_stdout(io.StringIO()):
-                config = runtime.collect(ui, PRODUCTS[edition], plan)
+                config = runtime.collect(ui, PRODUCTS[edition], plan, disk=DISK)
             self.assertEqual(config["TGCLOUD_BIND_IP"], "127.0.0.1")
             self.assertEqual(plan, self.plan("local", edition))
             self.assertTrue(any("管理端口绑定" in prompt for prompt in ui.questions))
@@ -83,7 +84,7 @@ class AccessTests(unittest.TestCase):
                 ui = Answers({"选择访问方式": option, "管理页域名（只填域名）": "panel.example.com"})
                 plan = {}
                 with redirect_stdout(io.StringIO()) as output:
-                    config = runtime.collect(ui, PRODUCTS[edition], plan)
+                    config = runtime.collect(ui, PRODUCTS[edition], plan, disk=DISK)
                 self.assertEqual(config["TGCLOUD_BIND_IP"], "127.0.0.1")
                 self.assertEqual(plan, self.plan(mode, edition))
                 self.assertFalse(any("管理端口绑定" in prompt for prompt in ui.questions))

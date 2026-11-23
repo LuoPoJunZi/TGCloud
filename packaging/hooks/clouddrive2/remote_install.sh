@@ -215,9 +215,15 @@ fail() {
   exit 1
 }
 
+cleanup_on_exit() {
+  trap '' INT TERM HUP
+  cleanup_release_stage || log "警告：部分安装暂存资源未能清理，请核对上方日志"
+  exit "$1"
+}
+
 trap 'fail "安装在第 ${LINENO} 行失败。请保留完整日志。"' ERR
 trap 'fail "安装被中断。请保留完整日志。"' INT TERM HUP
-trap 'exit_status=$?; trap "" INT TERM HUP; cleanup_release_stage || log "警告：部分安装暂存资源未能清理，请核对上方日志"; exit "$exit_status"' EXIT
+trap 'cleanup_on_exit "$?"' EXIT
 
 [[ "$(id -u)" -eq 0 ]] || fail "remote_install.sh 必须以 root 或 sudo 运行"
 [[ -d "$SOURCE_DIR" ]] || fail "找不到部署源目录：$SOURCE_DIR"
@@ -346,7 +352,7 @@ elif [[ $? -eq 3 ]]; then
     uri="https://download.docker.com/linux/$ID"
     architecture="$(dpkg --print-architecture)"
     apt-get -o DPkg::Lock::Timeout=120 -o APT::Update::Error-Mode=any update
-    targets="$(apt-get indextargets --format '$(URI)')"
+    targets="$(apt-get indextargets --format "\$(URI)")"
     if [[ "$targets" == *"$uri/dists/$suite/stable/binary-$architecture/Packages"* ]]; then
       return 0
     fi
