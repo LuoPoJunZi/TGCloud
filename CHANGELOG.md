@@ -1,5 +1,11 @@
 # TGCloud 更新记录
 
+## TGCloud v0.0.7
+
+- 公网和内网一键安装、升级优先使用源码包内经过校验的 Go 宿主工具，保留原有向导和 Python 回退。
+- Go 宿主工具处理资源预检、部署、健康检查、备份与回滚，以及 HTTPS／内网 HTTP 管理入口和安装后验收。
+- 正式源码包提供 Linux AMD64 和 ARM64 的 Go 宿主工具。独立 Docker Compose 继续使用原有部署流程。
+
 ## TGCloud v0.0.6
 
 - 按职责整理测试与共用夹具，同步更新 pytest、unittest 和 CI 测试入口。

@@ -1,17 +1,17 @@
-## TGCloud v0.0.6
+## TGCloud v0.0.7
 
-这次调整按职责整理仓库目录，便于定位部署代码、开发工具和回归测试。
+公网和内网一键安装及升级优先使用源码包中的 Go 宿主工具。现有安装向导继续负责交互，宿主工具不可用时可沿用原 Python 流程。
 
-- 测试按 Bot、部署、集成、命名、仓库、运行时和扩展分组，提取共用夹具并同步 CI 测试入口。
-- 公网安装、内网安装、升级、备份和卸载归入部署生命周期模块。内网网关配置与安装流程分开，代理管理和卸载共用 Docker 归属校验。
-- 本地性能基准和依赖锁生成工具归入 scripts/dev。源码和 Compose 包的构建入口沿用现有命令。
+- 迁移宿主资源与 Docker 预检、源码暂存、候选镜像检查、部署编排和管理命令发布。
+- 升级涉及配置备份、SQLite 一致性快照、Bot 健康检查和失败回滚。
+- 公网 HTTPS 和内网 HTTP 管理入口支持独立检查和修复。独立 Docker Compose 继续沿用原有流程。
 
 ## 安装与升级
 
-从当前源码安装时，在完整源码目录运行 sudo bash install.sh，可信内网追加 --lan。管理命令为 tgcloud。已发布稳定版通过 README 的一键命令和 Compose 下载说明获取。
+公网一键安装运行 `bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh)`。可信内网在命令末尾追加 `--lan`。已有实例按安装向导或 `tgcloud` 管理菜单升级。
 
-已有实例沿用部署指南中的升级流程。相关命令和路径见 [安装指南](https://github.com/LuoPoJunZi/TGCloud/blob/main/docs/install.md) 与 [Compose 部署教程](https://github.com/LuoPoJunZi/TGCloud/blob/main/docs/compose-guide.md)。
+Compose 下载、校验和初始化命令见 [Compose 部署教程](https://github.com/LuoPoJunZi/TGCloud/blob/v0.0.7/docs/compose-guide.md)。一键安装和升级步骤见 [安装指南](https://github.com/LuoPoJunZi/TGCloud/blob/v0.0.7/docs/install.md)。
 
 ## 发布附件
 
-发布流程从同一版本标签生成源码包、Compose 部署包和各自的 SHA256 校验文件。
+GitHub Actions 从同一个版本标签生成源码包、Compose 部署包和各自的 SHA256 校验文件。源码包随附 Linux AMD64 和 ARM64 的 Go 宿主工具。

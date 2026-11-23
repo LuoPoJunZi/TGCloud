@@ -6,7 +6,7 @@
 
 TGCloud transfers files sent or forwarded to your Telegram Bot into cloud storage mounted in CloudDrive2. It provides persistent queues, recovery, classification and naming, streaming, administrator/member controls, authorized source monitoring, WebDAV validation, diagnostics and backups.
 
-Current stable release: **[v0.0.6](https://github.com/LuoPoJunZi/TGCloud/releases/tag/v0.0.6)**. GitHub Actions validates and builds the source and Compose archives and checksum files. The Bot image is built locally on the deployment host.
+Current stable release: **[v0.0.7](https://github.com/LuoPoJunZi/TGCloud/releases/tag/v0.0.7)**. GitHub Actions validates and builds the source and Compose archives and checksum files. The Bot image is built locally on the deployment host.
 
 ## Quick install
 
@@ -18,7 +18,7 @@ For a public VPS with a domain pointing to it and TCP ports 80/443 available:
 bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh)
 ```
 
-Run `sudo -i` first if needed. The entry downloads and verifies the stable `v0.0.6` source archive before opening the wizard. No Git checkout, source-path input or edition selection is required. Resource recommendations use measured host resources. The default instance directory is `/opt/tgcloud`; run `tgcloud` for management.
+Run `sudo -i` first if needed. The entry downloads and verifies the stable `v0.0.7` source archive before opening the wizard. No Git checkout, source-path input or edition selection is required. Resource recommendations use measured host resources. The default instance directory is `/opt/tgcloud`; run `tgcloud` for management.
 
 For a trusted LAN:
 
@@ -35,13 +35,13 @@ Choose either managed script installation or standalone Compose. Prepare Docker 
 ```bash
 mkdir -m 700 /root/TGCloud-Compose && \
 cd /root/TGCloud-Compose && \
-curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.6/TGCloud-v0.0.6-compose.tar.gz && \
-curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.6/COMPOSE-SHA256SUMS.txt && \
+curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.7/TGCloud-v0.0.7-compose.tar.gz && \
+curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.7/COMPOSE-SHA256SUMS.txt && \
 sha256sum -c COMPOSE-SHA256SUMS.txt && \
-tar --no-same-owner -xzf TGCloud-v0.0.6-compose.tar.gz --strip-components=1
+tar --no-same-owner -xzf TGCloud-v0.0.7-compose.tar.gz --strip-components=1
 ```
 
-The `/root/TGCloud-Compose` directory must not already exist. These commands download the `v0.0.6` deployment archive and its SHA256 checksum file. Deployment files are extracted directly into `/root/TGCloud-Compose`.
+The `/root/TGCloud-Compose` directory must not already exist. These commands download the `v0.0.7` deployment archive and its SHA256 checksum file. Deployment files are extracted directly into `/root/TGCloud-Compose`.
 
 After extraction, run `bash manage.sh` from the same directory to open the setup menu.
 
