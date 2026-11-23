@@ -1,10 +1,10 @@
 # TGCloud 更新记录
 
-## Unreleased
+## TGCloud v0.0.8
 
 - 全面加固 Go/Python/Shell 安装与回滚安全性：修复 APT 密钥目录 `umask` 权限、SQLite 回滚旁文件清理顺序、External WebDAV 外部 Nginx 凭据吊销同步、任务取消状态不变量、WebDAV 429/401 探测冷却、凭据脱敏与 CI 测试覆盖。
-- 重构 `tgcloud` 本地管理主菜单为 5 组两级分类菜单并统一各级菜单对齐宽度。
-- 按职责整理 `src/tgcloud/deployment/ops/` 与 `tests/deployment/` 目录结构并抽离公共辅助模块。
+- 重构 `tgcloud` 本地管理主菜单为 5 组两级分类菜单，并统一各级子菜单显示宽度与“返回上级”导航语义。
+- 按职责拆分 `hostcli/internal/{hostutil,storage,redact}`、`src/tgcloud/deployment/ops/` 与 `tests/deployment/{cli,compose,install,ops,proxy}/` 模块结构。
 
 ## TGCloud v0.0.7
 
