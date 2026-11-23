@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import platform
 import re
@@ -29,12 +30,21 @@ def packaged_host_cli(source: Path) -> tuple[str, bytes] | None:
         return None
     arch, elf_machine = machine
     name = f"hostcli/bin/linux-{arch}/{HOST_CLI}"
+    candidate = source / name
+    if not candidate.exists() and not candidate.is_symlink():
+        return None
     from tgcloud.deployment.local_source import regular_bytes
     try:
-        body = regular_bytes(source / name, limit=HOST_CLI_LIMIT)
+        body = regular_bytes(candidate, limit=HOST_CLI_LIMIT)
     except (ValueError, OSError):
+        logging.getLogger("tgcloud.deployment.runtime").warning(
+            "随包 Go 宿主工具校验未通过（超限、链接或不可读），已回退 Python 实现：%s", name
+        )
         return None
     if body[:6] != b"\x7fELF\x02\x01" or body[18:20] != elf_machine.to_bytes(2, "little"):
+        logging.getLogger("tgcloud.deployment.runtime").warning(
+            "随包 Go 宿主工具 ELF 头或架构不匹配，已回退 Python 实现：%s", name
+        )
         return None
     return name, body
 
@@ -56,17 +66,27 @@ def publication_lock(root: Path):
 
 
 def safe_path(path: Path, *, private: bool = False) -> None:
-    if not path.is_absolute() or path.resolve() != path:
+    # runtime.py is executed directly via `python3 -I -S -B` before src/ is added
+    # to sys.path; keep path verification stdlib-only so bootstrap verify() works.
+    if not path.is_absolute() or path.resolve() != path or path.is_symlink():
         raise ValueError("本地管理路径经过链接或不是绝对路径")
-    for item in (path, *path.parents):
-        if item.is_symlink():
+    for parent in path.parents:
+        if parent.is_symlink():
             raise ValueError("本地管理路径经过链接")
-        if item.exists():
-            info = item.stat()
-            if os.name == "posix" and (info.st_uid not in {0, os.getuid()} or (info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX)):
-                raise ValueError("本地管理路径的所有者/写入权限不安全")
-    if private and path.exists() and os.name == "posix" and (path.stat().st_uid != os.getuid() or path.stat().st_mode & 0o077):
-        raise ValueError("本地管理目录必须为私有目录")
+    if os.name != "posix":
+        return
+    uid = os.getuid()
+    for item in (path, *path.parents):
+        if not item.exists():
+            continue
+        info = item.stat()
+        sticky = item != path and stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and bool(info.st_mode & stat.S_ISVTX)
+        if info.st_uid not in (0, uid) or (info.st_mode & 0o022 and not sticky):
+            raise ValueError("本地管理路径的所有者/写入权限不安全")
+    if private and path.exists():
+        info = path.stat()
+        if info.st_uid != uid or info.st_mode & 0o077:
+            raise ValueError("本地管理目录必须为私有目录")
 
 
 def file_names(source: Path) -> tuple[str, ...]:
@@ -268,7 +288,8 @@ def native_install_release(source: Path, release) -> dict | None:
         return None
     result = json.loads(output)
     if (not isinstance(result, dict) or result.get("version") != release.version
-            or result.get("commands") != {"version": "ok", "listen": "ok"} or result.get("matches") is not True):
+            or result.get("commands") != {"version": "ok", "listen": "ok"}
+            or result.get("matches") is not True or not isinstance(result.get("state"), str)):
         raise ValueError("Go 返回的管理工具发布结果无法核实")
     return result
 

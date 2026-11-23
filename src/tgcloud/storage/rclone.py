@@ -153,6 +153,11 @@ class RcloneUploadStream:
             )
 
     async def abort(self) -> None:
+        if self.stdin is not None:
+            try:
+                self.stdin.close()
+            except OSError:
+                pass
         if self.process.returncode is None:
             try:
                 self.process.terminate()
@@ -160,7 +165,7 @@ class RcloneUploadStream:
                 pass
             try:
                 await asyncio.wait_for(self.process.wait(), timeout=10)
-            except TimeoutError:
+            except (TimeoutError, asyncio.TimeoutError):
                 try:
                     self.process.kill()
                 except ProcessLookupError:
@@ -229,14 +234,14 @@ class RcloneClient:
                 pass
             try:
                 await asyncio.wait_for(process.wait(), timeout=10)
-            except TimeoutError:
+            except (TimeoutError, asyncio.TimeoutError):
                 try:
                     process.kill()
                 except ProcessLookupError:
                     pass
                 await process.wait()
             raise
-        except TimeoutError as exc:
+        except (TimeoutError, asyncio.TimeoutError) as exc:
             if process.returncode is None:
                 try:
                     process.kill()
@@ -245,13 +250,13 @@ class RcloneClient:
             await process.wait()
             raise RcloneError(f"rclone 超时：{' '.join(args[:2])}") from exc
         finally:
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.wait()
             if readers:
-                if process.returncode is None:
-                    try:
-                        process.kill()
-                    except ProcessLookupError:
-                        pass
-                    await process.wait()
                 await asyncio.gather(*readers, return_exceptions=True)
         if check and process.returncode != 0:
             raise RcloneError(
@@ -424,7 +429,7 @@ class RcloneClient:
         stderr = asyncio.create_task(_read_process_tail(process.stderr))
         try:
             await asyncio.wait_for(self._read_staging(process, scan), timeout=40)
-        except (TimeoutError, ValueError, UnicodeError):
+        except (TimeoutError, asyncio.TimeoutError, ValueError, UnicodeError):
             scan.complete, scan.reason = False, "扫描超时、超过资源上限或清单不完整"
         finally:
             if process.returncode is None:

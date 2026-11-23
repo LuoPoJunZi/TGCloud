@@ -9,15 +9,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/storage"
 )
 
-var resourceDirectory = regexp.MustCompile(`^/opt/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$`)
+var resourceDirectory = hostutil.OptPathRegex
 
 const minimumInstallFreeKiB = 8_000_000
 
@@ -39,7 +41,7 @@ func CheckInstallResources(directory string, progress io.Writer) error {
 func checkInstallResourceLimits(cpu int, memoryKiB uint64, disk diskResources, progress io.Writer) error {
 	memoryMiB := memoryKiB / 1024
 	fmt.Fprintf(progress, "[TGCloud] 检测到 %d 核 CPU、约 %dMB 内存、安装文件系统可用约 %dMB\n", cpu, memoryMiB, disk.available/(1024*1024))
-	if memoryMiB < minimumInstallMiB {
+	if memoryMiB < storage.MinimumInstallMiB {
 		return fmt.Errorf("内存不足 2GB，当前约 %dMB", memoryMiB)
 	}
 	if disk.total/1024 < 45_000_000 {
@@ -58,16 +60,9 @@ func ResourceProbe(install, backup string) (string, error) {
 			return "", errors.New("安装与备份目录必须是 /opt 下的绝对路径")
 		}
 	}
-	var utsname syscall.Utsname
-	if err := syscall.Uname(&utsname); err != nil {
-		return "", errors.New("无法核实宿主 CPU 架构")
-	}
-	var architecture strings.Builder
-	for _, character := range utsname.Machine {
-		if character == 0 {
-			break
-		}
-		architecture.WriteByte(byte(character))
+	architecture, err := hostutil.HostUnameMachine()
+	if err != nil {
+		return "", err
 	}
 	memory, err := hostMemory()
 	if err != nil {
@@ -109,7 +104,7 @@ func ResourceProbe(install, backup string) (string, error) {
 	hasFuse := err == nil && fuse.Mode()&os.ModeCharDevice != 0
 	var result strings.Builder
 	fmt.Fprintln(&result, "TGCLOUD_VPS_PROBE_BEGIN\nPROBE_VERSION=2")
-	fmt.Fprintf(&result, "ARCHITECTURE=%s\nCPU_CORES=%d\n", architecture.String(), onlineCPU())
+	fmt.Fprintf(&result, "ARCHITECTURE=%s\nCPU_CORES=%d\n", architecture, onlineCPU())
 	fmt.Fprintf(&result, "MEMORY_TOTAL_KIB=%d\nMEMORY_AVAILABLE_KIB=%d\nSWAP_TOTAL_KIB=%d\n", memory.total, memory.available, memory.swap)
 	fmt.Fprintf(&result, "FILESYSTEM_TYPE=%s\nSTORAGE_TOTAL_BYTES=%d\nSTORAGE_AVAILABLE_BYTES=%d\n", fsType, installDisk.total, installDisk.available)
 	fmt.Fprintf(&result, "INODES_TOTAL=%d\nINODES_AVAILABLE=%d\n", installDisk.inodes, installDisk.freeInodes)

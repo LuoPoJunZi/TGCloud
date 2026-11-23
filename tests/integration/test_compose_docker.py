@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 from tests.fixtures import ROOT
 from tgcloud.compose.packaging import bundle_files
-from tgcloud.deployment import diagnostics
+from tgcloud.deployment.ops import diagnostics
 from tgcloud.deployment.profiles import PRODUCTS
 
 IMAGE = "tgcloud-bot:test"

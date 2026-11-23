@@ -11,6 +11,10 @@ import (
 
 const instanceLock = "/opt/tgcloud-cli-locks/clouddrive2.lock"
 
+var managedOwnerUID uint32 = 0
+
+func LinuxSupported() bool { return true }
+
 func LockInstance() (io.Closer, error) {
 	directory := filepath.Dir(instanceLock)
 	invalidLock := errors.New("无法安全访问 TGCloud 管理锁")

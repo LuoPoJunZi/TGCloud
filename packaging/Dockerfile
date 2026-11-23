@@ -14,7 +14,7 @@ RUN apt-get update \
 
 WORKDIR /opt/tgcloud
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --require-hashes --no-deps -r requirements.txt
 
 COPY app ./app
 COPY LICENSE /usr/share/doc/tgcloud/

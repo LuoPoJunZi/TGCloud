@@ -106,13 +106,14 @@ class Plans:
 
     def directories(self, actor):
         self.authorize(actor)
-        return {
-            r["alias"]: r["path"]
-            for r in self.c.execute(
-                "SELECT * FROM transfer_directories ORDER BY alias LIMIT 32"
-            )
-            if actor == self.admin or actor in json.loads(r["owners"])
-        }
+        with self.db._lock:
+            return {
+                r["alias"]: r["path"]
+                for r in self.c.execute(
+                    "SELECT * FROM transfer_directories ORDER BY alias LIMIT 32"
+                )
+                if actor == self.admin or actor in json.loads(r["owners"])
+            }
 
     def directory(self, actor, alias):
         if not alias:
@@ -147,18 +148,20 @@ class Plans:
 
     def sources(self, actor):
         self.authorize(actor, admin=True)
-        return [
-            dict(row) | {"config": json.loads(row["config"])}
-            for row in self.c.execute(
-                "SELECT * FROM listener_sources WHERE deleted=0 ORDER BY id LIMIT 32"
-            )
-        ]
+        with self.db._lock:
+            return [
+                dict(row) | {"config": json.loads(row["config"])}
+                for row in self.c.execute(
+                    "SELECT * FROM listener_sources WHERE deleted=0 ORDER BY id LIMIT 32"
+                )
+            ]
 
     def source(self, actor, source_id):
         self.authorize(actor, admin=True)
-        row = self.c.execute(
-            "SELECT * FROM listener_sources WHERE id=?", (source_id,)
-        ).fetchone()
+        with self.db._lock:
+            row = self.c.execute(
+                "SELECT * FROM listener_sources WHERE id=?", (source_id,)
+            ).fetchone()
         if not row:
             raise PlanningError("来源不存在")
         return dict(row) | {"config": json.loads(row["config"])}
@@ -486,9 +489,10 @@ class Plans:
 
     def get(self, actor, plan_id):
         self.authorize(actor)
-        row = self.c.execute(
-            "SELECT * FROM transfer_plans WHERE id=? AND owner=?", (plan_id, actor)
-        ).fetchone()
+        with self.db._lock:
+            row = self.c.execute(
+                "SELECT * FROM transfer_plans WHERE id=? AND owner=?", (plan_id, actor)
+            ).fetchone()
         if not row or row["source"] is not None and actor != self.admin:
             raise PermissionError("没有找到这个计划")
         result = dict(row)
@@ -499,13 +503,12 @@ class Plans:
 
     def pending(self, actor, after=0):
         self.authorize(actor)
-        return [
-            self.get(actor, r[0])
-            for r in self.c.execute(
+        with self.db._lock:
+            rows = self.c.execute(
                 "SELECT id FROM transfer_plans WHERE owner=? AND status='pending' AND expires>? AND id>? ORDER BY id LIMIT 10",
                 (actor, time.time(), after),
-            )
-        ]
+            ).fetchall()
+            return [self.get(actor, r[0]) for r in rows]
 
     def edit(
         self, actor, plan_id, revision, *, name=None, directory_alias=None, ignore=False
@@ -597,24 +600,26 @@ class Plans:
 
     def feedback(self, actor):
         self.authorize(actor)
-        return [
-            dict(r)
-            for r in self.c.execute(
-                "SELECT * FROM naming_feedback WHERE owner=? ORDER BY id DESC LIMIT 20",
-                (actor,),
-            )
-        ]
+        with self.db._lock:
+            return [
+                dict(r)
+                for r in self.c.execute(
+                    "SELECT * FROM naming_feedback WHERE owner=? ORDER BY id DESC LIMIT 20",
+                    (actor,),
+                )
+            ]
 
     def source_history(self, actor, source_id):
         self.authorize(actor, admin=True)
         self.source(actor, source_id)
-        return [
-            dict(row)
-            for row in self.c.execute(
-                "SELECT * FROM listener_revisions WHERE source=? ORDER BY id DESC LIMIT 20",
-                (source_id,),
-            )
-        ]
+        with self.db._lock:
+            return [
+                dict(row)
+                for row in self.c.execute(
+                    "SELECT * FROM listener_revisions WHERE source=? ORDER BY id DESC LIMIT 20",
+                    (source_id,),
+                )
+            ]
 
     def apply_feedback(self, actor, feedback_id, revision):
         with self.transaction(actor, admin=True):

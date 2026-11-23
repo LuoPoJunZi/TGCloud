@@ -25,7 +25,7 @@ const containerFields = `{"id":{{json .ID}},"name":{{json .Name}},"state":{{json
 	`"mode":{{json (index .Config.Labels "com.tgcloud.install-mode")}},"mounts":{{json .Mounts}}}`
 
 var (
-	versionPattern   = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+	versionPattern   = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 	containerID      = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	errInstanceOwner = errors.New("容器归属与 /opt/tgcloud 一键安装实例不一致")
 )

@@ -14,6 +14,7 @@
 | `src/tgcloud/listening/` | 个人账号授权、来源与筛选 |
 | `src/tgcloud/compose/`、`addons/` | 独立 Compose、HTTPS 和外部访问 |
 | `packaging/` | Dockerfile、CloudDrive2 Compose、受管钩子与源码清单 |
+| `hostcli/` | Go 宿主管理工具（`tgcloud-host`），负责宿主机预检、安装事务与容器诊断 |
 | `scripts/` | 从源码运行 TGCloud、构建 Compose 部署包 |
 | `scripts/dev/` | 本地合成数据库基准和依赖锁生成 |
 | `.github/workflows/`、`.github/scripts/` | 自动化检查与发布工具 |
@@ -33,7 +34,7 @@ python -m pip install -r requirements/dev.lock.txt
 python -m pip install --no-deps -e .
 ```
 
-rclone、Bash、ShellCheck 和 Docker 是相关检查的外部工具。不要将真实配置、Session、数据或下载放入测试夹具。
+rclone、Bash、ShellCheck、Go 1.23+ 和 Docker 是相关检查的外部工具。不要将真实配置、Session、数据或下载放入测试夹具。
 
 ## 检查与构建
 
@@ -42,11 +43,12 @@ python -B .github/scripts/check_python.py all
 python -B .github/scripts/prepare_bootstrap.py
 python -B .github/scripts/maintenance_preflight.py --json
 python -B .github/scripts/linux_validation.py shell
+(cd hostcli && go vet ./... && go test ./...)
 ```
 
 源码清单变动经过审阅后运行 `python -B .github/scripts/prepare_bootstrap.py --write-manifest`。文档索引和文件链接由仓库检查及现有回归验证。Compose 构建见[部署指南](compose-guide.md)。
 
-Linux CI 覆盖 AMD64／ARM64、Python 3.10／3.13 宿主检查、真实 rclone 和隔离 Docker。仅在所需环境中启用相关集成测试；本机缺少条件时如实报告，不将跳过项目描述为通过。源码检查不等于生产、网盘或长期稳定性验收。
+Linux CI 覆盖 AMD64／ARM64、Python 3.10／3.13 宿主检查、Go `hostcli` 单元测试与跨架构构建、真实 rclone 和隔离 Docker。仅在所需环境中启用相关集成测试；本机缺少条件时如实报告，不将跳过项目描述为通过。源码检查不等于生产、网盘或长期稳定性验收。
 
 ## 命令边界
 

@@ -264,6 +264,43 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(next(iter(fake.files)).startswith(".uploading-"))
         self.assertFalse(fake.removed)
 
+    async def test_cancelled_after_failed_state_never_requeues_review_task(self):
+        from tgcloud.transfer.ports import DestinationProbe
+
+        local = self.local()
+        task = self.task(state="waiting_upload", local_path=str(local), remote_path=None)
+        self.service.rclone.upload = AsyncMock(side_effect=RuntimeError("401 Unauthorized"))
+        self.service._notify = AsyncMock(side_effect=asyncio.CancelledError())
+        with self.assertRaises(asyncio.CancelledError):
+            await self.service._upload_one(task["id"])
+        self.assertEqual(self.db.get(task["id"])["state"], "upload_failed_retained")
+
+        # Verify Authorization Basic/Bearer redaction and 429 destination cooldown.
+        from tgcloud.domain.errors import redact_text
+        cleaned = redact_text("Authorization: Basic dXNlcjpwYXNz, Authorization: Bearer secret-jwt", self.settings)
+        self.assertNotIn("dXNlcjpwYXNz", cleaned)
+        self.assertNotIn("secret-jwt", cleaned)
+
+        self.service._destination_next_probe_at = 0.0
+        self.service._destination_rate_limit_failures = 0
+        probe = AsyncMock(return_value=DestinationProbe(False, "unknown", "429", "rate_limited"))
+        self.service.rclone.probe = probe
+        await self.service._probe_destination_once(respect_cooldown=True)
+        self.assertGreater(self.service._destination_next_probe_at, time.monotonic())
+        await self.service._probe_destination_once(respect_cooldown=True)
+        self.service.destination_last_checked = 0
+        await self.service._refresh_destination_for_dashboard()
+        self.assertEqual(probe.await_count, 1)
+
+    async def test_recover_releases_quota_slots_for_cancel_requested_tasks(self):
+        task = self.task(state="waiting_upload", local_path=str(self.local()))
+        self.assertTrue(self.db.admit_upload(task["id"]))
+        self.db.update(task["id"], state="uploading", cancel_requested=1)
+        self.db.recover(self.settings.download_dir)
+        with self.db._lock:
+            row = self.db._conn.execute("SELECT 1 FROM quota_slots WHERE task_id=?", (task["id"],)).fetchone()
+        self.assertIsNone(row)
+
 
 class ScanTests(unittest.IsolatedAsyncioTestCase):
     async def read(self, data: bytes, code=0):

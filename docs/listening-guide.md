@@ -2,7 +2,7 @@
 
 ## 账号授权
 
-监听默认关闭。管理员在自己的私有终端打开 `sudo tgcloud` → “16. 监听转存管理”，登录个人 Telegram 账号。个人监听 Session 与 Bot Session 独立保存；验证码、二次验证密码和 Session 都是敏感授权。
+监听默认关闭。管理员在自己的私有终端打开 `sudo tgcloud` → “3. 业务功能设置 → 2. 监听转存管理”，登录个人 Telegram 账号。个人监听 Session 与 Bot Session 独立保存；验证码、二次验证密码和 Session 都是敏感授权。
 
 独立 Compose 的 `sudo bash manage.sh` 提供相同管理菜单。先保持 Bot 的普通文件转存可用，再添加监听来源。
 

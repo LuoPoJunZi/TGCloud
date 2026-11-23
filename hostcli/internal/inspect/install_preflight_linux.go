@@ -11,11 +11,12 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 )
 
 var (
-	installConfigKey = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+	installConfigKey = hostutil.EnvKeyPattern
 	dockerfileBase   = regexp.MustCompile(`(?m)^FROM ([^\s]+)\s*$`)
 )
 
@@ -64,7 +65,8 @@ func replaceInstallInput(path string, data []byte) error {
 	}
 	defer os.Remove(file.Name())
 	_, writeErr := file.Write(data)
-	if closeErr := file.Close(); writeErr != nil || closeErr != nil {
+	syncErr := file.Sync()
+	if closeErr := file.Close(); writeErr != nil || syncErr != nil || closeErr != nil {
 		return invalid
 	}
 	if err := os.Rename(file.Name(), path); err != nil {
@@ -98,21 +100,9 @@ func checkDeploymentConfig(directory string) (bool, error) {
 }
 
 func parseDeploymentConfig(data []byte) (map[string]string, error) {
-	invalid := errors.New("部署配置存在无效或重复项目")
-	if !utf8.Valid(data) {
-		return nil, invalid
-	}
-	values := make(map[string]string)
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSuffix(line, "\r")
-		if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		key, value, found := strings.Cut(line, "=")
-		if _, duplicate := values[key]; !found || !installConfigKey.MatchString(key) || duplicate {
-			return nil, invalid
-		}
-		values[key] = value
+	values, err := hostutil.ParseEnvLines(data, errors.New("部署配置存在无效或重复项目"))
+	if err != nil {
+		return nil, err
 	}
 	if value, exists := values["TGCLOUD_REDEPLOY_APPLY_CONFIG"]; exists && value != "true" && value != "false" {
 		return nil, errors.New("配置覆盖标记无效")

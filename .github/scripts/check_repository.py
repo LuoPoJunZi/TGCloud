@@ -28,6 +28,7 @@ BUILD_FILES = (
     "src/tgcloud/addons/external_webdav/entry.py", "src/tgcloud/addons/external_webdav/cli.py",
     "src/tgcloud/addons/external_webdav/service.py",
     "packaging/bootstrap-manifest.json", "packaging/runtime-manifest.json",
+    "hostcli/go.mod", "hostcli/cmd/tgcloud-host/main.go",
     ".github/scripts/build_payload.py", ".github/scripts/prepare_bootstrap.py", "scripts/dev/lock_dependencies.py",
     "LICENSE", ".github/CONTRIBUTING.md", ".github/SECURITY.md",
 )
@@ -82,6 +83,8 @@ def forbidden_reason(name: str) -> str | None:
         return "retired source layout; current code belongs in src and resources in packaging"
     if any(part in LOCAL_DIRECTORIES for part in parts[:-1]):
         return "generated output, cache or local development directory"
+    if len(parts) >= 2 and parts[:2] == ("hostcli", "bin"):
+        return "generated Go host CLI binary output"
     if basename in INTERNAL_FILES or name.casefold() in {"docs/audit.md", "docs/worklog.md"}:
         return "local-only internal development record"
     if (basename == ".env" or basename.startswith(".env.")) and basename != ".env.example":

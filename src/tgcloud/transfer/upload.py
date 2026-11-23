@@ -116,6 +116,7 @@ async def _complete_cloud_receive(
 async def _upload_one(self, task_id: int) -> None:
     task = self.db.get(task_id)
     if not task or task.get("cancel_requested") or task.get("state") in {"completed", "confirmed", "cancelled"}:
+        self.db.release_quota_slot(task_id)
         return
     from tgcloud.domain.classification import check_scope
     from tgcloud.domain.states import can_transition
@@ -319,8 +320,11 @@ async def _upload_one(self, task_id: int) -> None:
             f"修复 {self.destination_label} 后使用 /retry 重试。"
         )
     except asyncio.CancelledError:
+        from tgcloud.domain.errors import needs_review
+        from tgcloud.domain.states import FAILED_STATES
         current = self.db.get(task_id)
-        if current and current["state"] not in {"cancelled", "cleanup_pending", "completed", "confirmed"}:
+        if (current and current["state"] not in {"cancelled", "cleanup_pending", "completed", "confirmed", *FAILED_STATES}
+                and not needs_review(current)):
             self.db.transition(task_id, "waiting_upload")
         raise
     except Exception as exc:

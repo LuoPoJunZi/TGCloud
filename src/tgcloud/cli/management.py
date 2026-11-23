@@ -34,12 +34,41 @@ from tgcloud.deployment.proxy.manager import (
 )
 
 MENU_ITEMS = (
-    (1, "安装与升级"), (2, "查看运行状态"), (3, "查看运行日志"),
-    (4, "服务启停管理"), (5, "Bot 用户管理"), (6, "WebDAV 凭据"),
-    (7, "HTTPS 与管理"), (8, "文件分类设置"), (9, "异常通知设置"),
-    (10, "业务就绪检查"), (11, "WebDAV 验收"), (12, "故障诊断报告"),
-    (13, "数据备份管理"), (14, "卸载当前实例"), (15, "外部 WebDAV"), (16, "监听转存管理"), (0, "退出"),
+    (1, "服务运行管理"),
+    (2, "访问入口管理"),
+    (3, "业务功能设置"),
+    (4, "健康检查诊断"),
+    (5, "实例维护备份"),
+    (0, "退出"),
 )
+SUBMENU_GROUPS = {
+    "1": ("服务运行管理", (
+        (1, "查看运行状态", "status"),
+        (2, "查看运行日志", "logs"),
+        (3, "服务启停管理", "control"),
+    )),
+    "2": ("访问入口管理", (
+        (1, "HTTPS 代理与证书", "entry"),
+        (2, "网关 WebDAV 凭据", "credentials"),
+        (3, "外部 WebDAV 管理", "external_webdav"),
+    )),
+    "3": ("业务功能设置", (
+        (1, "Bot 用户管理", "users"),
+        (2, "监听转存管理", "listening"),
+        (3, "文件分类设置", "classification"),
+        (4, "异常通知设置", "notifications"),
+    )),
+    "4": ("健康检查诊断", (
+        (1, "业务就绪检查", "readiness"),
+        (2, "远端写入验收", "verify"),
+        (3, "故障诊断报告", "diagnostics"),
+    )),
+    "5": ("实例维护备份", (
+        (1, "实例安装升级", "upgrade"),
+        (2, "数据备份管理", "backups"),
+        (3, "卸载当前实例", "remove"),
+    )),
+}
 MENU = numbered_menu(MENU_ITEMS) + "\n"
 MENU_ACTIONS = tuple(str(number) for number, _ in MENU_ITEMS)
 SOURCE_ROOT = Path(__file__).resolve().parents[3]
@@ -65,6 +94,7 @@ def choose(ui, prompt: str, values: tuple[str, ...], default: str = "") -> str:
 
 class Management:
     menu_items = MENU_ITEMS
+    submenu_groups = SUBMENU_GROUPS
 
     def __init__(self, product, session, log, ui, install_dir=None, *, mode_hint=None, source_dir=None, use_host_cli=False):
         self.product, self.session, self.log, self.ui = product, session, log, ui
@@ -73,6 +103,9 @@ class Management:
         self.source_dir = source_dir
         self.use_host_cli = use_host_cli
         self.additional_handlers = {}
+
+    def submenu_entries(self, group: str) -> tuple[str, tuple[tuple[int, str, str], ...]]:
+        return self.submenu_groups[group]
 
     def run_host_cli(self, instance, *args, lock_fd=None):
         if not self.use_host_cli or not instance.present or instance.directory != Path(self.product.install_dir):
@@ -89,7 +122,7 @@ class Management:
         open_menu(self.recheck(instance), self.ui, self.log)
 
     def listening(self, instance):
-        from tgcloud.deployment.listening import manage
+        from tgcloud.deployment.ops.listening import manage
         manage(self, self.recheck(instance))
 
     def discover(self):
@@ -137,7 +170,7 @@ class Management:
         self.log(page_heading(title, self.product, instance.version))
 
     def return_to_main(self):
-        self.log("\n" + numbered_menu(((0, "返回主菜单"),)))
+        self.log("\n" + numbered_menu(((0, "返回上级"),)))
         choose(self.ui, "选择操作", ("0",), "0")
 
     def read_page(self, instance, operation, refresh):
@@ -147,12 +180,12 @@ class Management:
                 operation(instance)
             except (ValueError, RuntimeError, TimeoutError, OSError) as exc:
                 self.log("检查未完成：" + str(exc) + "；不标记为通过。")
-            self.log("\n" + numbered_menu(((1, refresh), (0, "返回主菜单"))))
+            self.log("\n" + numbered_menu(((1, refresh), (0, "返回上级"))))
             if choose(self.ui, "选择操作", ("0", "1"), "0") == "0":
                 return
             instance = self.discover()
             if not instance.present:
-                self.log("当前实例已不可用，返回主菜单；不会自动安装或重建。")
+                self.log("当前实例已不可用，返回上级；不会自动安装或重建。")
                 return
 
     def container_states(self):
@@ -247,7 +280,7 @@ class Management:
                 self.log(label + " 日志读取失败；其他服务日志继续显示。")
 
     def readiness(self, instance):
-        from tgcloud.deployment.readiness import check, parse_report, show_report
+        from tgcloud.deployment.ops.readiness import check, parse_report, show_report
         self.heading("业务就绪检查", instance)
         self.log("正在读取最近观察，不追加 Telegram／WebDAV 请求……")
         result = self.run_host_cli(instance, "check", "--json")
@@ -263,7 +296,7 @@ class Management:
         self.show_containers(instance)
         self.log("\n存储网关停止或重启会中断存储访问。\n" + numbered_menu((
             (1, "启动 Bot"), (2, "停止 Bot"), (3, "重启 Bot"),
-            (4, "启动存储网关"), (5, "停止存储网关"), (6, "重启存储网关"), (0, "返回主菜单"),
+            (4, "启动网关"), (5, "停止网关"), (6, "重启网关"), (0, "返回上级"),
         )))
         action = choose(self.ui, "选择操作", ("0", "1", "2", "3", "4", "5", "6"), "0")
         if action == "0":
@@ -277,7 +310,7 @@ class Management:
             current = self.recheck(instance)
             target = "bot" if number < 3 else "gateway"
             result = self.run_host_cli(current, verb, target, "--yes", lock_fd=lock_fd)
-            if result is None:
+            if result is None or (result[0] == 2 and "用法：tgcloud-host" in result[1]):
                 self.checked_run("docker " + verb + " " + shlex.quote(name), timeout=90)
             elif result[0] != 0:
                 if result[1].strip():
@@ -303,13 +336,14 @@ class Management:
         return True
 
     def upgrade(self, instance):
-        self.heading("安装与升级", instance)
+        self.heading("实例安装升级", instance)
         saved = self.mode(instance)
         if not instance.present:
             if self.mode_hint:
                 use_lan = self.mode_hint == "lan"
             else:
-                self.log(numbered_menu(((1, "公网 VPS（HTTPS 域名）"), (2, "可信内网（HTTP 地址）"), (0, "返回"))))
+                self.log("公网模式使用 HTTPS 域名，内网模式使用 HTTP 地址。\n"
+                         + numbered_menu(((1, "公网域名模式"), (2, "可信内网模式"), (0, "返回上级"))))
                 selected = choose(self.ui, "安装模式", ("0", "1", "2"))
                 if selected == "0":
                     return
@@ -341,12 +375,12 @@ class Management:
 
     def entry(self, instance):
         if self.mode(instance):
-            self.status(instance, title="HTTPS 与管理")
+            self.status(instance, title="HTTPS 代理与证书")
             self.log("当前是内网 HTTP 模式，不申请证书或隐式切换为公网模式。")
             return True
-        self.heading("HTTPS 与管理", instance)
+        self.heading("HTTPS 代理与证书", instance)
         self.log("只管理入口，不升级或重启 Bot／网关。\n\n" + numbered_menu((
-            (1, "检查 HTTPS"), (2, "修复 HTTPS"), (3, "证书续期演练"), (0, "返回主菜单"))))
+            (1, "检查入口状态"), (2, "配置修复入口"), (3, "证书续期演练"), (0, "返回上级"))))
         action = choose(self.ui, "选择操作", ("0", "1", "2", "3"), "1")
         if action == "0":
             return False
@@ -388,7 +422,7 @@ class Management:
         self.heading("数据备份管理", instance)
         self.log("实例备份\n" + numbered_menu(((1, "查看历史备份"), (2, "创建实例快照"), (3, "校验实例快照")))
                  + "\n\n共享代理\n" + numbered_menu(((4, "创建代理备份"), (5, "查看代理备份"),
-                    (6, "校验代理备份"), (7, "清理代理备份"), (0, "返回主菜单")))
+                    (6, "校验代理备份"), (7, "清理代理备份"), (0, "返回上级")))
                  + "\n不提供覆盖运行数据的一键恢复；实例快照不包含下载文件和共享 HTTPS。")
         selected = choose(self.ui, "选择操作", ("0", "1", "2", "3", "4", "5", "6", "7"), "0")
         if selected == "0":
@@ -465,6 +499,80 @@ class Management:
         inventory = instances.docker_inventory(self.session)
         return not ({self.product.bot_container, self.product.storage_container} & inventory) and not instance.directory.exists()
 
+    def dispatch_action(self, action_key: str, instance) -> int | None:
+        try:
+            if action_key == "upgrade":
+                self.upgrade(instance)
+                if getattr(self, "exit_after_upgrade", False):
+                    return 0
+                self.return_to_main()
+                return None
+            if not instance.present:
+                raise ValueError("尚无完整实例，请先安装；不会执行维护操作")
+            handlers = {"control": self.control, "entry": self.entry, "verify": self.verify,
+                        "backups": self.backups, **self.additional_handlers}
+            completed = False
+            if action_key in {"status", "logs", "readiness"}:
+                operation, refresh = {"status": (self.status, "重新检查"), "logs": (self.logs, "重新读取"),
+                                      "readiness": (self.readiness, "重新检查")}[action_key]
+                self.read_page(instance, operation, refresh)
+            elif action_key == "credentials":
+                self.heading("网关 WebDAV 凭据", instance)
+                terminal.show_credentials(self.ui, self.product, instance.config, self.log)
+                completed = True
+            elif action_key == "remove":
+                if self.remove(instance):
+                    return 0  # The final uninstall may have removed this offline runtime.
+            elif action_key == "users":
+                from tgcloud.deployment.ops.users import manage
+                manage(self, instance)
+            elif action_key == "external_webdav":
+                self.external_webdav(instance)
+            elif action_key == "listening":
+                self.listening(instance)
+            elif action_key in {"classification", "notifications"}:
+                from tgcloud.deployment.ops.feature_settings import (
+                    manage_classification,
+                    manage_notifications,
+                )
+                operation = manage_classification if action_key == "classification" else manage_notifications
+                operation(self, instance)
+            elif action_key == "diagnostics":
+                from tgcloud.deployment.ops.diagnostics import collect, save
+                self.heading("故障诊断报告", instance)
+                self.log("正在生成只读诊断报告，请稍候……")
+                report = collect(instance, self.session)
+                self.log(terminal_report(report))
+                if self.ui.confirm("保存已脱敏报告到本机私密目录？不会自动上传"):
+                    parent = Path(self.ui.ask("报告目录（绝对路径）", default="/opt/tgcloud-reports"))
+                    self.log("报告已保存：" + str(save(report, parent)))
+                completed = True
+            else:
+                completed = handlers[action_key](instance) is not False
+            if completed:
+                self.return_to_main()
+            return None
+        except (ValueError, RuntimeError, TimeoutError, OSError) as exc:
+            self.log("操作未完成：" + str(exc))
+            if action_key == "remove":
+                return 1  # Do not offer a fresh install after a partial uninstall.
+            self.return_to_main()
+            return None
+
+    def run_group(self, group: str, instance) -> int | None:
+        title, entries = self.submenu_entries(group)
+        items = tuple((number, label) for number, label, _ in entries)
+        actions = {str(number): key for number, _, key in entries}
+        while True:
+            self.heading(title, instance)
+            self.log(numbered_menu((*items, (0, "返回上级"))) + "\n")
+            selected = choose(self.ui, "选择操作", ("0", *actions), "0")
+            if selected == "0":
+                return None
+            exit_code = self.dispatch_action(actions[selected], instance)
+            if exit_code is not None:
+                return exit_code
+
     def run(self):
         while True:
             instance = self.discover()
@@ -482,62 +590,9 @@ class Management:
             action = choose(self.ui, "选择操作", tuple(str(number) for number, _ in self.menu_items), "0")
             if action == "0":
                 return 0
-            try:
-                if action == "1":
-                    self.upgrade(instance)
-                    if getattr(self, "exit_after_upgrade", False):
-                        return 0
-                    self.return_to_main()
-                    continue
-                if not instance.present:
-                    raise ValueError("尚无完整实例，请先安装；不会执行维护操作")
-                handlers = {"4": self.control,
-                            "7": self.entry, "11": self.verify, "13": self.backups, **self.additional_handlers}
-                completed = False
-                if action in {"2", "3", "10"}:
-                    operation, refresh = {"2": (self.status, "重新检查"), "3": (self.logs, "重新读取"),
-                                          "10": (self.readiness, "重新检查")}[action]
-                    self.read_page(instance, operation, refresh)
-                elif action == "6":
-                    self.heading("WebDAV 凭据", instance)
-                    terminal.show_credentials(self.ui, self.product, instance.config, self.log)
-                    completed = True
-                elif action == "14":
-                    if self.remove(instance):
-                        return 0  # The final uninstall may have removed this offline runtime.
-                elif action == "5":
-                    from tgcloud.deployment.users import manage
-                    manage(self, instance)
-                elif action == "15":
-                    self.external_webdav(instance)
-                elif action == "16":
-                    self.listening(instance)
-                elif action in {"8", "9"}:
-                    from tgcloud.deployment.feature_settings import (
-                        manage_classification,
-                        manage_notifications,
-                    )
-                    operation = manage_classification if action == "8" else manage_notifications
-                    operation(self, instance)
-                elif action == "12":
-                    from tgcloud.deployment.diagnostics import collect, save
-                    self.heading("故障诊断报告", instance)
-                    self.log("正在生成只读诊断报告，请稍候……")
-                    report = collect(instance, self.session)
-                    self.log(terminal_report(report))
-                    if self.ui.confirm("保存已脱敏报告到本机私密目录？不会自动上传"):
-                        parent = Path(self.ui.ask("报告目录（绝对路径）", default="/opt/tgcloud-reports"))
-                        self.log("报告已保存：" + str(save(report, parent)))
-                    completed = True
-                else:
-                    completed = handlers[action](instance) is not False
-                if completed:
-                    self.return_to_main()
-            except (ValueError, RuntimeError, TimeoutError, OSError) as exc:
-                self.log("操作未完成：" + str(exc))
-                if action == "14":
-                    return 1  # Do not offer a fresh install after a partial uninstall.
-                self.return_to_main()
+            exit_code = self.run_group(action, instance)
+            if exit_code is not None:
+                return exit_code
 
 
 def main(argv=None, *, mode_hint=None) -> int:

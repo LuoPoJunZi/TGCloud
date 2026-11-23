@@ -5,7 +5,7 @@ if [[ -L "${BASH_SOURCE[0]}" ]]; then
     printf '%s\n' 'HTTPS launcher must not be a symbolic link.' >&2
     exit 1
 fi
-bundle_root=$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+bundle_root=$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 read -r -d '' launcher <<'PY' || :
 import hashlib
 import json
@@ -61,7 +61,8 @@ def verify():
     for directory, names, leaves in os.walk(tools, followlinks=False):
         for name in names + leaves:
             path = Path(directory) / name
-            mode = path.lstat().st_mode
+            info = path.lstat()
+            mode = info.st_mode
             relative = path.relative_to(tools).as_posix()
             if stat.S_ISLNK(mode):
                 raise ValueError("HTTPS tools contain a link")
@@ -69,8 +70,8 @@ def verify():
                 if relative not in directories:
                     raise ValueError("HTTPS tools contain an unknown directory")
             elif stat.S_ISREG(mode):
-                if (relative not in expected or path.stat().st_nlink != 1
-                        or path.stat().st_size > 2 * 1024**2):
+                if (relative not in expected or info.st_nlink != 1
+                        or info.st_size > 2 * 1024**2):
                     raise ValueError("HTTPS tools contain an unknown or oversized file")
                 actual.add(relative)
                 if relative in files and hashlib.sha256(path.read_bytes()).hexdigest() != files[relative]:

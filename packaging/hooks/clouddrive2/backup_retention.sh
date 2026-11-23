@@ -16,20 +16,17 @@ tgcloud_backup_pattern_stats() {
 
 tgcloud_backup_inventory() {
   local backup_dir="${1:-/opt/tgcloud-backups}"
-  local config_count config_bytes database_count database_bytes env_count env_bytes
+  local stats config_count config_bytes database_count database_bytes env_count env_bytes
   tgcloud_validate_backup_dir "$backup_dir" || {
     printf 'TGCLOUD_BACKUPS=FAILED\n备份目录不是安全的真实绝对目录：%s\n' "$backup_dir" >&2
     return 2
   }
-  read -r config_count config_bytes < <(
-    tgcloud_backup_pattern_stats "$backup_dir" 'config-*.tar.gz'
-  )
-  read -r database_count database_bytes < <(
-    tgcloud_backup_pattern_stats "$backup_dir" 'database-*.db'
-  )
-  read -r env_count env_bytes < <(
-    tgcloud_backup_pattern_stats "$backup_dir" 'env-*.env'
-  )
+  stats="$(tgcloud_backup_pattern_stats "$backup_dir" 'config-*.tar.gz')" || return 1
+  read -r config_count config_bytes <<< "$stats"
+  stats="$(tgcloud_backup_pattern_stats "$backup_dir" 'database-*.db')" || return 1
+  read -r database_count database_bytes <<< "$stats"
+  stats="$(tgcloud_backup_pattern_stats "$backup_dir" 'env-*.env')" || return 1
+  read -r env_count env_bytes <<< "$stats"
   printf 'TGCLOUD_BACKUPS=OK\n'
   printf 'BACKUP_DIR=%s\n' "$backup_dir"
   printf 'CONFIG_COUNT=%s\nCONFIG_BYTES=%s\n' "$config_count" "$config_bytes"
@@ -62,6 +59,7 @@ tgcloud_prune_backup_pattern() {
     find "$backup_dir" -maxdepth 1 -type f -name "$pattern" \
       -printf '%T@ %p\0' | LC_ALL=C sort -z -nr
   )
+  wait "$!" || return 1
   printf '%s\n' "$deleted"
 }
 

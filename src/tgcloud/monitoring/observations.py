@@ -8,7 +8,7 @@ import sqlite3
 import time
 from collections import deque
 
-from tgcloud.deployment.readiness import (
+from tgcloud.deployment.ops.readiness import (
     EVENT_LABELS,
     PER_KIND,
     listener_line,

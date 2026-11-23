@@ -65,6 +65,9 @@ def discover_for_install(product: ProductProfile, session: LocalSession, log: Sa
         if type(present) is not bool or type(running) is not bool:
             raise ValueError
         directory = configuration.checked_directory(value["directory"])
+        configuration.check_product_directory(product, directory)
+        if install_dir and directory != configuration.checked_directory(install_dir):
+            raise ValueError("实例目录与请求的 --install-dir 不一致")
         version, gateway = value["version"], value["gateway_image"]
         source_digest, config_digest = value["source_sha256"], value["config_sha256"]
         if not all(isinstance(item, str) for item in (version, gateway, source_digest, config_digest)):
@@ -76,6 +79,8 @@ def discover_for_install(product: ProductProfile, session: LocalSession, log: Sa
     # Only a digest crosses the subprocess boundary. The wizard still reads
     # the original private configuration for its own prompts and redaction.
     raw = configuration.regular_private(directory / ".env")
+    if b"\r" in raw:
+        raise ValueError("实例配置包含不支持的 CR 换行符")
     if hashlib.sha256(raw).hexdigest() != config_digest:
         raise ValueError("读取期间实例配置已变更，停止并重新预检")
     values = configuration.parse_config(raw)

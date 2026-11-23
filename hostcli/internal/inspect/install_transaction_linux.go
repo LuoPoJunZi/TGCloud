@@ -421,8 +421,14 @@ func (tx *installTransaction) run(ctx context.Context, mode installCommandMode, 
 		command = exec.CommandContext(ctx, tx.executable, args...)
 	}
 	isolateInstallCommand(command, mode == cancellableInstallCommand)
-	if args[0] == "prepare-dependencies" {
-		command.Cancel = func() error { return syscall.Kill(-command.Process.Pid, syscall.SIGTERM) }
+	if len(args) > 0 && args[0] == "prepare-dependencies" {
+		command.Cancel = func() error {
+			err := syscall.Kill(-command.Process.Pid, syscall.SIGTERM)
+			if errors.Is(err, syscall.ESRCH) {
+				return os.ErrProcessDone
+			}
+			return err
+		}
 	}
 	if mode == gracefulInstallCommand {
 		// The formal deployment worker waits for live Docker changes to finish.

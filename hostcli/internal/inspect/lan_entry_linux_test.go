@@ -16,9 +16,9 @@ import (
 )
 
 func TestLANEntryReusesAndRepairsOnlyProxy(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("LAN state uses root ownership")
-	}
+	previousOwner := managedOwnerUID
+	managedOwnerUID = uint32(os.Geteuid())
+	t.Cleanup(func() { managedOwnerUID = previousOwner })
 	root := t.TempDir()
 	entry := lanEntry{filepath.Join(root, "lan"), filepath.Join(root, "https.json"), filepath.Join(root, "tgcloud"), "nginx:1.30.5-alpine"}
 	const address = "192.168.26.5"

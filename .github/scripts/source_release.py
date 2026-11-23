@@ -123,22 +123,31 @@ def add_host_cli(archive: bytes, prefix: str) -> bytes:
         for member in source.getmembers():
             if member.isfile() and member.name.startswith(module):
                 name = member.name.removeprefix(module)
-                if safe_path(name) and (name == "go.mod" or name.endswith(".go")):
+                if safe_path(name) and (name in {"go.mod", "go.sum"} or name.endswith(".go")):
                     path = root / name
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(source.extractfile(member).read())
         go = shutil.which("go")
         if go is None:
             raise ValueError("Go is required to package the standalone manager")
+        existing = set(source.getnames())
+        def add_dir(dir_name: str) -> None:
+            if dir_name not in existing:
+                info = tarfile.TarInfo(dir_name)
+                info.type, info.mode = tarfile.DIRTYPE, 0o755
+                bundle.addfile(info)
+                existing.add(dir_name)
+        add_dir(prefix + "/hostcli/bin")
         for arch in HOST_CLI_ARCHES:
             executable = root / ("tgcloud-host-" + arch)
             environment = {**os.environ, "GOOS": "linux", "GOARCH": arch, "CGO_ENABLED": "0",
-                           "GOTOOLCHAIN": "local", "GOWORK": "off", "GOFLAGS": ""}
+                           "GOTOOLCHAIN": "local", "GOPROXY": "off", "GOWORK": "off", "GOFLAGS": ""}
             subprocess.run(  # nosec B603
                 [go, "build", "-trimpath", "-ldflags=-s -w -buildid=", "-o", str(executable), "./cmd/tgcloud-host"],
                 cwd=root, env=environment, check=True, timeout=180,
             )
             data = executable.read_bytes()
+            add_dir(prefix + f"/hostcli/bin/linux-{arch}")
             item = tarfile.TarInfo(prefix + "/" + host_cli_name(arch))
             item.size, item.mode = len(data), 0o755
             bundle.addfile(item, io.BytesIO(data))

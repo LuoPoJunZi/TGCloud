@@ -20,9 +20,9 @@ import (
 )
 
 func TestHTTPSManagedTransactionRecoversWithoutChangingBase(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("managed HTTPS state is owned by root")
-	}
+	previousOwner := managedOwnerUID
+	managedOwnerUID = uint32(os.Geteuid())
+	t.Cleanup(func() { managedOwnerUID = previousOwner })
 	root := t.TempDir()
 	entry := httpsEntry{filepath.Join(root, "proxy"), filepath.Join(root, "tgcloud"), "nginx:1.30.5-alpine", "certbot/certbot:v5.8.0"}
 	const domain = "files.example.test"

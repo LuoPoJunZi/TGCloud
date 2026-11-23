@@ -49,7 +49,7 @@ func AcceptBot(directory string, checkGateway bool, progress io.Writer) error {
 
 func runBotAcceptanceDocker(ctx context.Context, timeout time.Duration, environment []string, args ...string) ([]byte, error) {
 	// This probe imports Python settings and hashes the installed code in the container.
-	if args[0] == "exec" && args[len(args)-1] == botAcceptanceProbe {
+	if len(args) > 1 && args[0] == "exec" && args[len(args)-1] == botAcceptanceProbe {
 		timeout = 60 * time.Second
 	}
 	return runDockerCommandContext(ctx, true, nil, timeout, environment, args...)

@@ -73,8 +73,9 @@ func managerSafePath(path string, private bool) bool {
 		info, err := os.Lstat(current)
 		if err == nil {
 			owner := info.Sys().(*syscall.Stat_t).Uid
+			stickyAncestor := current != path && info.IsDir() && owner == 0 && info.Mode()&os.ModeSticky != 0
 			if info.Mode()&os.ModeSymlink != 0 || (owner != 0 && owner != uint32(os.Geteuid())) ||
-				(info.Mode().Perm()&0022 != 0 && info.Mode()&os.ModeSticky == 0) ||
+				(info.Mode().Perm()&0022 != 0 && !stickyAncestor) ||
 				(current == path && private && !privateOwner(info, uint32(os.Geteuid()))) {
 				return false
 			}
@@ -207,9 +208,10 @@ func verifyManagerBundle(bundle string) (*managerManifest, error) {
 		}
 		name := strings.TrimPrefix(path, bundle+"/")
 		if name == managerHelper && manifest.ToolHash != "" {
-			// A missing or corrupt optional helper does not disable the menu.
+			// A missing or corrupt optional helper does not disable the menu,
+			// but a directory in its place is unexpected and rejected.
 			if entry.IsDir() {
-				return filepath.SkipDir
+				return errManager
 			}
 			return nil
 		}

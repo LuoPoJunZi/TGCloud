@@ -82,8 +82,10 @@ def needs_review(task: dict) -> bool:
 def redact_text(text: str, settings) -> str:
     # Mask labelled values before exact replacement can obscure the label itself.
     text = re.sub(r"https?://[^\s\"'<>]+", "[URL]", text)
-    text = re.sub(r"(?i)(authorization|token|password|cookie)([=:]\s*)[^\s,;]+",
-                  r"\1\2[REDACTED]", text)
+    text = re.sub(
+        r"(?i)(authorization|token|password|cookie)([=:]\s*)(?:(?:Basic|Bearer|Digest)\s+)?[^\s,;]+",
+        r"\1\2[REDACTED]", text,
+    )
     for key in ("bot_token", "api_hash", "cd2_password"):
         value = getattr(settings, key, "")
         if isinstance(value, str) and value:

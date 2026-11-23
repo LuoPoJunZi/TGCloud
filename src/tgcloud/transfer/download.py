@@ -164,8 +164,9 @@ async def _download_one(self, task_id: int) -> None:
             "不完整文件已清理，可使用 /retry 重新排队。"
         )
     except asyncio.CancelledError:
+        from tgcloud.domain.states import FAILED_STATES
         current = self.db.get(task_id)
-        if current and current["state"] not in {"cancelled", "completed", "confirmed", "cleanup_pending"}:
+        if current and current["state"] not in {"cancelled", "completed", "confirmed", "cleanup_pending", *FAILED_STATES}:
             if final_path.is_file() and final_path.stat().st_size == int(task["file_size"]):
                 self.db.transition(task_id, "waiting_upload", local_path=str(final_path))
             else:

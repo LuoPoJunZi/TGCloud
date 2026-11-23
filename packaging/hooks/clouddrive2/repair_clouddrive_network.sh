@@ -21,43 +21,74 @@ fail() {
   exit 1
 }
 
+REPAIR_TEMP_ENV=""
+COMPOSE_TMP=""
+
+cleanup_repair_temps() {
+  rm -f -- "${REPAIR_TEMP_ENV:-}" "${COMPOSE_TMP:-}"
+}
+
+trap cleanup_repair_temps EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
 recover_webdav_credentials() {
-  local backup temp_env username_b64 password_b64 username password status
-  temp_env="$(mktemp /tmp/tgcloud-webdav-credentials.XXXXXX)"
+  local backup username_b64 password_b64 username password esc_u esc_p status key
+  REPAIR_TEMP_ENV="$(mktemp /tmp/tgcloud-webdav-credentials.XXXXXX)"
   while IFS= read -r backup; do
     [[ -n "$backup" ]] || continue
-    if ! tar -xOf "$backup" ./.env > "$temp_env" 2>/dev/null; then
+    if ! tar -xOf "$backup" ./.env > "$REPAIR_TEMP_ENV" 2>/dev/null; then
       continue
     fi
-    sed -i 's/\r$//' "$temp_env"
+    sed -i 's/\r$//' "$REPAIR_TEMP_ENV"
     username_b64="$(
+      awk -F= '$1=="WEBDAV_USERNAME_B64" {sub(/^[^=]*=/,""); print; exit}' \
+        "$REPAIR_TEMP_ENV"
+    )"
+    [[ -n "$username_b64" ]] || username_b64="$(
       awk -F= '$1=="CD2_WEBDAV_USERNAME_B64" {sub(/^[^=]*=/,""); print; exit}' \
-        "$temp_env"
+        "$REPAIR_TEMP_ENV"
     )"
     password_b64="$(
-      awk -F= '$1=="CD2_WEBDAV_PASSWORD_B64" {sub(/^[^=]*=/,""); print; exit}' \
-        "$temp_env"
+      awk -F= '$1=="WEBDAV_PASSWORD_B64" {sub(/^[^=]*=/,""); print; exit}' \
+        "$REPAIR_TEMP_ENV"
     )"
-    [[ -n "$username_b64" && -n "$password_b64" ]] || continue
+    [[ -n "$password_b64" ]] || password_b64="$(
+      awk -F= '$1=="CD2_WEBDAV_PASSWORD_B64" {sub(/^[^=]*=/,""); print; exit}' \
+        "$REPAIR_TEMP_ENV"
+    )"
+    [[ "$username_b64" =~ ^[A-Za-z0-9+/=]+$ && "$password_b64" =~ ^[A-Za-z0-9+/=]+$ ]] || continue
     username="$(printf '%s' "$username_b64" | base64 -d 2>/dev/null)" \
       || continue
     password="$(printf '%s' "$password_b64" | base64 -d 2>/dev/null)" \
       || continue
+    [[ "$username" != *$'\n'* && "$username" != *$'\r'* && "$password" != *$'\n'* && "$password" != *$'\r'* ]] || continue
+    esc_u="${username//\\/\\\\}"
+    esc_u="${esc_u//\"/\\\"}"
+    esc_p="${password//\\/\\\\}"
+    esc_p="${esc_p//\"/\\\"}"
     status="$(
-      curl -sS --connect-timeout 5 --max-time 10 \
-        -u "$username:$password" \
-        -X PROPFIND -H 'Depth: 0' \
-        -o /dev/null -w '%{http_code}' \
-        http://127.0.0.1:19798/dav/ 2>/dev/null || true
+      printf 'user = "%s:%s"\n' "$esc_u" "$esc_p" \
+        | curl -sS --connect-timeout 5 --max-time 10 \
+            -K - \
+            -X PROPFIND -H 'Depth: 0' \
+            -o /dev/null -w '%{http_code}' \
+            http://127.0.0.1:19798/dav/ 2>/dev/null || true
     )"
     if [[ "$status" == "200" || "$status" == "207" ]]; then
-      sed -i \
-        "s|^CD2_WEBDAV_USERNAME_B64=.*$|CD2_WEBDAV_USERNAME_B64=$username_b64|" \
-        "$INSTALL_DIR/.env"
-      sed -i \
-        "s|^CD2_WEBDAV_PASSWORD_B64=.*$|CD2_WEBDAV_PASSWORD_B64=$password_b64|" \
-        "$INSTALL_DIR/.env"
-      rm -f -- "$temp_env"
+      for key in WEBDAV_USERNAME_B64 CD2_WEBDAV_USERNAME_B64; do
+        if grep -q "^${key}=" "$INSTALL_DIR/.env"; then
+          sed -i "s|^${key}=.*$|${key}=$username_b64|" "$INSTALL_DIR/.env"
+        fi
+      done
+      for key in WEBDAV_PASSWORD_B64 CD2_WEBDAV_PASSWORD_B64; do
+        if grep -q "^${key}=" "$INSTALL_DIR/.env"; then
+          sed -i "s|^${key}=.*$|${key}=$password_b64|" "$INSTALL_DIR/.env"
+        fi
+      done
+      rm -f -- "$REPAIR_TEMP_ENV"
+      REPAIR_TEMP_ENV=""
       return 0
     fi
   done < <(
@@ -65,7 +96,8 @@ recover_webdav_credentials() {
       -printf '%T@ %p\n' 2>/dev/null \
       | sort -nr | cut -d' ' -f2-
   )
-  rm -f -- "$temp_env"
+  rm -f -- "$REPAIR_TEMP_ENV"
+  REPAIR_TEMP_ENV=""
   return 1
 }
 
@@ -76,6 +108,8 @@ trap 'fail "修复在第 ${LINENO} 行失败。请保留完整日志。"' ERR
   || fail "安装目录必须是 /opt/ 下的安全绝对路径"
 [[ "/$INSTALL_DIR/" != *"/../"* && "/$INSTALL_DIR/" != *"/./"* ]] \
   || fail "安装目录不能包含 . 或 .. 路径段"
+[[ "$(realpath -e -- "$INSTALL_DIR")" == "$INSTALL_DIR" ]] \
+  || fail "安装目录不能经过符号链接"
 [[ -f "$INSTALL_DIR/docker-compose.yml" ]] || fail "找不到现有 TGCloud 部署"
 [[ -f "$INSTALL_DIR/.env" ]] || fail "找不到现有 TGCloud 配置"
 command -v docker >/dev/null 2>&1 || fail "Docker 不可用"
@@ -238,8 +272,8 @@ if [[ "$MODE" != "--network-only" ]]; then
 fi
 
 PERSISTED_REPAIR="$INSTALL_DIR/repair_clouddrive_network.sh"
-if [[ "$(readlink -f "$0")" != "$(readlink -f "$PERSISTED_REPAIR")" ]]; then
-  install -m 700 "$0" "$PERSISTED_REPAIR"
+if [[ "$(readlink -f -- "$0")" != "$(readlink -f -- "$PERSISTED_REPAIR")" ]]; then
+  install -m 700 -- "$0" "$PERSISTED_REPAIR"
   log "Persisted the current repair program to $PERSISTED_REPAIR"
 fi
 

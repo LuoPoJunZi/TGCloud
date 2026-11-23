@@ -268,21 +268,22 @@ async def source_card(owner, event, source_id):
     buttons.append([token_button(owner, actor, "命名规则历史与撤销", ("history", sid))])
     from tgcloud.telegram.editor import MODES, rule_summary
 
-    stats = {
-        r[0]: r[1]
-        for r in owner.db._conn.execute(
-            "SELECT result,count(*) FROM listener_events WHERE source=? GROUP BY result",
+    with owner.db._lock:
+        stats = {
+            r[0]: r[1]
+            for r in owner.db._conn.execute(
+                "SELECT result,count(*) FROM listener_events WHERE source=? GROUP BY result",
+                (sid,),
+            )
+        }
+        counts = owner.db._conn.execute(
+            "SELECT count(*),COALESCE(sum(is_attachment),0),COALESCE(sum(matched),0) FROM listener_events WHERE source=?",
             (sid,),
-        )
-    }
-    counts = owner.db._conn.execute(
-        "SELECT count(*),COALESCE(sum(is_attachment),0),COALESCE(sum(matched),0) FROM listener_events WHERE source=?",
-        (sid,),
-    ).fetchone()
-    waiting = owner.db._conn.execute(
-        "SELECT count(*) FROM transfer_plans WHERE source=? AND status='pending' AND expires>?",
-        (sid, time.time()),
-    ).fetchone()[0]
+        ).fetchone()
+        waiting = owner.db._conn.execute(
+            "SELECT count(*) FROM transfer_plans WHERE source=? AND status='pending' AND expires>?",
+            (sid, time.time()),
+        ).fetchone()[0]
     from tgcloud.listening.management import destination
     try:
         directory_preview = destination(owner, actor, s)
@@ -322,6 +323,338 @@ async def command(owner, event, text):
     return True
 
 
+_ADMIN_ACTIONS = frozenset({
+    "listen",
+    "add",
+    "account",
+    "source",
+    "source-enable",
+    "test",
+    "rules",
+    "profile",
+    "source-directory",
+    "source-directory-retry",
+    "source-confirm",
+    "delete-offer",
+    "delete",
+    "history",
+    "restore-rule",
+    "restore-offer",
+    "save-feedback",
+})
+
+_EDITOR_KINDS = {
+    "rules": "rules",
+    "profile": "profile",
+    "source-directory": "directory",
+    "source-confirm": "mode",
+    "preferences": "personal",
+    "aliases": "aliases",
+}
+
+
+async def _callback_source(owner, event, actor, repo, action, args) -> bool:
+    if action == "listen":
+        await listening(owner, event)
+    elif action == "account":
+        if args[0] and not account.state(owner.db)["account"]:
+            raise ValueError("请先在 VPS 终端登录个人账号")
+        account.write_state(
+            owner.db, enabled=args[0], status="等待连接" if args[0] else "已停用"
+        )
+        await listening(owner, event)
+    elif action == "add":
+        await ask(
+            owner,
+            event,
+            ("add",),
+            "发送已加入来源的 @用户名、聊天 ID 或链接；自动创建来源目录，按类型归档。添加后暂停、确认后转存。默认仅视频、至少 50 MB，排除广告、内部群、搜索引擎。",
+        )
+    elif action == "source":
+        await source_card(owner, event, args[0])
+    elif action == "source-directory-retry":
+        source = repo.source(actor, args[0])
+        if source["revision"] != args[1]:
+            raise PlanningError("来源已变化，请刷新")
+        await owner.listener.prepare_directory(actor, source)
+        await source_card(owner, event, args[0])
+    elif action in {"source-enable", "delete", "source-confirm"}:
+        sid, rev = args[:2]
+        s = repo.source(actor, sid)
+        if action == "source-enable" and args[2]:
+            from tgcloud.listening.service import verified_chat
+
+            if not owner.listener.client:
+                raise ValueError("监听账号未连接")
+            await verified_chat(owner.listener.client, s["chat"])
+            await owner.listener.prepare_directory(actor, s)
+        cursor = None
+        if action == "source-enable" and args[2]:
+            latest = await owner.listener.client.get_messages(s["chat"], limit=1)
+            cursor = latest[0].id if latest else 0
+        config = (
+            s["config"] | {"confirmation": not s["config"]["confirmation"]}
+            if action == "source-confirm"
+            else None
+        )
+        repo.change_source(
+            actor,
+            sid,
+            rev,
+            config=config,
+            enabled=args[2] if action == "source-enable" else None,
+            delete=action == "delete",
+            cursor=cursor,
+        )
+        await listening(owner, event) if action == "delete" else await source_card(
+            owner, event, sid
+        )
+    elif action == "delete-offer":
+        await output(
+            event,
+            "确认删除此监听来源？停止新接收，保留任务和云端文件。",
+            [[token_button(owner, actor, "确认删除", ("delete", *args))],
+             [token_button(owner, actor, "取消返回来源", ("source", args[0]))]],
+        )
+    elif action == "test":
+        results = await owner.listener.test(actor, args[0])
+        from tgcloud.telegram.listening_tools import test_result
+        await output(
+            event,
+            "规则测试（只读，无任务、额度和进度副作用）\n"
+            + "\n".join(
+                test_result(mid, matched, reason, name)
+                for mid, matched, reason, name in results
+            ),
+            [[token_button(owner, actor, "返回来源", ("source", args[0]))]],
+        )
+    else:
+        return False
+    return True
+
+
+async def _callback_plan(owner, event, actor, repo, action, args) -> bool:
+    if action == "pending":
+        await pending(owner, event, args[0])
+    elif action == "view":
+        await plan_card(owner, event, repo.get(actor, args[0]))
+    elif action == "choose-directory":
+        await plan_card(
+            owner,
+            event,
+            repo.edit(actor, args[0], args[1], directory_alias=args[2]),
+        )
+    elif action in {"approve", "ignore", "rename", "directory", "batch"}:
+        plan = repo.get(actor, args[0])
+        if plan["status"] != "pending" or plan["revision"] != args[1]:
+            raise ValueError("计划已变化或已处理")
+        if action == "approve":
+            task, _ = await submit(owner, actor, *args)
+            await output(
+                event,
+                f"已持久化到现有队列：任务 #{task['id']}\n最终重名后缀以任务详情为准。",
+                [[token_button(owner, actor, "返回待确认列表", ("pending", 0))]],
+            )
+        elif action == "ignore":
+            await plan_card(owner, event, repo.edit(actor, *args, ignore=True))
+        elif action == "rename":
+            await ask(
+                owner,
+                event,
+                ("rename", *args),
+                "输入本次名称；保留原媒体扩展名，不会自动保存为规则。",
+            )
+        elif action == "directory":
+            rows = [
+                [
+                    token_button(
+                        owner, actor, alias, ("choose-directory", *args, alias)
+                    )
+                ]
+                for alias in repo.directories(actor)
+            ]
+            await output(
+                event, "选择已授权目录（替换分类子目录，不重复追加）：",
+                rows + [[token_button(owner, actor, "返回计划详情", ("view", plan["id"]))]],
+            )
+        else:
+            await output(
+                event,
+                "本批次最多 20 项；逐项重新核验权限、版本和额度，部分失败会保留待确认。",
+                [
+                    [token_button(owner, actor, "确认本批次", ("batch-approve", *args))],
+                    [token_button(owner, actor, "批次选择目录", ("batch-directory", *args))],
+                    [token_button(owner, actor, "批次修改共同主题", ("batch-name", *args))],
+                    [token_button(owner, actor, "返回计划详情", ("view", plan["id"]))],
+                ],
+            )
+    else:
+        return False
+    return True
+
+
+async def _callback_batch(owner, event, actor, repo, action, args) -> bool:
+    if action in {"batch-approve", "batch-directory", "batch-name"}:
+        p = repo.get(actor, args[0])
+        if not p["batch"] or p["revision"] != args[1] or p["status"] != "pending":
+            raise ValueError("批次已变化或不可用")
+        with owner.db._lock:
+            ids = [
+                (r["id"], r["revision"])
+                for r in owner.db._conn.execute(
+                    "SELECT id,revision FROM transfer_plans WHERE owner=? AND batch=? AND status='pending' AND expires>? ORDER BY id LIMIT 21",
+                    (actor, p["batch"], time.time()),
+                )
+            ]
+        if len(ids) > 20:
+            raise ValueError("批次超过 20 项，请逐项处理")
+        if action == "batch-approve":
+            good = 0
+            for pid, rev in ids:
+                try:
+                    await submit(owner, actor, pid, rev)
+                    good += 1
+                except (ValueError, RuntimeError):
+                    pass
+            await output(
+                event,
+                f"本批次已入队 {good}/{len(ids)} 项；其余保留待确认，请核对额度、有效期和权限。",
+                [[token_button(owner, actor, "返回待确认列表", ("pending", 0))]],
+            )
+        elif action == "batch-directory":
+            await output(
+                event,
+                "选择本批次已授权目录：",
+                [[token_button(owner, actor, alias, ("batch-set-directory", ids, alias))] for alias in repo.directories(actor)]
+                + [[token_button(owner, actor, "返回计划详情", ("view", p["id"]))]],
+            )
+        else:
+            await ask(owner, event, (action, ids), "发送新的共同主题（各成员集数、章节和扩展名保留）。")
+        return True
+    if action == "batch-set-directory":
+        ids, alias = args
+        if not ids or len(ids) > 20:
+            raise PlanningError("批次数量无效。")
+        with repo.transaction(actor):
+            repo.directory(actor, alias)
+            for pid, rev in ids:
+                repo.edit(actor, pid, rev, directory_alias=alias)
+        await pending(owner, event)
+        return True
+    return False
+
+
+async def _callback_history(owner, event, actor, repo, action, args) -> bool:
+    if action == "history":
+        source = repo.source(actor, args[0])
+        history = repo.source_history(actor, args[0])
+        await output(
+            event,
+            "选择恢复某次完整来源配置；仅作用于新计划。",
+            [
+                [
+                    token_button(
+                        owner,
+                        actor,
+                        f"恢复版本 {r['revision']}",
+                        ("restore-offer", source["id"], source["revision"], r["id"]),
+                    )
+                ]
+                for r in history
+            ] + [[token_button(owner, actor, "返回来源", ("source", source["id"]))]],
+        )
+    elif action == "restore-offer":
+        from tgcloud.telegram.editor import profile_summary, rule_summary
+        source = repo.source(actor, args[0])
+        if source["revision"] != args[1]:
+            raise PlanningError("来源配置已变化，请刷新历史列表。")
+        old = next((r for r in repo.source_history(actor, args[0]) if r["id"] == args[2]), None)
+        if old is None:
+            raise PlanningError("历史版本已失效。")
+        binding = {key: source["config"].get(key, default) for key, default in
+                   (("source_folder", ""), ("source_base", None))}
+        candidate = repo.source_config(actor, json.loads(old["config"]) | binding)
+
+        def describe(c):
+            return rule_summary(c["rules"]) + "\n" + profile_summary(c["profile"]) + "\n目录：" + description(c) + "\n模式：" + ("确认后转存" if c["confirmation"] else "自动转存")
+
+        await output(
+            event,
+            "恢复范围：筛选、命名、目录和转存模式；仅作用于新计划。\n\n当前配置：\n" + describe(source["config"]) + "\n\n拟恢复版本 " + str(old["revision"]) + "：\n" + describe(candidate),
+            [[token_button(owner, actor, "确认恢复此版本", ("restore-rule", *args))],
+             [token_button(owner, actor, "取消返回来源", ("source", source["id"]))]],
+        )
+    elif action == "restore-rule":
+        history = repo.source_history(actor, args[0])
+        old = next((r for r in history if r["id"] == args[2]), None)
+        if not old:
+            raise ValueError("历史版本已失效")
+        current = repo.source(actor, args[0])
+        binding = {key: current["config"].get(key, default) for key, default in
+                   (("source_folder", ""), ("source_base", None))}
+        repo.change_source(
+            actor, args[0], args[1], config=json.loads(old["config"]) | binding,
+            target_base=owner.settings.cd2_target,
+        )
+        restored = repo.source(actor, args[0])
+        if restored["config"].get("directory_mode") == "source_type":
+            await owner.listener.prepare_directory(actor, restored)
+        await source_card(owner, event, args[0])
+    else:
+        return False
+    return True
+
+
+async def _callback_feedback(owner, event, actor, repo, action, args) -> bool:
+    if action == "save-feedback":
+        repo.apply_feedback(actor, *args)
+        await output(
+            event,
+            "已明确保存为此来源的前缀规则；其他来源和已提交任务保持不变，可在命名规则历史中撤销。",
+        )
+    elif action == "feedback":
+        items = repo.feedback(actor)
+        buttons = []
+        if actor == owner.settings.allowed_user_id:
+            from pathlib import Path
+
+            for r in items:
+                before, after = (
+                    Path(r["before_name"]).stem,
+                    Path(r["after_name"]).stem,
+                )
+                if (
+                    r["source"] is not None
+                    and r["operation"] == "仅本次"
+                    and after
+                    and before.endswith(after)
+                    and 1 <= len(before) - len(after) <= 80
+                ):
+                    source = repo.source(actor, r["source"])
+                    buttons.append(
+                        [
+                            token_button(
+                                owner,
+                                actor,
+                                "确认保存前缀规则 #" + str(r["id"]),
+                                ("save-feedback", r["id"], source["revision"]),
+                            )
+                        ]
+                    )
+        await output(
+            event,
+            "最近人工修正（只影响本次，没有自动学习规则）\n"
+            + "\n".join(
+                f"#{r['id']} {r['before_name']} → {r['after_name']}" for r in items
+            )
+            + "\n需要保存为来源规则时，打开“命名方案”逐项设置清理前缀／后缀；历史中可预览并恢复。",
+            buttons + [[token_button(owner, actor, "返回转存设置", ("settings",))]],
+        )
+    else:
+        return False
+    return True
+
+
 async def callback(owner, event):
     raw = bytes(event.data)
     if raw == b"menu:listen":
@@ -350,24 +683,7 @@ async def callback(owner, event):
     repo = store(owner)
     try:
         repo.authorize(actor)
-        if action in {
-            "listen",
-            "add",
-            "account",
-            "source",
-            "source-enable",
-            "test",
-            "rules",
-            "profile",
-            "source-directory", "source-directory-retry",
-            "source-confirm",
-            "delete-offer",
-            "delete",
-            "history",
-            "restore-rule",
-            "restore-offer",
-            "save-feedback",
-        }:
+        if action in _ADMIN_ACTIONS:
             owner.listener.require_admin(actor)
         if action == "listen-tool":
             from tgcloud.telegram import listening_tools
@@ -380,288 +696,16 @@ async def callback(owner, event):
         elif action == "cancelinput":
             interactions(owner).pop(actor, None)
             await output(event, "已取消填写，配置和任务未改变。", [[token_button(owner, actor, "返回", args[0])]])
-        elif action in {"rules", "profile", "source-directory", "source-confirm", "preferences", "aliases"}:
+        elif action in _EDITOR_KINDS:
             from tgcloud.telegram import editor
-            kind = {"rules": "rules", "profile": "profile", "source-directory": "directory",
-                    "source-confirm": "mode", "preferences": "personal", "aliases": "aliases"}[action]
-            await editor.start(owner, event, kind, *args)
-        elif action == "listen":
-            await listening(owner, event)
-        elif action == "account":
-            if args[0] and not account.state(owner.db)["account"]:
-                raise ValueError("请先在 VPS 终端登录个人账号")
-            account.write_state(
-                owner.db, enabled=args[0], status="等待连接" if args[0] else "已停用"
-            )
-            await listening(owner, event)
-        elif action == "add":
-            await ask(
-                owner,
-                event,
-                ("add",),
-                "发送已加入来源的 @用户名、聊天 ID 或链接；自动创建来源目录，按类型归档。添加后暂停、确认后转存。默认仅视频、至少 50 MB，排除广告、内部群、搜索引擎。",
-            )
-        elif action == "source":
-            await source_card(owner, event, args[0])
-        elif action == "source-directory-retry":
-            source = repo.source(actor, args[0])
-            if source["revision"] != args[1]:
-                raise PlanningError("来源已变化，请刷新")
-            await owner.listener.prepare_directory(actor, source)
-            await source_card(owner, event, args[0])
-        elif action in {"source-enable", "delete", "source-confirm"}:
-            sid, rev = args[:2]
-            s = repo.source(actor, sid)
-            if action == "source-enable" and args[2]:
-                from tgcloud.listening.service import verified_chat
-
-                if not owner.listener.client:
-                    raise ValueError("监听账号未连接")
-                await verified_chat(owner.listener.client, s["chat"])
-                await owner.listener.prepare_directory(actor, s)
-            cursor = None
-            if action == "source-enable" and args[2]:
-                latest = await owner.listener.client.get_messages(s["chat"], limit=1)
-                cursor = latest[0].id if latest else 0
-            config = (
-                s["config"] | {"confirmation": not s["config"]["confirmation"]}
-                if action == "source-confirm"
-                else None
-            )
-            repo.change_source(
-                actor,
-                sid,
-                rev,
-                config=config,
-                enabled=args[2] if action == "source-enable" else None,
-                delete=action == "delete",
-                cursor=cursor,
-            )
-            await listening(owner, event) if action == "delete" else await source_card(
-                owner, event, sid
-            )
-        elif action == "delete-offer":
-            await output(
-                event,
-                "确认删除此监听来源？停止新接收，保留任务和云端文件。",
-                [[token_button(owner, actor, "确认删除", ("delete", *args))],
-                 [token_button(owner, actor, "取消返回来源", ("source", args[0]))]],
-            )
-        elif action == "test":
-            results = await owner.listener.test(actor, args[0])
-            from tgcloud.telegram.listening_tools import test_result
-            await output(
-                event,
-                "规则测试（只读，无任务、额度和进度副作用）\n"
-                + "\n".join(
-                    test_result(mid, matched, reason, name)
-                    for mid, matched, reason, name in results
-                ),
-                [[token_button(owner, actor, "返回来源", ("source", args[0]))]],
-            )
-        elif action == "pending":
-            await pending(owner, event, args[0])
-        elif action == "view":
-            await plan_card(owner, event, repo.get(actor, args[0]))
-        elif action in {"approve", "ignore", "rename", "directory", "batch"}:
-            plan = repo.get(actor, args[0])
-            if plan["status"] != "pending" or plan["revision"] != args[1]:
-                raise ValueError("计划已变化或已处理")
-            if action == "approve":
-                task, _ = await submit(owner, actor, *args)
-                await output(
-                    event,
-                    f"已持久化到现有队列：任务 #{task['id']}\n最终重名后缀以任务详情为准。",
-                    [[token_button(owner, actor, "返回待确认列表", ("pending", 0))]],
-                )
-            elif action == "ignore":
-                await plan_card(owner, event, repo.edit(actor, *args, ignore=True))
-            elif action == "rename":
-                await ask(
-                    owner,
-                    event,
-                    ("rename", *args),
-                    "输入本次名称；保留原媒体扩展名，不会自动保存为规则。",
-                )
-            elif action == "directory":
-                rows = [
-                    [
-                        token_button(
-                            owner, actor, alias, ("choose-directory", *args, alias)
-                        )
-                    ]
-                    for alias in repo.directories(actor)
-                ]
-                await output(
-                    event, "选择已授权目录（替换分类子目录，不重复追加）：",
-                    rows + [[token_button(owner, actor, "返回计划详情", ("view", plan["id"]))]],
-                )
-            else:
-                await output(
-                    event,
-                    "本批次最多 20 项；逐项重新核验权限、版本和额度，部分失败会保留待确认。",
-                    [
-                        [
-                            token_button(
-                                owner, actor, "确认本批次", ("batch-approve", *args)
-                            )
-                        ],
-                        [
-                            token_button(
-                                owner, actor, "批次选择目录", ("batch-directory", *args)
-                            )
-                        ],
-                        [
-                            token_button(
-                                owner, actor, "批次修改共同主题", ("batch-name", *args)
-                            )
-                        ],
-                        [token_button(owner, actor, "返回计划详情", ("view", plan["id"]))],
-                    ],
-                )
-        elif action == "choose-directory":
-            await plan_card(
-                owner,
-                event,
-                repo.edit(actor, args[0], args[1], directory_alias=args[2]),
-            )
-        elif action in {"batch-approve", "batch-directory", "batch-name"}:
-            p = repo.get(actor, args[0])
-            if not p["batch"] or p["revision"] != args[1] or p["status"] != "pending":
-                raise ValueError("批次已变化或不可用")
-            ids = [
-                (r["id"], r["revision"])
-                for r in owner.db._conn.execute(
-                    "SELECT id,revision FROM transfer_plans WHERE owner=? AND batch=? AND status='pending' AND expires>? ORDER BY id LIMIT 21",
-                    (actor, p["batch"], time.time()),
-                )
-            ]
-            if len(ids) > 20:
-                raise ValueError("批次超过 20 项，请逐项处理")
-            if action == "batch-approve":
-                good = 0
-                for pid, rev in ids:
-                    try:
-                        await submit(owner, actor, pid, rev)
-                        good += 1
-                    except (ValueError, RuntimeError):
-                        pass
-                await output(
-                    event,
-                    f"本批次已入队 {good}/{len(ids)} 项；其余保留待确认，请核对额度、有效期和权限。",
-                    [[token_button(owner, actor, "返回待确认列表", ("pending", 0))]],
-                )
-            else:
-                if action == "batch-directory":
-                    await output(event, "选择本批次已授权目录：", [[token_button(owner, actor, alias, ("batch-set-directory", ids, alias))] for alias in repo.directories(actor)] + [[token_button(owner, actor, "返回计划详情", ("view", p["id"]))]])
-                else:
-                    await ask(owner, event, (action, ids), "发送新的共同主题（各成员集数、章节和扩展名保留）。")
-        elif action == "batch-set-directory":
-            ids, alias = args
-            if not ids or len(ids) > 20:
-                raise PlanningError("批次数量无效。")
-            with repo.transaction(actor):
-                repo.directory(actor, alias)
-                for pid, rev in ids:
-                    repo.edit(actor, pid, rev, directory_alias=alias)
-            await pending(owner, event)
+            await editor.start(owner, event, _EDITOR_KINDS[action], *args)
         elif action == "confirmation":
             from tgcloud.telegram import editor
             await editor.start(owner, event, "personal", page="mode")
-        elif action == "history":
-            source = repo.source(actor, args[0])
-            history = repo.source_history(actor, args[0])
-            await output(
-                event,
-                "选择恢复某次完整来源配置；仅作用于新计划。",
-                [
-                    [
-                        token_button(
-                            owner,
-                            actor,
-                            f"恢复版本 {r['revision']}",
-                            ("restore-offer", source["id"], source["revision"], r["id"]),
-                        )
-                    ]
-                    for r in history
-                ] + [[token_button(owner, actor, "返回来源", ("source", source["id"]))]],
-            )
-        elif action == "restore-offer":
-            from tgcloud.telegram.editor import profile_summary, rule_summary
-            source = repo.source(actor, args[0])
-            if source["revision"] != args[1]:
-                raise PlanningError("来源配置已变化，请刷新历史列表。")
-            old = next((r for r in repo.source_history(actor, args[0]) if r["id"] == args[2]), None)
-            if old is None:
-                raise PlanningError("历史版本已失效。")
-            binding = {key: source["config"].get(key, default) for key, default in
-                       (("source_folder", ""), ("source_base", None))}
-            candidate = repo.source_config(actor, json.loads(old["config"]) | binding)
-            def describe(c):
-                return rule_summary(c["rules"]) + "\n" + profile_summary(c["profile"]) + "\n目录：" + description(c) + "\n模式：" + ("确认后转存" if c["confirmation"] else "自动转存")
-            await output(event, "恢复范围：筛选、命名、目录和转存模式；仅作用于新计划。\n\n当前配置：\n" + describe(source["config"]) + "\n\n拟恢复版本 " + str(old["revision"]) + "：\n" + describe(candidate),
-                         [[token_button(owner, actor, "确认恢复此版本", ("restore-rule", *args))],
-                          [token_button(owner, actor, "取消返回来源", ("source", source["id"]))]])
-        elif action == "restore-rule":
-            history = repo.source_history(actor, args[0])
-            old = next((r for r in history if r["id"] == args[2]), None)
-            if not old:
-                raise ValueError("历史版本已失效")
-            current = repo.source(actor, args[0])
-            binding = {key: current["config"].get(key, default) for key, default in
-                       (("source_folder", ""), ("source_base", None))}
-            repo.change_source(
-                actor, args[0], args[1], config=json.loads(old["config"]) | binding,
-                target_base=owner.settings.cd2_target,
-            )
-            restored = repo.source(actor, args[0])
-            if restored["config"].get("directory_mode") == "source_type":
-                await owner.listener.prepare_directory(actor, restored)
-            await source_card(owner, event, args[0])
-        elif action == "save-feedback":
-            repo.apply_feedback(actor, *args)
-            await output(
-                event,
-                "已明确保存为此来源的前缀规则；其他来源和已提交任务保持不变，可在命名规则历史中撤销。",
-            )
-        elif action == "feedback":
-            items = repo.feedback(actor)
-            buttons = []
-            if actor == owner.settings.allowed_user_id:
-                from pathlib import Path
-
-                for r in items:
-                    before, after = (
-                        Path(r["before_name"]).stem,
-                        Path(r["after_name"]).stem,
-                    )
-                    if (
-                        r["source"] is not None
-                        and r["operation"] == "仅本次"
-                        and after
-                        and before.endswith(after)
-                        and 1 <= len(before) - len(after) <= 80
-                    ):
-                        source = repo.source(actor, r["source"])
-                        buttons.append(
-                            [
-                                token_button(
-                                    owner,
-                                    actor,
-                                    "确认保存前缀规则 #" + str(r["id"]),
-                                    ("save-feedback", r["id"], source["revision"]),
-                                )
-                            ]
-                        )
-            await output(
-                event,
-                "最近人工修正（只影响本次，没有自动学习规则）\n"
-                + "\n".join(
-                    f"#{r['id']} {r['before_name']} → {r['after_name']}" for r in items
-                )
-                + "\n需要保存为来源规则时，打开“命名方案”逐项设置清理前缀／后缀；历史中可预览并恢复。",
-                buttons + [[token_button(owner, actor, "返回转存设置", ("settings",))]],
-            )
+        else:
+            for handler in (_callback_source, _callback_plan, _callback_batch, _callback_history, _callback_feedback):
+                if await handler(owner, event, actor, repo, action, args):
+                    break
     except (ValueError, PermissionError, RuntimeError) as exc:
         from tgcloud.listening.service import ListenerReadError
         from tgcloud.persistence.quotas import QuotaExceeded

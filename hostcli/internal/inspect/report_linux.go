@@ -10,6 +10,9 @@ import (
 )
 
 func ReportInstall(directory string, progress io.Writer) error {
+	if err := checkDockerHost(); err != nil {
+		return err
+	}
 	if err := checkUpgradeDirectory(directory); err != nil {
 		return err
 	}

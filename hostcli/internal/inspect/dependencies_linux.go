@@ -143,7 +143,7 @@ func missingDependencyPackages(packages []string, run dependencyRunner) ([]strin
 		switch {
 		case err == nil && status == "installed":
 		case err == nil && (status == "config-files" || status == "not-installed"),
-			strings.TrimSpace(string(output)) == "dpkg-query: no packages found matching "+name:
+			status == "dpkg-query: no packages found matching "+name:
 			missing = append(missing, name)
 		default:
 			return nil, fmt.Errorf("无法核实软件包 %s 的安装状态", name)
@@ -208,12 +208,26 @@ func runDependencyCommand(progress io.Writer, name string, args ...string) ([]by
 	defer cancel()
 	command := exec.CommandContext(ctx, name, args...)
 	command.Env = append(os.Environ(), "LC_ALL=C", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=l")
-	var output dockerOutput
-	var writer io.Writer = &output
 	if (name == "apt-get" && (slices.Contains(args, "-y") || slices.Contains(args, "update"))) || name == "systemctl" {
-		writer = io.MultiWriter(progress, &output)
+		command.Stdout, command.Stderr = progress, progress
+		return nil, command.Run()
 	}
-	command.Stdout, command.Stderr = writer, writer
+	if name == "dpkg-query" || name == "dpkg" {
+		var stdout, stderr dockerOutput
+		command.Stdout, command.Stderr = &stdout, &stderr
+		err := command.Run()
+		if err != nil && name == "dpkg-query" && strings.TrimSpace(stdout.buffer.String()) == "" {
+			for _, line := range strings.Split(stderr.buffer.String(), "\n") {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "dpkg-query: no packages found matching ") {
+					return []byte(trimmed), err
+				}
+			}
+		}
+		return stdout.buffer.Bytes(), err
+	}
+	var output dockerOutput
+	command.Stdout, command.Stderr = &output, &output
 	err := command.Run()
 	return output.buffer.Bytes(), err
 }

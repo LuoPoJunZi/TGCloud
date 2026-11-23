@@ -2,7 +2,7 @@
 
 ## 为什么单独运行安装脚本失败
 
-安装入口需要同目录的完整 Python 源码和 `packaging/` 资源。使用完整 Git 工作副本，并从源码目录运行 `sudo bash install.sh`。
+在干净目录单独运行 `install.sh` 会进入在线引导模式，需要 `root` 终端、`curl` 与 Python 3.10+ 才能自动下载并校验正式源码包。如果当前目录存在残缺的本地源码（例如只复制了部分 `src/tgcloud/` 或 `scripts/`），安装入口会主动拦截以防混用；请换到空目录运行在线入口，或使用完整源码目录运行 `sudo bash install.sh`。
 
 ## 如何访问 CloudDrive2 后台
 

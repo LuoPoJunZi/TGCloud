@@ -122,7 +122,7 @@ class ValidationTests(unittest.TestCase):
         self.assertIn('--edition clouddrive2', release)
         cli = (ROOT / '.github/workflows/vps-installer.yml').read_text(encoding='utf-8')
         for name in ('.github/scripts/prepare_release.py', '.github/scripts/linux_validation.py',
-                     'tests/repository/test_release_preparation.py', 'tests/deployment/test_proxy_rendering.py'):
+                     'tests/repository/test_release_preparation.py', 'tests/deployment/proxy/test_proxy_rendering.py'):
             self.assertEqual(cli.count('      - "' + name + '"'), 2)
 
     def test_release_uploads_both_verified_archives_without_registry_publication(self):

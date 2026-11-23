@@ -12,8 +12,11 @@ from pathlib import Path
 from tgcloud.deployment import runtime
 
 _planner: ContextVar[tuple[Path, str] | None] = ContextVar("tgcloud_installer_planner", default=None)
-_PREFER_BUNDLED = {"install-source", "manager-runtime", "installer-preflight", "resources", "lan-entry", "https-entry"}
-_BOOTSTRAP_COMMANDS = _PREFER_BUNDLED | {"discover-install", "plan-install"}
+_PREFER_BUNDLED = {
+    "install-source", "manager-runtime", "installer-preflight", "resources",
+    "lan-entry", "https-entry", "discover-install", "plan-install",
+}
+_BOOTSTRAP_COMMANDS = _PREFER_BUNDLED
 
 
 @contextmanager
@@ -74,12 +77,14 @@ def invoke(*args: str, lock_fd: int | None = None, inherit_output: bool = False,
             pass_fds=() if lock_fd is None else (lock_fd,),
             stdin=subprocess.DEVNULL if input_text is None else subprocess.PIPE,
             stdout=None if inherit_output else subprocess.PIPE,
-            stderr=None if inherit_output else subprocess.STDOUT,
+            stderr=None if inherit_output else subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace",
+            start_new_session=os.name == "posix",
         )
     except OSError:
         # No child was dispatched; the Python implementation can safely run.
         return None
+    from tgcloud.deployment.host import stop_process
     with process:
         try:
             timeouts = {"status": 45, "check": 65, "logs": 105, "preflight": 45, "resources": 50,
@@ -91,16 +96,28 @@ def invoke(*args: str, lock_fd: int | None = None, inherit_output: bool = False,
                         "install-layout": 2500, "discover-install": 200, "plan-install": 200, "install-source": 200,
                         "manager-runtime": 180, "installer-preflight": 65, "lan-entry": 1100, "https-entry": 225, "install-acceptance": 140}
             timeout = 10 if args[1:] == ("--supported",) else timeouts.get(args[0], 135)
-            output, _ = process.communicate(input=input_text, timeout=timeout)
+            stdout, stderr = process.communicate(input=input_text, timeout=timeout)
         except subprocess.TimeoutExpired:
-            process.kill()
-            process.communicate()
+            stop_process(process, grace=10)
+            try:
+                process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
             raise TimeoutError("Go 管理命令超时，请核对实际运行状态") from None
         except KeyboardInterrupt:
-            process.kill()
-            process.communicate()
+            stop_process(process, grace=10)
+            try:
+                process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
             raise
-    return process.returncode, output or ""
+    stdout_text = stdout or ""
+    stderr_text = stderr or ""
+    if process.returncode == 0 or (args[0] == "check" and "--json" in args and stdout_text.strip()):
+        return process.returncode, stdout_text
+    if stdout_text and stderr_text:
+        return process.returncode, stdout_text.rstrip("\n") + "\n" + stderr_text
+    return process.returncode, stderr_text or stdout_text
 
 
 def supports(command: str, *, executable: Path | None = None) -> bool:

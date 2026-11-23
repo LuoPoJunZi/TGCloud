@@ -1,5 +1,11 @@
 # TGCloud 更新记录
 
+## Unreleased
+
+- 全面加固 Go/Python/Shell 安装与回滚安全性：修复 APT 密钥目录 `umask` 权限、SQLite 回滚旁文件清理顺序、External WebDAV 外部 Nginx 凭据吊销同步、任务取消状态不变量、WebDAV 429/401 探测冷却、凭据脱敏与 CI 测试覆盖。
+- 重构 `tgcloud` 本地管理主菜单为 5 组两级分类菜单并统一各级菜单对齐宽度。
+- 按职责整理 `src/tgcloud/deployment/ops/` 与 `tests/deployment/` 目录结构并抽离公共辅助模块。
+
 ## TGCloud v0.0.7
 
 - 公网和内网一键安装、升级优先使用源码包内经过校验的 Go 宿主工具，保留原有向导和 Python 回退。

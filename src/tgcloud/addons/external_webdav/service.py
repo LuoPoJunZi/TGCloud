@@ -219,8 +219,8 @@ class Service:
 
     def management_hint(self, *, check: bool = False) -> None:
         if os.environ.get("TGCLOUD_MANAGER_MENU") == "1":
-            self.log("下次管理，请运行：\ntgcloud\n选择 15. 外部 WebDAV"
-                     + (" → 3. 检查连接与配置，重新核对结果。" if check else ""))
+            self.log("下次管理，请运行：\ntgcloud\n选择 2. 访问入口管理 → 3. 外部 WebDAV 管理"
+                     + (" → 3. 检查连接配置，重新核对结果。" if check else ""))
         else:
             self.log("请运行 tgcloud-webdav check 复核。" if check else "下次管理，请运行：\ntgcloud-webdav")
 

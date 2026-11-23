@@ -43,7 +43,7 @@ remove_program_files() {
 }
 
 validate_database_backup() {
-  python3 - "$1" <<'PY'
+  python3 -I -S -B - "$1" <<'PY'
 import sqlite3
 import sys
 from contextlib import closing
@@ -253,7 +253,6 @@ native_check docker --allow-missing || fail "本机 Docker 平台检查失败"
 [[ -f "$SOURCE_DIR/preserve_runtime_config.sh" ]] \
   || fail "部署包缺少现有配置保护脚本"
 # shellcheck source=packaging/hooks/clouddrive2/preserve_runtime_config.sh
-# shellcheck disable=SC1090
 source "$SOURCE_DIR/preserve_runtime_config.sh"
 [[ "$SOURCE_DIR/" != "$INSTALL_DIR/"* && "$INSTALL_DIR/" != "$SOURCE_DIR/"* ]] \
   || fail "部署源目录和安装目录不能重叠"
@@ -340,7 +339,7 @@ elif [[ $? -eq 3 ]]; then
   }
 
   configure_docker_repository() {
-    local suite architecture targets uri
+    local suite architecture targets uri key_tmp list_tmp
     # shellcheck disable=SC1091
     source /etc/os-release
     case "${ID:-}" in
@@ -359,12 +358,22 @@ elif [[ $? -eq 3 ]]; then
     [[ ! -e /etc/apt/sources.list.d/docker.list && ! -L /etc/apt/sources.list.d/docker.list &&
        ! -e /etc/apt/keyrings/docker.asc && ! -L /etc/apt/keyrings/docker.asc ]] || fail "现有 Docker APT 配置需要人工核对"
     install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL --proto '=https' --proto-redir '=https' "$uri/gpg" -o /etc/apt/keyrings/docker.asc
-    chmod a+r /etc/apt/keyrings/docker.asc
+    key_tmp="$(mktemp /tmp/tgcloud-docker-key.XXXXXX)"
+    list_tmp="$(mktemp /tmp/tgcloud-docker-list.XXXXXX)"
+    if ! curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 60 "$uri/gpg" -o "$key_tmp"; then
+      rm -f -- "$key_tmp" "$list_tmp"
+      fail "无法下载 Docker 官方软件源签名公钥"
+    fi
     printf '%s\n' \
       "deb [arch=$architecture signed-by=/etc/apt/keyrings/docker.asc] $uri $suite stable" \
-      > /etc/apt/sources.list.d/docker.list
-    apt-get -o DPkg::Lock::Timeout=120 -o APT::Update::Error-Mode=any update
+      > "$list_tmp"
+    install -m 0644 -- "$key_tmp" /etc/apt/keyrings/docker.asc
+    install -m 0644 -- "$list_tmp" /etc/apt/sources.list.d/docker.list
+    rm -f -- "$key_tmp" "$list_tmp"
+    if ! apt-get -o DPkg::Lock::Timeout=120 -o APT::Update::Error-Mode=any update; then
+      rm -f -- /etc/apt/sources.list.d/docker.list /etc/apt/keyrings/docker.asc
+      fail "无法刷新 Docker 官方软件源列表"
+    fi
   }
 
   HAD_DOCKER=false
@@ -755,9 +764,11 @@ elif [[ $? -eq 3 ]]; then
   if BACKUP_INVENTORY="$(tgcloud_backup_inventory "$BACKUP_DIR")"; then
     BACKUP_COUNT="$(awk -F= '$1=="TOTAL_COUNT" {print $2}' <<< "$BACKUP_INVENTORY")"
     BACKUP_BYTES="$(awk -F= '$1=="TOTAL_BYTES" {print $2}' <<< "$BACKUP_INVENTORY")"
-    log "当前保留 ${BACKUP_COUNT:-0} 份升级／配置备份，占用约 $(( ${BACKUP_BYTES:-0} / 1024 / 1024 ))MB"
-    if [[ "${BACKUP_BYTES:-0}" =~ ^[0-9]+$ ]] && ((BACKUP_BYTES > 5368709120)); then
-      log "警告：历史备份已超过 5GB；请先运行 manage.sh backups 核对，再按需手动 prune-backups"
+    if [[ "${BACKUP_BYTES:-0}" =~ ^[0-9]+$ ]]; then
+      log "当前保留 ${BACKUP_COUNT:-0} 份升级／配置备份，占用约 $(( ${BACKUP_BYTES:-0} / 1024 / 1024 ))MB"
+      if ((BACKUP_BYTES > 5368709120)); then
+        log "警告：历史备份已超过 5GB；请先运行 manage.sh backups 核对，再按需手动 prune-backups"
+      fi
     fi
   else
     log "警告：无法统计历史备份；部署已经通过验收，请稍后运行 manage.sh backups 检查"

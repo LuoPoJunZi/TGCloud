@@ -13,8 +13,10 @@ from tgcloud.cli.terminal import Terminal
 from tgcloud.deployment.configuration import plain
 
 ACTIONS = ("install", "status", "check", "enable", "disable", "configure", "uninstall", "upgrade", "print-config", "users")
-ACTION_LABELS = ("安装外部 WebDAV", "查看运行状态", "检查连接与配置", "启用访问", "停用访问",
-                 "修改域名或账号配置", "卸载外部 WebDAV", "升级附加功能", "查看手机连接配置", "用户管理")
+ACTION_LABELS = (
+    "安装外部服务", "查看运行状态", "检查连接配置", "启用外部访问", "停用外部访问",
+    "修改域名账号", "卸载外部服务", "升级维护工具", "查看连接信息", "管理外部账号",
+)
 
 
 class WebDAVTerminal(Terminal):
@@ -175,7 +177,7 @@ def interactive(service, args, *, operation=None) -> None:
         labels = tuple("继续完成配置" if repair and key == "configure" else label for key, label in zip(ACTIONS, ACTION_LABELS))
         action = choose(service.ui, service.log, "请选择操作：", tuple(zip(ACTIONS, labels)),
                         default="6" if repair else "2" if record else "1",
-                        exit_label="返回主菜单" if os.environ.get("TGCLOUD_MANAGER_MENU") == "1" else "退出")
+                        exit_label="返回上级" if os.environ.get("TGCLOUD_MANAGER_MENU") == "1" else "退出")
         if not action:
             return
         args.action = action
@@ -189,7 +191,7 @@ def interactive(service, args, *, operation=None) -> None:
                 break
             refresh = action in {"status", "check"}
             choices = (("refresh", "重新检查" if action == "check" else "刷新状态"),) if refresh else ()
-            if not choose(service.ui, service.log, "", choices, default="0", exit_label="返回功能菜单"):
+            if not choose(service.ui, service.log, "", choices, default="0", exit_label="返回上级"):
                 break
 
 

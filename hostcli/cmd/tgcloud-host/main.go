@@ -54,11 +54,18 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, inspect.InstallDirectory, inspect.RunDocker))
 }
 
+func supportedExit(supported bool) int {
+	if supported {
+		return 0
+	}
+	return 1
+}
+
 func installLayoutCommand(args []string, errOut io.Writer) int {
 	var err error
 	switch {
 	case len(args) == 1 && args[0] == "--supported":
-		return 0
+		return supportedExit(inspect.LinuxSupported())
 	case len(args) == 4 && args[0] == "prepare":
 		err = inspect.PrepareInstallLayout(args[1], args[2], args[3])
 	case len(args) == 2 && args[0] == "finalize":
@@ -80,7 +87,7 @@ func freshInstallCommand(args []string, out, errOut io.Writer) int {
 	var err error
 	switch {
 	case len(args) == 1 && args[0] == "--supported":
-		return 0
+		return supportedExit(inspect.LinuxSupported())
 	case len(args) == 4 && args[0] == "stage":
 		err = inspect.StageFreshInstall(args[1], args[2], args[3], out)
 	case len(args) == 3 && args[0] == "publish":
@@ -122,7 +129,7 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 	}
 	if len(args) == 2 && args[0] == "prepare-image" {
 		if args[1] == "--supported" {
-			return 0
+			return supportedExit(inspect.LinuxSupported())
 		}
 		if err := inspect.PrepareImage(args[1]); err != nil {
 			fmt.Fprintln(errOut, err)
@@ -131,7 +138,7 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 		return 0
 	}
 	if len(args) == 2 && args[0] == "build-candidate" && args[1] == "--supported" {
-		return 0
+		return supportedExit(inspect.LinuxSupported())
 	}
 	if len(args) == 3 && args[0] == "build-candidate" {
 		if err := inspect.BuildCandidate(args[1], args[2], out); err != nil {
@@ -146,7 +153,7 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 	}
 	if len(args) >= 2 && len(args) <= 3 && args[0] == "deploy-bot" {
 		if len(args) == 2 && args[1] == "--supported" {
-			return 0
+			return supportedExit(inspect.LinuxSupported())
 		}
 		var err error
 		if len(args) == 3 {
@@ -162,7 +169,7 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 	}
 	if len(args) >= 2 && args[0] == "accept-bot" && (len(args) == 2 || (len(args) == 3 && args[2] == "--check-gateway")) {
 		if len(args) == 2 && args[1] == "--supported" {
-			return 0
+			return supportedExit(inspect.LinuxSupported())
 		}
 		if err := inspect.AcceptBot(args[1], len(args) == 3, out); err != nil {
 			fmt.Fprintln(errOut, err)
@@ -172,7 +179,7 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 	}
 	if len(args) == 2 && args[0] == "report-install" {
 		if args[1] == "--supported" {
-			return 0
+			return supportedExit(inspect.LinuxSupported())
 		}
 		if err := inspect.ReportInstall(args[1], out); err != nil {
 			fmt.Fprintln(errOut, err)
@@ -274,7 +281,7 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 			return installPreflightCommand(args, out, errOut)
 		case "check-install-resources":
 			if len(args) == 2 && args[1] == "--supported" {
-				return 0
+				return supportedExit(inspect.LinuxSupported())
 			}
 			if len(args) != 2 {
 				fmt.Fprintln(errOut, usage)
@@ -287,7 +294,7 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 			return 0
 		case "check-install-host":
 			if len(args) == 2 && args[1] == "--supported" {
-				return 0
+				return supportedExit(inspect.LinuxSupported())
 			}
 			if len(args) != 3 {
 				fmt.Fprintln(errOut, usage)
@@ -302,7 +309,7 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 			return installLayoutCommand(args[1:], errOut)
 		case "prepare-dependencies":
 			if len(args) == 2 && args[1] == "--supported" {
-				return 0
+				return supportedExit(inspect.LinuxSupported())
 			}
 			if len(args) != 2 || (args[1] != "install" && args[1] != "upgrade") {
 				fmt.Fprintln(errOut, usage)
@@ -320,6 +327,9 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 		case "stage-upgrade", "backup-config", "snapshot-database", "commit-upgrade-backup", "quiesce-upgrade", "resume-upgrade", "apply-upgrade", "rollback-upgrade":
 			return upgrade(args, out, errOut)
 		}
+	}
+	if len(args) == 2 && args[1] == "--supported" && (args[0] == "start" || args[0] == "stop" || args[0] == "restart") {
+		return supportedExit(inspect.LinuxSupported())
 	}
 	jsonOutput := len(args) == 2 && args[1] == "--json" && (args[0] == "status" || args[0] == "check")
 	if jsonOutput {
@@ -345,6 +355,12 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 		return 2
 	}
 	if instance == nil {
+		if jsonOutput {
+			if action == "status" {
+				return writeJSON(out, errOut, map[string]any{"present": false}, 0)
+			}
+			return writeJSON(out, errOut, map[string]any{"present": false, "ready": false}, 1)
+		}
 		fmt.Fprintln(out, "TGCloud：未检测到一键安装实例")
 		if action == "status" {
 			return 0
@@ -383,7 +399,7 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 
 func cleanupCommand(args []string, errOut io.Writer) int {
 	if len(args) == 2 && args[1] == "--supported" {
-		return 0
+		return supportedExit(inspect.LinuxSupported())
 	}
 	if len(args) != 8 {
 		fmt.Fprintln(errOut, usage)
@@ -400,7 +416,7 @@ func cleanupCommand(args []string, errOut io.Writer) int {
 
 func gatewayCommand(args []string, out, errOut io.Writer) int {
 	if len(args) == 2 && args[1] == "--supported" {
-		return 0
+		return supportedExit(inspect.LinuxSupported())
 	}
 	var err error
 	switch {
@@ -423,7 +439,7 @@ func gatewayCommand(args []string, out, errOut io.Writer) int {
 
 func installPlanCommand(args []string, out, errOut io.Writer) int {
 	if len(args) == 2 && args[1] == "--supported" {
-		return 0
+		return supportedExit(inspect.LinuxSupported())
 	}
 	var value any
 	var err error
@@ -451,7 +467,7 @@ func installPlanCommand(args []string, out, errOut io.Writer) int {
 
 func installTransaction(args []string, out, errOut io.Writer) int {
 	if len(args) == 2 && args[1] == "--supported" {
-		return 0
+		return supportedExit(inspect.LinuxSupported())
 	}
 	if len(args) != 8 {
 		fmt.Fprintln(errOut, usage)
@@ -471,7 +487,7 @@ func installTransaction(args []string, out, errOut io.Writer) int {
 
 func installPreflightCommand(args []string, out, errOut io.Writer) int {
 	if len(args) == 2 && args[1] == "--supported" {
-		return 0
+		return supportedExit(inspect.LinuxSupported())
 	}
 	var err error
 	switch {
@@ -494,7 +510,7 @@ func installPreflightCommand(args []string, out, errOut io.Writer) int {
 
 func upgrade(args []string, out, errOut io.Writer) int {
 	if len(args) == 2 && args[1] == "--supported" {
-		return 0
+		return supportedExit(inspect.LinuxSupported())
 	}
 	var err error
 	switch {

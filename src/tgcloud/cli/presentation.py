@@ -181,7 +181,7 @@ class OperationReport:
                          + ("本次未阻断基础步骤，不代表后续验收均通过。" if confirmed else "基础步骤未确认通过，不能判作本次无害。"))
         if "unknown" in self.alerts:
             lines.append("[待核对] 有未识别的 WARNING，请核对上方脱敏原文。")
-        from tgcloud.deployment.diagnostics import log_rotation_lines
+        from tgcloud.deployment.ops.diagnostics import log_rotation_lines
         lines += ["\n── 容器日志轮转 ──\n", *log_rotation_lines(self.log_rotation)]
         lines += ["\n── 转存验收 ──\n"]
         if self.readiness is None:
@@ -189,7 +189,7 @@ class OperationReport:
         else:
             ready = all(value == "ok" for value in self.readiness.values())
             lines.append("业务就绪：" + ("基础条件通过（最近观察，不代表写入）" if ready else "尚未全部确认（最近观察）"))
-            from tgcloud.deployment.readiness import LABELS, STATES
+            from tgcloud.deployment.ops.readiness import LABELS, STATES
             lines.extend(status_rows((label, STATES[self.readiness[key]]) for key, label in LABELS.items()))
         lines += ["WebDAV 写入与大小复验：" + state("webdav"), "实际 Telegram 转存：待人工验收",
                   ("公网访问：待外部网络验收" if self.mode == "https" else "局域网客户端访问：待其他设备验收"),
@@ -259,6 +259,7 @@ def friendly_marker(line: str) -> str:
         "APPLY_CONFIG": "配置应用", "BACKUPS": "备份检查", "BACKUP_PRUNE": "备份清理",
         "CONFIGURATION": "配置检查", "DESTINATION": "WebDAV 写入验收",
         "CLI_CHECK": "安装只读预检", "LAN_CHECK": "内网只读预检",
+        "HTTPS": "HTTPS 入口配置",
         "PROXY_STATUS_SCRIPT": "HTTPS 状态脚本", "LAN_ENTRY": "内网入口检查",
         "WEBDAV_AUTH": "WebDAV 账号认证", "WEBDAV_LIST": "WebDAV 目标目录访问",
         "WEBDAV": "WebDAV 账号与目录检查", "WEBDAV_WRITE": "WebDAV 测试文件写入",

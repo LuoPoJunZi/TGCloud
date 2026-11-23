@@ -43,7 +43,7 @@ wait_healthy() {
 
 redact_runtime_logs() {
   sed -E \
-    -e '/[Pp]assword|密码/ s/(:|=)[^:=]*$/\1 [REDACTED]/' \
+    -e 's/([Pp]assword|密码)([[:space:]]*[:=]).*$/\1\2 [REDACTED]/' \
     -e 's/([A-Z0-9_]*(PASSWORD|TOKEN|API_HASH|SECRET)[A-Z0-9_]*=)[^[:space:]]+/\1[REDACTED]/g' \
     -e 's/[0-9]{6,12}:[A-Za-z0-9_-]{20,}/[REDACTED_BOT_TOKEN]/g' \
     -e 's#(https?://)[^[:space:]/:@]+:[^[:space:]/@]+@#\1[REDACTED]@#g'
@@ -51,7 +51,7 @@ redact_runtime_logs() {
 
 apply_config() {
   local candidate="${2:-}" backup staged restarted=false
-  [[ -f "$candidate" && "$candidate" == /* ]] || { echo "请提供新配置文件的绝对路径" >&2; return 2; }
+  [[ -f "$candidate" && ! -L "$candidate" && "$candidate" == /* ]] || { echo "请提供新配置文件的绝对路径" >&2; return 2; }
   install -d -m 700 "$BACKUP_DIR"
   backup="$(mktemp "$BACKUP_DIR/env-XXXXXXXX.env")"
   install -m 600 .env "$backup"
@@ -79,8 +79,10 @@ apply_config() {
       return
     fi
   fi
+  trap - ERR
+  trap '' INT TERM HUP
   restore_config
-  trap - ERR INT TERM HUP
+  trap - INT TERM HUP
   printf 'TGCLOUD_APPLY_CONFIG=FAILED\n已恢复旧配置；备份：%s\n' "$backup" >&2
   return 1
 }

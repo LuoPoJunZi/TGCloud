@@ -23,7 +23,7 @@ import subprocess
 import sys
 from pathlib import Path
 from tgcloud.app import TransferService
-from tgcloud.deployment.check import code_fingerprint, main
+from tgcloud.deployment.ops.check import code_fingerprint, main
 import cryptg
 import psutil
 import telethon

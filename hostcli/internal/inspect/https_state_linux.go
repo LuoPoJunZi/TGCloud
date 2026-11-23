@@ -109,7 +109,7 @@ func (entry httpsEntry) readState() (httpsState, bool, error) {
 
 func readHTTPSPrivate(path string, limit int64) ([]byte, error) {
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || !privateOwner(info, 0) {
+	if err != nil || !info.Mode().IsRegular() || !privateOwner(info, managedOwnerUID) {
 		return nil, errHTTPSState
 	}
 	return readSourceFile(path, limit)
@@ -150,7 +150,7 @@ func requireHTTPSDir(path string, mode os.FileMode) error {
 		return errHTTPSState
 	}
 	info, err := os.Lstat(path)
-	if err != nil || !info.IsDir() || info.Sys().(*syscall.Stat_t).Uid != 0 || info.Mode().Perm() & ^mode != 0 {
+	if err != nil || !info.IsDir() || info.Sys().(*syscall.Stat_t).Uid != managedOwnerUID || info.Mode().Perm() & ^mode != 0 {
 		return errHTTPSState
 	}
 	// os.Mkdir is subject to the installer's umask. Nginx workers need
@@ -168,7 +168,7 @@ func (entry httpsEntry) lock() (*os.File, error) {
 		return nil, err
 	}
 	path := filepath.Join(entry.root, "transaction.lock")
-	file, err := openPrivate(path, syscall.O_CREAT|syscall.O_RDWR, 0)
+	file, err := openPrivate(path, syscall.O_CREAT|syscall.O_RDWR, managedOwnerUID)
 	if err != nil {
 		return nil, errHTTPSState
 	}

@@ -266,7 +266,7 @@ def build_plan(editions: tuple[str, ...], session: LocalSession, *, purge_data: 
     if journal.exists() or journal.is_symlink():
         raise UninstallError("外部入口事务尚未恢复；先用 tgcloud proxy recover 核对，不删除配置或恢复材料。")
     if any(key in state.get("external_webdav", {}) or (Path("/opt/tgcloud-webdav") / key / "config.json").exists() for key in editions):
-        raise UninstallError("所选网关仍被外部 WebDAV 依赖；请先在 tgcloud → 15. 外部 WebDAV → 7. 卸载外部 WebDAV 中处理，不静默中断外部入口。")
+        raise UninstallError("所选网关仍被外部 WebDAV 依赖；请先在 tgcloud → 2. 访问入口管理 → 3. 外部 WebDAV 管理 → 7. 卸载外部服务 中处理，不静默中断外部入口。")
     selected = {}
     selected_networks = {}
     for key in editions:

@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
 
 func TestRuntimeStatusAndCheck(t *testing.T) {
@@ -107,5 +109,49 @@ func TestUnconfirmedServiceControlDoesNotContactDocker(t *testing.T) {
 	var output bytes.Buffer
 	if exit := run([]string{"stop", "bot"}, &output, &output, t.TempDir(), docker); exit != 2 {
 		t.Fatalf("exit=%d, output=%q", exit, output.String())
+	}
+}
+
+func TestStatusAndCheckJSONWhenNoInstance(t *testing.T) {
+	docker := func(args ...string) ([]byte, error) {
+		return nil, nil
+	}
+	directory := t.TempDir()
+	for _, tc := range []struct {
+		action string
+		exit   int
+	}{
+		{action: "status", exit: 0},
+		{action: "check", exit: 1},
+	} {
+		var out, errOut bytes.Buffer
+		code := run([]string{tc.action, "--json"}, &out, &errOut, directory, docker)
+		if code != tc.exit {
+			t.Fatalf("%s --json exit=%d, want %d, stderr=%q", tc.action, code, tc.exit, errOut.String())
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+			t.Fatalf("%s --json did not emit JSON: %v, raw=%q", tc.action, err, out.String())
+		}
+		if present, ok := payload["present"].(bool); !ok || present {
+			t.Fatalf("%s --json unexpected payload: %v", tc.action, payload)
+		}
+	}
+}
+
+func TestSupportedReflectsPlatform(t *testing.T) {
+	want := 1
+	if inspect.LinuxSupported() {
+		want = 0
+	}
+	docker := func(args ...string) ([]byte, error) {
+		t.Fatalf("unexpected Docker arguments: %q", args)
+		return nil, nil
+	}
+	for _, cmd := range []string{"install-transaction", "stage-upgrade", "fresh-install", "install-layout", "prepare-dependencies"} {
+		var out, errOut bytes.Buffer
+		if got := run([]string{cmd, "--supported"}, &out, &errOut, t.TempDir(), docker); got != want {
+			t.Fatalf("%s --supported exit=%d, want %d", cmd, got, want)
+		}
 	}
 }

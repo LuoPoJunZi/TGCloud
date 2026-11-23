@@ -21,7 +21,7 @@ from telethon.tl import functions, types
 from tests.fixtures import ROOT as SOURCE
 from tests.fixtures.telegram import callback_data
 from tests.fixtures.transfer import FakeRclone, make_service, make_settings
-from tgcloud.deployment.check import code_fingerprint, mismatched_keys
+from tgcloud.deployment.ops.check import code_fingerprint, mismatched_keys
 from tgcloud.domain.states import LEGAL_TRANSITIONS, STATE_LABELS
 from tgcloud.monitoring.healthcheck import healthy
 from tgcloud.monitoring.resources import AdaptiveWindow, ResourceSnapshot

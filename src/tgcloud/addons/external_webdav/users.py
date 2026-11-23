@@ -28,6 +28,9 @@ def write(service, values):
     info = service.auth.stat()
     config.atomic(service.auth, config.auth_content(values), mode=0o640,
                   gid=info.st_gid if os.name == "posix" else None)
+    external = service.manager.external_entry()
+    if external:
+        external.sync_auth(service.product.key)
 
 
 def reload_auth(service):
@@ -35,6 +38,10 @@ def reload_auth(service):
     # Only a hash file changes: don't call route activation's Edition-wide
     # fallback (which intentionally disables the whole external route).
     service.verify_mounted_hash()
+    external = service.manager.external_entry()
+    if external:
+        external.docker.reload(external.context())
+        return
     for argument in ("-t", "-s reload"):
         code, _ = service.session.run("docker exec tgcloud-proxy-nginx nginx " + argument, timeout=30)
         if code:
@@ -185,9 +192,9 @@ def menu(service, *, sample_file: str = "") -> None:
             service.log(numbered_menu((index, member["username"] + " · " + phases[member["phase"]])
                                       for index, member in enumerate(members, 1)))
         action = choose(service.ui, service.log, "请选择操作：", (
-            ("add", "添加只读账号"), ("check", "检查账号"), ("enable", "启用账号"),
-            ("disable", "停用账号"), ("rotate", "更改密码"), ("remove", "移除入口授权")),
-            default="0", exit_label="返回功能菜单")
+            ("add", "添加账号"), ("check", "检查账号"), ("enable", "启用账号"),
+            ("disable", "停用账号"), ("rotate", "更改密码"), ("remove", "移除账号")),
+            default="0", exit_label="返回上级")
         if not action:
             return
         if action == "add":
@@ -197,7 +204,7 @@ def menu(service, *, sample_file: str = "") -> None:
             if not choices:
                 service.log("没有新增的家庭账号。")
                 continue
-            user = choose(service.ui, service.log, "请选择账号：", choices, default="0", exit_label="返回用户管理")
+            user = choose(service.ui, service.log, "请选择账号：", choices, default="0", exit_label="返回上级")
             if not user:
                 continue
         account(service, action, user, sample_file=sample_file)

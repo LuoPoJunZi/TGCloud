@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 )
 
 const httpsContainerFields = `{"id":{{json .Id}},"name":{{json .Name}},"image":{{json .Image}},` +
@@ -182,22 +184,9 @@ func publishedHTTPSPorts(docker DockerRunner) (map[int]bool, error) {
 	for _, mapping := range strings.FieldsFunc(string(raw), func(separator rune) bool {
 		return separator == ',' || unicode.IsSpace(separator)
 	}) {
-		host, container, exists := strings.Cut(mapping, "->")
-		idx := strings.LastIndexByte(host, ':')
-		if !exists || idx < 0 || !strings.HasSuffix(container, "/tcp") {
+		minPort, maxPort, ok := hostutil.ParseHostPortRange(mapping, true)
+		if !ok {
 			continue
-		}
-		left, right, ranged := strings.Cut(host[idx+1:], "-")
-		minPort, err := strconv.Atoi(left)
-		if err != nil {
-			continue
-		}
-		maxPort := minPort
-		if ranged {
-			maxPort, err = strconv.Atoi(right)
-			if err != nil {
-				continue
-			}
 		}
 		for _, port := range []int{80, 443} {
 			if minPort <= port && port <= maxPort {

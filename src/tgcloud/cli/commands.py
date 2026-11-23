@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "compose":
         from tgcloud.compose.management import main as operation
     elif args.command == "listen":
-        from tgcloud.deployment.listening import main as operation
+        from tgcloud.deployment.ops.listening import main as operation
     elif args.command == "naming-preview":
         from .naming import main as operation
     elif args.command == "proxy":

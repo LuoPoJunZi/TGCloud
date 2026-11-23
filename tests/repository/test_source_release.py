@@ -239,6 +239,46 @@ class SourceContractRejectionTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "missing required"):
                     package.verify(directory, tag)
 
+    def test_add_host_cli_uses_goproxy_off_and_verifies_elf_architectures(self):
+        from unittest.mock import patch
+
+        tag = "v0.0.1"
+        prefix = f"TGCloud-{tag}"
+        source_buf = io.BytesIO()
+        with tarfile.open(fileobj=source_buf, mode="w") as archive:
+            for rel, content in (("hostcli/go.mod", b"module example.test/hostcli\n\ngo 1.23.0\n"),
+                                 ("hostcli/cmd/tgcloud-host/main.go", b"package main\nfunc main(){}\n")):
+                info = tarfile.TarInfo(f"{prefix}/{rel}")
+                info.size = len(content)
+                archive.addfile(info, io.BytesIO(content))
+
+        envs = []
+
+        def fake_run(cmd, cwd, env, check, timeout):
+            envs.append(dict(env))
+            out = Path(cmd[cmd.index("-o") + 1])
+            machine = package.HOST_CLI_ARCHES[env["GOARCH"]]
+            elf = bytearray(64)
+            elf[:6] = b"\x7fELF\x02\x01"
+            elf[18:20] = machine.to_bytes(2, "little")
+            out.write_bytes(bytes(elf))
+
+        with patch.object(package.shutil, "which", return_value="/usr/bin/go"), \
+                patch.object(package.subprocess, "run", side_effect=fake_run):
+            updated = package.add_host_cli(source_buf.getvalue(), prefix)
+
+        self.assertEqual(len(envs), 2)
+        for env in envs:
+            self.assertEqual(env["GOPROXY"], "off")
+            self.assertEqual(env["GOTOOLCHAIN"], "local")
+            self.assertEqual(env["CGO_ENABLED"], "0")
+        with tarfile.open(fileobj=io.BytesIO(updated), mode="r:") as bundle:
+            names = set(bundle.getnames())
+            self.assertIn(f"{prefix}/hostcli/bin", names)
+            for arch in package.HOST_CLI_ARCHES:
+                self.assertIn(f"{prefix}/hostcli/bin/linux-{arch}", names)
+                self.assertIn(f"{prefix}/hostcli/bin/linux-{arch}/tgcloud-host", names)
+
 
 if __name__ == "__main__":
     unittest.main()
