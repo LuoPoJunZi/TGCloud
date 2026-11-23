@@ -25,7 +25,7 @@ class UI:
     def ask(self, prompt, default='', secret=False, validate=lambda v:v):
         values={'Telegram API ID':'123456', 'Telegram API Hash（隐藏输入）':'a'*32,
                 'Bot Token（隐藏输入）':'123456789:FAKE_COMPOSE_CI_TOKEN_NOT_REAL',
-                '管理员 Telegram 用户 ID（仅一个）':'123456789','任务暂存预算 GB':'1'}
+                '管理员 Telegram 用户 ID（仅一个）':'123456789','任务暂存预算 GB':'1', '最少保留空间 GB':'8'}
         return validate(values.get(prompt,default))
     def confirm(self, _): return True
     def private(self, *_): pass
