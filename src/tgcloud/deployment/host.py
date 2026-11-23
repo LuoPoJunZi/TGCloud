@@ -126,7 +126,8 @@ class LocalSession:
 
     def run(
         self, command: str, *, sudo: bool = False,
-        stream: Callable[[str], None] | None = None, timeout: float | None = None,
+        stream: Callable[[str], None] | None = None, timeout: float | None = None, shutdown_grace: float = 150,
+        stream_recovery: bool = False,
     ) -> tuple[int, str]:
         if sudo:
             raise RuntimeError("请先以 root 运行入口；不在内部传递 sudo 密码")
@@ -174,7 +175,20 @@ class LocalSession:
             code = process.wait(timeout=max(0.1, deadline - time.monotonic()))
             return code, "".join(captured)
         finally:
-            stop_process(process)
+            stop_process(process, grace=shutdown_grace)
+            if stream_recovery and stream:
+                # The installer can emit rollback and cleanup results after a
+                # manual interruption has unwound the main output loop.
+                reader.join(timeout=1)
+                while size < 8 * 1024 * 1024:
+                    try:
+                        line = lines.get_nowait()
+                        if line is None:
+                            break
+                        size += len(line)
+                        stream(self.log.clean(line.rstrip("\n")))
+                    except (queue.Empty, OSError):
+                        break
             process.stdout.close()
             reader.join(timeout=1)
 
@@ -221,7 +235,7 @@ class LocalSession:
 
 
 @contextmanager
-def edition_lock(path: Path) -> Iterator[None]:
+def edition_lock(path: Path) -> Iterator[int]:
     # This additional lock coordinates CLI invocations. The existing Windows
     # base installer has no equivalent lock: do not run it concurrently.
     import fcntl
@@ -241,6 +255,6 @@ def edition_lock(path: Path) -> Iterator[None]:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise RuntimeError("另一个一键脚本正在操作此实例") from exc
-        yield
+        yield descriptor
     finally:
         os.close(descriptor)

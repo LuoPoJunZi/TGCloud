@@ -63,6 +63,26 @@ def build_payload(root: Path, product: ProductProfile, destination: Path) -> Non
             (destination / name).chmod(0o644)
 
 
+def build_install_payload(root: Path, product: ProductProfile, destination: Path, digest: str) -> bool:
+    """Use the native generator only for one-click deployments."""
+    from tgcloud.cli import host_cli
+    from tgcloud.deployment import local_source
+
+    if host_cli.supports("install-source"):
+        root = root.absolute()
+        names = local_source.source_names(root)
+        mapping = {name: path.relative_to(root).as_posix() for name, path in payload_sources(root, product).items()}
+        mapping.update({name: name for name in ("LICENSE", "NOTICE", "README.md") if name in names})
+        result = local_source.native_source("payload", str(root), str(destination), digest,
+                                            selection={"files": names, "payload": mapping})
+        if result is not None:
+            if local_source.source_names(root) != names:
+                raise ValueError("生成部署包期间源码文件清单发生变化，请重新检查")
+            return True
+    build_payload(root, product, destination)
+    return False
+
+
 def gateway_image(source: Path, product: ProductProfile) -> str:
     text = payload_sources(source, product)["docker-compose.yml"].read_text(encoding="utf-8")
     images = re.findall(r"(?m)^    image: ([^\r\n]+)$", text)

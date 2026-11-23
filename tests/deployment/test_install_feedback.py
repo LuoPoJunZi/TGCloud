@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import json
 import shlex
+import sqlite3
 import stat
 import tempfile
 import unittest
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack, closing, nullcontext
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,7 +23,7 @@ from tgcloud.cli.presentation import (
 )
 from tgcloud.deployment import configuration, instances, readiness, releases
 from tgcloud.deployment.host import SafeLog
-from tgcloud.deployment.lifecycle import install
+from tgcloud.deployment.lifecycle import install, lan
 from tgcloud.deployment.profiles import PRODUCTS
 from tgcloud.version import VERSION
 
@@ -297,6 +298,70 @@ class ExecutionSummaryTests(unittest.TestCase):
                 self.assertEqual(plan.feedback.checks["webdav"], "failed" if failed else "ok" if confirmed else "not_run")
                 self.assertEqual(plan.feedback.checks["base"], "ok")
 
+    def test_native_acceptance_keeps_execution_and_observation_distinct(self):
+        database = self.root / "tasks.db"
+        with closing(sqlite3.connect(database)) as connection, connection:
+            connection.execute("CREATE TABLE tasks (state TEXT)")
+            connection.execute("INSERT INTO tasks VALUES ('queued')")
+        original_db = database.read_bytes()
+        original_instance = self.instance
+        for mode, action, write in (("https", "install", "ok"), ("lan", "upgrade", "not_run"), ("lan", "upgrade", "failed")):
+            with self.subTest(mode=mode, action=action, write=write), ExitStack() as stack:
+                self.instance = replace(original_instance, present=action == "upgrade")
+                plan = (self.plan(action) if mode == "https"
+                        else lan.Plan(self.instance, action, "192.168.26.5", saved=None, entry_healthy=True))
+                self.session.reset_mock()
+                self.ui.confirm.reset_mock()
+                self.ui.confirm.return_value = True
+                self.session.run.return_value = ((1, "TGCLOUD_DESTINATION=FAILED\n") if write == "failed"
+                                                 else (0, "TGCLOUD_DESTINATION=OK\n"))
+                shown = []
+
+                def summary(_command, operation, _directory, *, input_text, executable, captured=shown):
+                    self.assertEqual((operation, executable), ("summary", ROOT / "tgcloud-host"))
+                    evidence = json.loads(input_text)
+                    captured.append(evidence)
+                    return json.dumps({"schema": 1, "outcome": "failed" if evidence["failed"] else "completed",
+                        "checks": evidence["checks"], "actual_version": VERSION,
+                        "readiness": {**dict.fromkeys(readiness.LABELS, "ok"), "destination": "partial"},
+                        "log_rotation": None})
+
+                stack.enter_context(patch.object(install.host_cli, "deployment_tool", return_value=ROOT / "tgcloud-host"))
+                stack.enter_context(patch.object(install.host_cli, "checked_output", side_effect=summary))
+                stack.enter_context(patch.object(install.terminal, "show_setup_credentials"))
+                if mode == "https":
+                    self.run_plan(plan)
+                else:
+                    for module, name, value in (
+                        (lan, "edition_lock", nullcontext()),
+                        (lan, "validate_environment", None),
+                        (install.upgrade, "recheck_plan", self.instance),
+                        (install.preflight, "resource_check", None),
+                        (install, "apply_base", None),
+                        (instances, "discover_for_install", self.instance),
+                    ):
+                        stack.enter_context(patch.object(module, name, return_value=value))
+                    stack.enter_context(patch.object(lan, "native_entry", side_effect=[{"saved": None, "running": True}, {}, {}]))
+                    scope = self.assertRaisesRegex(RuntimeError, "WebDAV") if write == "failed" else nullcontext()
+                    with scope:
+                        lan.execute(plan, RELEASE, ROOT, ROOT, self.session, self.log, self.ui, verify=write == "failed")
+                self.assertEqual(len(shown), 1)
+                self.assertEqual(shown[0]["mode"], mode)
+                self.assertEqual(shown[0]["checks"]["webdav"], write)
+                self.assertEqual(shown[0]["failed"], write == "failed")
+                self.assertEqual(plan.feedback.checks["base"], "ok")
+                self.assertEqual(plan.feedback.checks["entry"], "ok")
+                self.assertIn("尚未全部确认（最近观察）", self.messages[-1])
+                self.assertEqual(self.ui.confirm.call_count, int(write != "not_run"))
+                commands = self.session.run.call_args_list
+                self.assertEqual(len(commands), int(write != "not_run"))
+                if commands:
+                    command = shlex.split(commands[0].args[0])
+                    self.assertEqual(command[2:4], ["install-acceptance", "webdav"])
+                    self.assertEqual(command[-1], "--yes")
+                self.assertEqual((self.root / ".env").read_bytes(), original_instance.raw_config)
+                self.assertEqual(database.read_bytes(), original_db)
+
     def test_interruption_does_not_probe_or_claim_rollback_and_original_exception_survives(self):
         plan = self.plan()
         with patch.object(install.readiness, "inspect") as inspect, self.assertRaises(KeyboardInterrupt), install.execution_feedback(
@@ -382,7 +447,7 @@ class ExecutionSummaryTests(unittest.TestCase):
                 session.run.side_effect = lambda command, _result=verify_result, **_: _result if "manage.sh verify" in command else (0, "unknown")
                 client.resolve.return_value, client.download.return_value = RELEASE, ROOT
                 for target, name, value in (
-                    (vps.preflight, "validate_host", None), (vps.architecture, "check_docker", None),
+                    (vps.preflight, "validate_host", None), (vps.preflight.architecture, "check_docker", None),
                     (instances, "docker_inventory", set()), (instances, "discover", instance),
                     (instances, "check_foreign_gateway", None), (install.preflight, "resource_check", None),
                     (install.upgrade, "assert_unmodified", None), (install, "apply_base", None),

@@ -7,15 +7,18 @@ import gzip
 import hashlib
 import io
 import json
+import os
 import re
 import shutil
 import subprocess  # nosec B404
 import tarfile
+import tempfile
 from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[2]
 TAG = re.compile(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:alpha|beta|rc)\.[1-9][0-9]*)?")
 LIMIT = 100 * 1024 * 1024
+HOST_CLI_ARCHES = {"amd64": 62, "arm64": 183}
 MODERN_REQUIRED = {
     "install.sh", "LICENSE", "pyproject.toml",
     "scripts/run_source.py", "src/tgcloud/__init__.py", "src/tgcloud/version.py",
@@ -103,6 +106,45 @@ def safe_path(name: str) -> bool:
     return bool(name) and not path.is_absolute() and not any(part in {"..", ".git"} for part in path.parts) and "\\" not in name and ":" not in name
 
 
+def host_cli_name(arch):
+    return f"hostcli/bin/linux-{arch}/tgcloud-host"
+
+
+def add_host_cli(archive: bytes, prefix: str) -> bytes:
+    """Build only the Go sources in the immutable standalone source archive."""
+    output = io.BytesIO(archive)
+    with tempfile.TemporaryDirectory(prefix="tgcloud-go-build-") as temporary, \
+            tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as source, \
+            tarfile.open(fileobj=output, mode="a") as bundle:
+        module = prefix + "/hostcli/"
+        if module + "go.mod" not in source.getnames():
+            return archive
+        root = Path(temporary)
+        for member in source.getmembers():
+            if member.isfile() and member.name.startswith(module):
+                name = member.name.removeprefix(module)
+                if safe_path(name) and (name == "go.mod" or name.endswith(".go")):
+                    path = root / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(source.extractfile(member).read())
+        go = shutil.which("go")
+        if go is None:
+            raise ValueError("Go is required to package the standalone manager")
+        for arch in HOST_CLI_ARCHES:
+            executable = root / ("tgcloud-host-" + arch)
+            environment = {**os.environ, "GOOS": "linux", "GOARCH": arch, "CGO_ENABLED": "0",
+                           "GOTOOLCHAIN": "local", "GOWORK": "off", "GOFLAGS": ""}
+            subprocess.run(  # nosec B603
+                [go, "build", "-trimpath", "-ldflags=-s -w -buildid=", "-o", str(executable), "./cmd/tgcloud-host"],
+                cwd=root, env=environment, check=True, timeout=180,
+            )
+            data = executable.read_bytes()
+            item = tarfile.TarInfo(prefix + "/" + host_cli_name(arch))
+            item.size, item.mode = len(data), 0o755
+            bundle.addfile(item, io.BytesIO(data))
+    return output.getvalue()
+
+
 def verify(directory: Path, tag: str) -> None:
     name = artifact_name(tag)
     if {path.name for path in directory.iterdir()} != {name, "SHA256SUMS.txt"}:
@@ -138,6 +180,12 @@ def verify(directory: Path, tag: str) -> None:
             files[relative] = bundle.extractfile(member).read()
     if not REQUIRED <= files.keys():
         raise ValueError("source archive missing required TGCloud inputs")
+    if "hostcli/go.mod" in files:
+        for arch, machine in HOST_CLI_ARCHES.items():
+            body = files.get(host_cli_name(arch), b"")
+            if (len(body) > 8 * 1024**2 or body[:6] != b"\x7fELF\x02\x01"
+                    or body[18:20] != machine.to_bytes(2, "little")):
+                raise ValueError(f"invalid standalone Go executable for Linux {arch}")
     unified_layout(files.get("packaging/external-webdav.json"), has_addon=True)
     if {"uninstall.sh", "install-webdav.sh"} & files.keys():
         raise ValueError("unexpected standalone entry in TGCloud source layout")
@@ -192,6 +240,7 @@ def build(root: Path, directory: Path, tag: str) -> None:
     if directory.exists() and any(directory.iterdir()):
         raise ValueError("output directory must be empty; refusing to replace artifacts")
     archive = git(root, "archive", "--format=tar", f"--prefix=TGCloud-{tag}/", commit)
+    archive = add_host_cli(archive, f"TGCloud-{tag}")
     if len(archive) > LIMIT:
         raise ValueError("source archive too large")
     data = gzip.compress(archive, mtime=0)
@@ -216,7 +265,7 @@ def main() -> int:
             verify(args.directory, args.tag)
         print("SOURCE_RELEASE_" + args.action.upper() + "=OK")
         return 0
-    except (ValueError, OSError, SyntaxError, tarfile.TarError, subprocess.CalledProcessError) as exc:
+    except (ValueError, OSError, SyntaxError, tarfile.TarError, subprocess.SubprocessError) as exc:
         print("Source release validation failed: " + str(exc))
         return 1
 

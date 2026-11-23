@@ -126,6 +126,33 @@ def check_docker(session, *, allow_missing: bool = False) -> dict | None:
     return {"architecture": actual, "platform": "linux/" + actual, "version": info.get("version", "")}
 
 
+def check_standalone_docker(session, *, allow_missing: bool = False) -> dict | None:
+    """Use the installed helper during standalone planning, never a candidate executable."""
+    from tgcloud.cli import host_cli
+
+    check_environment()
+    args = ("preflight", "--allow-missing") if allow_missing else ("preflight",)
+    try:
+        result = host_cli.invoke(*args)
+    except (OSError, TimeoutError):
+        result = None
+    if result is not None and result[0] == 1:
+        raise ValueError(result[1].strip() or "Docker 宿主预检未通过")
+    if result is not None and result[0] == 0:
+        try:
+            info = json.loads(result[1])
+        except (ValueError, TypeError):
+            pass
+        else:
+            expected = normalize_architecture(platform.machine())
+            if info is None and allow_missing:
+                return None
+            if (isinstance(info, dict) and info.get("architecture") == expected and info.get("platform") == "linux/" + expected
+                    and isinstance(info.get("version"), str)):
+                return {"architecture": expected, "platform": "linux/" + expected, "version": info["version"]}
+    return check_docker(session, allow_missing=allow_missing)
+
+
 def _reference(value: str) -> str:
     if (not isinstance(value, str) or len(value) > 300 or value.startswith("-")
             or "://" in value or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./:@-]*", value)):
@@ -174,7 +201,7 @@ def check_container(session, name: str, *, require_running: bool = False) -> Non
     check_image(session, info["image"])
 
 
-def prepare_images(session, compose: Path, services: list[str]) -> None:
+def prepare_images(session, compose: Path, services: list[str], *, standalone: bool = False) -> None:
     """Pull native candidates before stopping any old Bot or touching its data."""
     check_docker(session)
     from tgcloud.deployment.configuration import parse_config
@@ -197,17 +224,94 @@ def prepare_images(session, compose: Path, services: list[str]) -> None:
             raise ValueError
     except (AttributeError, KeyError, ValueError, TypeError, OSError):
         raise ValueError("候选 Compose/Dockerfile 架构输入不可验证；未替换现有实例") from None
-    for image in [*base, *images]:
+    references = [*base, *images]
+    for image in references:
+        _reference(image)
+    from tgcloud.cli import host_cli
+    use_go = standalone and host_cli.supports("prepare-image")
+    for image in references:
+        if use_go and re.search(r"@sha256:[a-f0-9]{64}\Z", image):
+            result = host_cli.invoke("prepare-image", image)
+            if result is not None:
+                if result[0] != 0:
+                    raise ValueError(result[1].strip() or "Go 候选镜像准备失败")
+                continue
         ensure_image(session, image)
+
+
+def build_candidate(session, stage: Path, tag: str, host: NativeHost) -> None:
+    """Build and validate the standalone release before starting the upgrade transaction."""
+    from tgcloud.cli import host_cli
+
+    _reference(tag)
+    stage = stage.absolute()
+    if host_cli.supports("build-candidate"):
+        result = host_cli.invoke("build-candidate", str(stage), tag, inherit_output=True)
+        if result is not None:
+            if result[0] != 0:
+                raise ValueError("候选 Bot 未通过构建或配置预检；现有实例保留")
+            return
+
+    # Inherit the shell installer's process group and log stream as before.
+    build = ["docker", "build", "--platform", host.docker_platform, "--tag", tag, str(stage)]
+    if subprocess.run(build, check=False).returncode:  # nosec B603
+        raise ValueError("候选 Bot 镜像构建失败；现有实例保留")
+    check_image(session, tag)
+    # Docker creates a private tmpfs inside the read-only candidate container.
+    validate = ["docker", "run", "--rm", "--label", "com.tgcloud.candidate=" + tag,
+                "--read-only", "--network", "none", "--tmpfs", "/tmp",  # nosec B108
+                "--entrypoint", "python", "--env-file", str(stage / ".env"), tag,
+                "-m", "app.deployment_check", "--validate-only"]
+    if subprocess.run(validate, check=False).returncode:  # nosec B603
+        raise ValueError("候选 Bot 配置校验失败；现有实例保留")
+
+
+def dispatch_standalone_command(command: str, *arguments: str, inherit_output: bool = False) -> int:
+    from tgcloud.cli import host_cli
+
+    if host_cli.supports(command):
+        result = host_cli.invoke(command, *arguments, inherit_output=inherit_output)
+        if result is not None:
+            if result[0]:
+                if inherit_output:
+                    return 1
+                raise ValueError(result[1].strip() or "Go 升级操作失败")
+            return 0
+    # The installer uses the previous path only if no operation was dispatched.
+    return 3
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="仅核对 Linux AMD64/ARM64 原生部署；不配置 QEMU")
-    parser.add_argument("action", choices=("host", "docker", "image", "container", "prepare"))
+    parser.add_argument("action", choices=("host", "docker", "image", "container", "prepare", "build-candidate",
+                                           "backup-config", "snapshot-database", "commit-upgrade-backup",
+                                           "quiesce-upgrade", "resume-upgrade", "apply-upgrade", "rollback-upgrade",
+                                           "deploy-bot", "accept-bot", "report-install", "start-gateway",
+                                           "repair-gateway-network", "restore-gateway-network", "cleanup-install",
+                                           "check-install-resources", "prepare-dependencies", "check-install-host", "install-layout",
+                                           "fresh-install", "stage-upgrade", "prepare-install-config",
+                                           "preflight-candidate", "check-install-compose"))
     parser.add_argument("reference", nargs="?")
     parser.add_argument("--allow-missing", action="store_true")
     parser.add_argument("--service", action="append", default=[])
+    parser.add_argument("--standalone", action="store_true")
+    parser.add_argument("--candidate-tag")
+    parser.add_argument("--backup-path")
+    parser.add_argument("--snapshot-name")
+    parser.add_argument("--stage-path")
+    parser.add_argument("--config-path")
+    parser.add_argument("--source-path")
+    parser.add_argument("--apply-config", choices=("true", "false"), default="false")
+    parser.add_argument("--restore-db", default="")
+    parser.add_argument("--old-image-id", default="")
+    parser.add_argument("--old-image-tag", default="")
+    parser.add_argument("--check-gateway", action="store_true")
+    parser.add_argument("--config-partial", default="")
+    parser.add_argument("--database-partial", default="")
     args = parser.parse_args(argv)
+    upgrade_backup = args.action in {"backup-config", "snapshot-database", "commit-upgrade-backup"}
+    upgrade_program = args.action in {"apply-upgrade", "rollback-upgrade", "quiesce-upgrade", "resume-upgrade"}
+    gateway_network = args.action in {"repair-gateway-network", "restore-gateway-network"}
     try:
         host = detect_host()
         check_environment()
@@ -223,17 +327,100 @@ def main(argv=None) -> int:
         elif args.reference and args.action == "container":
             check_container(session, args.reference, require_running=True)
         elif args.reference and args.action == "prepare" and args.service:
-            prepare_images(session, Path(args.reference), args.service)
+            prepare_images(session, Path(args.reference), args.service, standalone=args.standalone)
+        elif args.reference and args.action == "build-candidate" and args.candidate_tag:
+            build_candidate(session, Path(args.reference), args.candidate_tag, host)
+        elif args.reference and args.backup_path and args.action == "backup-config":
+            return dispatch_standalone_command(args.action, args.reference, args.backup_path)
+        elif (args.reference and args.backup_path and args.action == "snapshot-database"
+              and args.candidate_tag and args.snapshot_name):
+            return dispatch_standalone_command(args.action, args.reference, args.candidate_tag,
+                                              args.snapshot_name, args.backup_path)
+        elif args.reference and args.backup_path and args.action == "commit-upgrade-backup":
+            return dispatch_standalone_command(args.action, args.reference, args.backup_path, inherit_output=True)
+        elif args.reference and args.stage_path and args.action in {"quiesce-upgrade", "resume-upgrade"}:
+            return dispatch_standalone_command(args.action, args.reference, args.stage_path, inherit_output=True)
+        elif args.reference and args.stage_path and args.action == "apply-upgrade":
+            return dispatch_standalone_command(args.action, args.reference, args.stage_path, args.apply_config)
+        elif args.reference and args.backup_path and args.action == "rollback-upgrade":
+            return dispatch_standalone_command(args.action, args.reference, args.backup_path,
+                                              args.restore_db, args.old_image_id, args.old_image_tag)
+        elif args.reference and args.action in {"deploy-bot", "report-install", "start-gateway", "check-install-resources"}:
+            return dispatch_standalone_command(args.action, args.reference, inherit_output=True)
+        elif args.reference and args.stage_path and gateway_network:
+            return dispatch_standalone_command(args.action, args.reference, args.stage_path, inherit_output=True)
+        elif args.reference and args.action == "accept-bot":
+            gateway = ("--check-gateway",) if args.check_gateway else ()
+            return dispatch_standalone_command(args.action, args.reference, *gateway, inherit_output=True)
+        elif args.reference and args.action == "cleanup-install":
+            return dispatch_standalone_command(args.action, args.reference, args.stage_path or "", args.candidate_tag or "",
+                                              args.config_partial, args.database_partial, args.snapshot_name or "",
+                                              args.restore_db, inherit_output=True)
+        elif args.action == "prepare-dependencies" and args.reference in {"install", "upgrade"}:
+            return dispatch_standalone_command(args.action, args.reference, inherit_output=True)
+        elif args.reference and args.config_path and args.action == "check-install-host":
+            return dispatch_standalone_command(args.action, args.reference, args.config_path, inherit_output=True)
+        elif args.reference and args.action in {"preflight-candidate", "check-install-compose"}:
+            return dispatch_standalone_command(args.action, args.reference, inherit_output=True)
+        elif args.reference and args.config_path and args.action == "prepare-install-config":
+            return dispatch_standalone_command(args.action, args.reference, args.config_path, inherit_output=True)
+        elif args.reference and args.source_path and args.action == "stage-upgrade":
+            return dispatch_standalone_command(args.action, args.reference, args.source_path, inherit_output=True)
+        elif args.reference and args.action == "fresh-install":
+            if args.source_path and args.config_path:
+                return dispatch_standalone_command(args.action, "stage", args.reference, args.source_path,
+                                                   args.config_path, inherit_output=True)
+            if args.stage_path:
+                return dispatch_standalone_command(args.action, "publish", args.reference, args.stage_path, inherit_output=True)
+            raise ValueError("缺少新装部署包、候选目录或配置路径")
+        elif args.reference and args.action == "install-layout":
+            if args.config_path:
+                if not args.stage_path:
+                    raise ValueError("缺少候选配置暂存目录")
+                arguments = ("prepare", args.reference, args.stage_path, args.config_path)
+            else:
+                arguments = ("finalize", args.reference, *((args.stage_path,) if args.stage_path else ()))
+            return dispatch_standalone_command(args.action, *arguments, inherit_output=True)
         else:
             raise ValueError("缺少受管镜像、容器或候选服务参数")
         return 0
     except ValueError as exc:
-        print("原生架构检查失败：" + str(exc), file=sys.stderr)
+        label = ("升级备份失败" if upgrade_backup else "升级程序操作失败" if upgrade_program else
+                 "原生架构检查失败")
+        print(label + "：" + str(exc), file=sys.stderr)
         return 1
     except (OSError, RuntimeError):
         # The execution boundary's errors can contain command output. Only the
         # validated, static errors above are suitable for a terminal message.
-        print("原生架构检查失败；请核对 64 位用户态、本机 Docker 平台和原生镜像。", file=sys.stderr)
+        if args.action == "deploy-bot":
+            message = "正式 Bot 部署执行异常；请核对上方日志和本机 Docker。"
+        elif args.action == "accept-bot":
+            message = "Bot 验收执行异常；请核对上方日志和本机 Docker。"
+        elif args.action == "report-install":
+            message = "安装已通过验收，但无法生成部署摘要。"
+        elif args.action == "start-gateway" or gateway_network:
+            message = "CloudDrive2 容器或网络操作异常，请核对本机 Docker。"
+        elif args.action == "cleanup-install":
+            message = "安装暂存资源清理执行异常。"
+        elif args.action == "prepare-dependencies":
+            message = "宿主依赖准备执行异常，请核对上方 APT 与 Docker 日志。"
+        elif args.action == "check-install-resources":
+            message = "安装前资源检查执行异常，请核对内存和安装目录的磁盘信息。"
+        elif args.action == "check-install-host":
+            message = "宿主复核执行异常，请检查 Docker 状态、端口和磁盘。"
+        elif args.action == "install-layout":
+            message = "持久化目录或安装配置操作异常，请检查磁盘、路径和权限。"
+        elif args.action == "fresh-install":
+            message = "新装暂存或发布操作异常，请检查磁盘、路径和权限。"
+        elif args.action == "stage-upgrade":
+            message = "升级部署包暂存异常，请检查磁盘、路径和权限。"
+        elif args.action in {"prepare-install-config", "preflight-candidate", "check-install-compose"}:
+            message = "部署配置或镜像预检执行异常，请核对上方日志。"
+        elif upgrade_backup or upgrade_program:
+            message = "升级执行异常；请核对磁盘、目录权限和本机 Docker。"
+        else:
+            message = "原生架构检查失败；请核对 64 位用户态、本机 Docker 平台和原生镜像。"
+        print(message, file=sys.stderr)
         return 1
 
 

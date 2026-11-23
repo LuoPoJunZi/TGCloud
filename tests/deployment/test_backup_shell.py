@@ -99,6 +99,27 @@ class CloudDriveBackupTests(BackupShellFixture):
         self.assertFalse(list((self.installation / "data").glob(".rollback-*")))
         self.assertIn("compose up -d --no-deps --force-recreate tgcloud-clouddrive2-bot", calls)
 
+    def test_failed_program_replacement_restores_files_with_older_go_tool(self):
+        config = (self.installation / ".env").read_bytes()
+        compose = (self.installation / "docker-compose.yml").read_bytes()
+        result, calls = self.execute('apply_upgrade_program || fail "升级程序文件替换失败"\n', "go-apply-fail",
+                                     'DATABASE_BACKUP="$test_root/good.db"\n')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("已自动恢复升级前版本", result.stderr)
+        self.assertIn("compose up -d --no-deps --force-recreate", calls)
+        self.assertEqual((self.installation / ".env").read_bytes(), config)
+        self.assertEqual((self.installation / "docker-compose.yml").read_bytes(), compose)
+        self.assert_database(self.database, 2)
+
+    def test_failed_go_rollback_does_not_repeat_recovery_through_shell(self):
+        original = self.database.read_bytes()
+        result, calls = self.execute("rollback_install\n", "go-rollback-fail",
+                                     'DATABASE_BACKUP="$test_root/good.db"\n')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("rollback-upgrade failed", calls)
+        self.assertNotIn("compose rm", calls)
+        self.assertEqual(self.database.read_bytes(), original)
+
     def test_upgrade_snapshot_is_published_only_after_valid_copy(self):
         result, _ = self.execute(UPGRADE + '\n[[ -n "$DATABASE_BACKUP" ]]\n')
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -115,12 +136,35 @@ class CloudDriveBackupTests(BackupShellFixture):
                 result, calls = self.execute(UPGRADE, mode)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("TGCLOUD_RESULT=FAILED", result.stderr)
-                self.assertIn("已自动恢复升级前版本", result.stderr)
-                self.assertIn("compose up -d --no-deps --force-recreate tgcloud-clouddrive2-bot", calls)
+                self.assertIn("已恢复原 Bot", result.stderr)
+                self.assertIn("start tgcloud-clouddrive2-bot", calls)
+                self.assertNotIn("compose rm", calls)
                 self.assertEqual(self.database.read_bytes(), original)
                 self.assertFalse(list((self.root / "backups").glob("database-*.db")))
                 self.assertFalse(list((self.installation / "data").glob(".rollback-*")))
                 self.assertFalse(list((self.installation / "data").glob(".upgrade-*")))
+
+    def test_go_backup_failures_leave_existing_installation_in_place(self):
+        original = self.database.read_bytes()
+        config = (self.installation / ".env").read_bytes()
+        for mode in ("go-config-fail", "go-snapshot-fail"):
+            with self.subTest(mode=mode):
+                (self.root / "calls").unlink(missing_ok=True)
+                result, calls = self.execute(UPGRADE, mode)
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+                self.assertIn("TGCLOUD_RESULT=FAILED", result.stderr)
+                if mode == "go-config-fail":
+                    self.assertNotIn("stop --time", calls)
+                    self.assertFalse(list((self.root / "backups").glob("config-*.tar.gz")))
+                else:
+                    self.assertIn("start tgcloud-clouddrive2-bot", calls)
+                    self.assertIn("TGCLOUD_DATABASE_BACKUP=FAILED", result.stderr)
+                    self.assertNotIn("app.backup_database", calls)
+                self.assertNotIn("compose rm", calls)
+                self.assertFalse((self.root / "bot-stopped").exists())
+                self.assertEqual((self.installation / ".env").read_bytes(), config)
+                self.assertEqual(self.database.read_bytes(), original)
+                self.assertFalse(list((self.root / "backups").glob("*.partial")))
 
     def test_instance_snapshot_includes_cd2_configuration_but_not_mounted_cloud_files(self):
         from tests.fixtures.snapshot import SnapshotFixture

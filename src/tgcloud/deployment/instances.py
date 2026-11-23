@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from tgcloud.cli import host_cli
 from tgcloud.deployment import architecture, configuration, releases
 from tgcloud.deployment.fingerprints import deployed_fingerprint
 from tgcloud.deployment.host import LocalSession, SafeLog
@@ -48,6 +50,37 @@ class Instance:
     config: dict[str, str] = field(default_factory=dict, repr=False)
     raw_config: bytes = field(default=b"", repr=False)
     source_digest: str = ""
+
+
+def discover_for_install(product: ProductProfile, session: LocalSession, log: SafeLog,
+                         *, install_dir: str | None = None) -> Instance:
+    require_product(product)
+    requested = install_dir or (product.install_dir if product.install_dir != "/opt/tgcloud" else "")
+    output = host_cli.read_install_check("discover-install", requested)
+    if output is None:
+        return discover(product, docker_inventory(session), session, log, install_dir=install_dir)
+    try:
+        value = json.loads(output)
+        present, running = value["present"], value["running"]
+        if type(present) is not bool or type(running) is not bool:
+            raise ValueError
+        directory = configuration.checked_directory(value["directory"])
+        version, gateway = value["version"], value["gateway_image"]
+        source_digest, config_digest = value["source_sha256"], value["config_sha256"]
+        if not all(isinstance(item, str) for item in (version, gateway, source_digest, config_digest)):
+            raise ValueError
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("Go 返回的安装实例信息无法核实") from None
+    if not present:
+        return Instance(product, directory, False)
+    # Only a digest crosses the subprocess boundary. The wizard still reads
+    # the original private configuration for its own prompts and redaction.
+    raw = configuration.regular_private(directory / ".env")
+    if hashlib.sha256(raw).hexdigest() != config_digest:
+        raise ValueError("读取期间实例配置已变更，停止并重新预检")
+    values = configuration.parse_config(raw)
+    log.register(values)
+    return Instance(product, directory, True, version, running, gateway, values, raw, source_digest)
 
 
 def discover(

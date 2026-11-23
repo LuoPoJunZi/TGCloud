@@ -68,17 +68,17 @@ def digest(values: dict[str, bytes]) -> str:
     return hashlib.sha256(b"clouddrive2-local-source-v1\0" + manifest).hexdigest()
 
 
-def content(root: Path) -> dict[str, bytes]:
+def source_names(root: Path) -> tuple[str, ...]:
     """Select public build inputs only; never recurse into the workspace root."""
     from tgcloud.deployment.payload import payload_sources
     from tgcloud.deployment.profiles import CLOUDDRIVE2_PRODUCT
-    from tgcloud.deployment.runtime import files
+    from tgcloud.deployment.runtime import file_names
 
     root = root.absolute()
     if root.resolve() != root or not root.is_dir():
         raise ValueError("完整源码目录不存在或经过链接")
     selected = {path.relative_to(root).as_posix() for path in payload_sources(root, CLOUDDRIVE2_PRODUCT).values()}
-    selected.update(files(root))
+    selected.update(file_names(root))
     selected.update(("LICENSE", "README.md", "docs/compose-guide.md", "docs/install.md", "packaging/compose-https.sh",
                      "packaging/external-webdav.json", "packaging/runtime-manifest.json",
                      "packaging/bootstrap-manifest.json"))
@@ -90,7 +90,11 @@ def content(root: Path) -> dict[str, bytes]:
         selected.add(LEGACY_NOTICE)
     if len(selected) > MAX_FILES:
         raise ValueError("源码文件数超过安全上限")
-    result = {name: regular_bytes(root / name) for name in sorted(selected)}
+    return tuple(sorted(selected))
+
+
+def content(root: Path) -> dict[str, bytes]:
+    result = {name: regular_bytes(root / name) for name in source_names(root)}
     if sum(map(len, result.values())) > MAX_TOTAL:
         raise ValueError("源码大小超过安全上限")
     return result
@@ -112,14 +116,81 @@ class LocalSource:
         return {"kind": self.kind, "project": PROJECT_ID, "source_sha256": self.digest}
 
 
+def native_source(operation: str, *args: str, selection: dict | None = None) -> str | bool | None:
+    from tgcloud.cli import host_cli
+    output = host_cli.checked_output("install-source", operation, *args,
+                                     input_text=None if selection is None else json.dumps(selection, ensure_ascii=False))
+    if output is None:
+        return None
+    try:
+        result = json.loads(output)
+    except ValueError:
+        result = None
+    valid = isinstance(result, str) and SHA.fullmatch(result) if operation == "snapshot" else result is True
+    if not valid:
+        raise ValueError("Go 返回的部署源码结果无法核实")
+    return result
+
+
+def native_snapshot(original: Path, target: Path) -> LocalSource | None:
+    from tgcloud.deployment.runtime import packaged_host_cli
+
+    names = source_names(original)
+    optional = packaged_host_cli(original)
+    selection = {"files": names}
+    if optional is not None:
+        name, body = optional
+        selection.update(tool=name, tool_sha256=hashlib.sha256(body).hexdigest())
+    result = native_source("snapshot", str(original), str(target), selection=selection)
+    if result is None:
+        return None
+    if source_names(original) != names or source_names(target) != names:
+        raise ValueError("生成快照期间源码文件清单发生变化，请重新检查")
+    if packaged_host_cli(original) != optional or packaged_host_cli(target) != optional:
+        raise ValueError("生成快照期间 Go 管理工具发生变化，请重新检查")
+    return LocalSource(target, source_version(target), result)
+
+
+def verify_digest(root: Path, expected: str) -> None:
+    from tgcloud.cli import host_cli
+
+    if host_cli.supports("install-source"):
+        root = root.absolute()
+        names = source_names(root)
+        result = native_source("verify", str(root), expected, selection={"files": names})
+        if result is not None:
+            if source_names(root) != names:
+                raise ValueError("确认期间部署源码文件清单已变更，停止并重新预检")
+            return
+    if digest(content(root)) != expected:
+        raise ValueError("确认期间部署源码已变更，停止并重新预检")
+
+
 @contextmanager
-def snapshot(root: Path):
+def snapshot(root: Path, *, host_cli: bool = False):
     original = root.absolute()
+    if host_cli:
+        from tgcloud.cli import host_cli as go
+        if go.supports("install-source"):
+            with tempfile.TemporaryDirectory(prefix="tgcloud-local-source-") as temporary:
+                frozen = native_snapshot(original, Path(temporary).resolve() / "source")
+                if frozen is not None:
+                    yield frozen
+                    return
     values = content(original)
+    if host_cli:
+        from tgcloud.deployment.runtime import packaged_host_cli
+        optional = packaged_host_cli(original)
+    else:
+        optional = None
     with tempfile.TemporaryDirectory(prefix="tgcloud-local-source-") as temporary:
         target = Path(temporary).resolve()
         target.chmod(0o700)
-        for name, body in values.items():
+        staged = dict(values)
+        if optional is not None:
+            name, body = optional
+            staged[name] = body
+        for name, body in staged.items():
             path = target / name
             path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             with path.open("xb") as stream:
@@ -127,6 +198,8 @@ def snapshot(root: Path):
                 stream.write(body)
         if content(original) != values or content(target) != values:
             raise ValueError("生成快照期间源码发生变化，请重新检查")
+        if host_cli and (packaged_host_cli(original) != optional or packaged_host_cli(target) != optional):
+            raise ValueError("生成快照期间 Go 管理工具发生变化，请重新检查")
         yield LocalSource(target, source_version(target), digest(values))
 
 

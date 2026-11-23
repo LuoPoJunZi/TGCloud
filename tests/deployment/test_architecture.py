@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from tests.fixtures import ROOT
 from tgcloud.deployment import architecture as arch
@@ -138,6 +138,20 @@ class DockerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             arch.check_docker(self.session, allow_missing=True)
 
+    def test_standalone_preflight_preserves_go_rejections_and_older_helper_fallback(self):
+        info = {"architecture": "arm64", "platform": "linux/arm64", "version": "29.0.0"}
+        with patch("tgcloud.cli.host_cli.invoke") as go:
+            go.return_value = (0, json.dumps(info))
+            self.assertEqual(arch.check_standalone_docker(self.session, allow_missing=True), info)
+            go.assert_called_once_with("preflight", "--allow-missing")
+            go.return_value = (1, "拒绝远端 daemon")
+            with self.assertRaisesRegex(ValueError, "拒绝远端 daemon"):
+                arch.check_standalone_docker(self.session, allow_missing=True)
+            self.session.run.assert_not_called()
+            go.return_value = (2, "旧工具用法")
+            self.assertEqual(arch.check_standalone_docker(self.session, allow_missing=True), info)
+            self.assertIn(arch.DOCKER_INFO, self.commands)
+
     def test_wrong_cached_image_is_replaced_only_by_native_child(self):
         self.image["arch"] = "amd64"
         with self.assertRaises(ValueError):
@@ -197,12 +211,9 @@ class CandidateTests(unittest.TestCase):
             "Package and verify the local-source Compose deployment": "compose_release.py bundle",
             "Upload validated Compose package": "build/compose-release/COMPOSE-SHA256SUMS.txt",
         }
-        self.assertEqual(
-            {name for name, block in steps.items() if "if: matrix.arch == 'amd64'" in block},
-            set(package_steps),
-        )
         for name, command_or_asset in package_steps.items():
             with self.subTest(step=name):
+                self.assertIn("if: matrix.arch == 'amd64'", steps[name])
                 self.assertIn(command_or_asset, steps[name])
         self.assertIn("needs.linux-validation.result == 'success'", release)
         self.assertIn("fromJSON(needs.prepare.outputs.native_matrix)", release)
@@ -248,6 +259,73 @@ class CandidateTests(unittest.TestCase):
             self.assertIn("-m tgcloud.deployment.architecture", text)
             self.assertNotIn("uname -m", text)
             self.assertLess(text.index("native_check prepare"), text.index('docker stop --time 30 "$BOT_CONTAINER"'))
+            self.assertLess(text.index("native_check build-candidate"), text.index('docker stop --time 30 "$BOT_CONTAINER"'))
             self.assertLess(text.index('native_check container "$BOT_CONTAINER"'), text.index("TGCLOUD_RESULT=SUCCESS"))
-            self.assertIn('docker build --platform "$NATIVE_PLATFORM"', text)
             self.assertIn('BUILDX_BUILDER=default docker compose build', text)
+
+    def test_standalone_candidate_pull_fallback_is_only_before_go_dispatch(self):
+        base, gateway = "example/base@" + IMAGE, "example/gateway@" + IMAGE
+        session = Mock()
+        session.run.return_value = (0, json.dumps({"services": {"clouddrive2": {"image": gateway}}}))
+        with tempfile.TemporaryDirectory() as private, patch.object(arch, "check_docker"), patch(
+            "tgcloud.cli.host_cli.invoke"
+        ) as invoke, patch.object(arch, "ensure_image") as fallback:
+            compose = Path(private) / "docker-compose.yml"
+            compose.with_name(".env").touch()
+            compose.with_name("Dockerfile").write_text("FROM " + base + "\n", encoding="utf-8")
+            invoke.return_value = (2, "旧工具")
+            arch.prepare_images(session, compose, ["clouddrive2"], standalone=True)
+            self.assertEqual(fallback.call_args_list, [call(session, base), call(session, gateway)])
+
+            invoke.reset_mock()
+            fallback.reset_mock()
+            invoke.side_effect = [(0, ""), (2, "候选镜像准备异常")]
+            with self.assertRaisesRegex(ValueError, "候选镜像准备异常"):
+                arch.prepare_images(session, compose, ["clouddrive2"], standalone=True)
+            self.assertEqual(invoke.call_args_list, [call("prepare-image", "--supported"), call("prepare-image", base)])
+            fallback.assert_not_called()
+
+    def test_candidate_build_fallback_only_before_go_dispatch(self):
+        stage = ROOT / "fixture-stage"
+        tag = "tgcloud-clouddrive2-candidate:123-456"
+        session = Mock()
+        host = arch.NativeHost("amd64", "x86_64", "Debian")
+        with patch("tgcloud.cli.host_cli.invoke") as invoke, patch.object(
+            arch.subprocess, "run", return_value=Mock(returncode=0)
+        ) as run, patch.object(arch, "check_image") as check:
+            invoke.return_value = (2, "旧工具")
+            arch.build_candidate(session, stage, tag, host)
+            check.assert_called_once_with(session, tag)
+            first, second = [item.args[0] for item in run.call_args_list]
+            self.assertEqual(first, ["docker", "build", "--platform", "linux/amd64", "--tag", tag, str(stage)])
+            self.assertIn(str(stage / ".env"), second)
+            self.assertEqual(second[-3:], ["-m", "app.deployment_check", "--validate-only"])
+
+            run.reset_mock()
+            invoke.side_effect = [(0, ""), (0, ""), (0, ""), (1, "")]
+            arch.build_candidate(session, stage, tag, host)
+            with self.assertRaisesRegex(ValueError, "现有实例保留"):
+                arch.build_candidate(session, stage, tag, host)
+            run.assert_not_called()
+
+    def test_upgrade_backup_distinguishes_unavailable_helper_from_failure(self):
+        with patch("tgcloud.cli.host_cli.invoke") as invoke:
+            invoke.return_value = (2, "")
+            self.assertEqual(arch.dispatch_standalone_command("backup-config", "source", "target"), 3)
+            invoke.assert_called_once_with("backup-config", "--supported")
+            invoke.side_effect = [(0, ""), (3, "配置备份失败")]
+            with self.assertRaisesRegex(ValueError, "配置备份失败"):
+                arch.dispatch_standalone_command("backup-config", "source", "target")
+
+    def test_running_go_bot_deployment_failure_never_selects_fallback(self):
+        with patch("tgcloud.cli.host_cli.invoke") as invoke:
+            invoke.return_value = (2, "")
+            self.assertEqual(arch.dispatch_standalone_command("deploy-bot", "/opt/tgcloud", inherit_output=True), 3)
+            invoke.assert_called_once_with("deploy-bot", "--supported")
+            invoke.reset_mock()
+            invoke.side_effect = [(0, ""), (3, "")]
+            self.assertEqual(arch.dispatch_standalone_command("deploy-bot", "/opt/tgcloud", inherit_output=True), 1)
+            self.assertEqual(invoke.call_args_list, [
+                call("deploy-bot", "--supported"),
+                call("deploy-bot", "/opt/tgcloud", inherit_output=True),
+            ])

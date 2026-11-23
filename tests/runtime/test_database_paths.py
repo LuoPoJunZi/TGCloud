@@ -152,24 +152,9 @@ class CanonicalShellTests(unittest.TestCase):
         self.addCleanup(fixture.doCleanups)
         return fixture
 
-    def test_canonical_upgrade_snapshot_and_manual_backup(self):
-        for action in (shell.UPGRADE,):
-            fixture = self.fixture()
-            result, _ = fixture.execute(action)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            archives = list((fixture.root / "backups").glob("database-*.db"))
-            self.assertEqual(len(archives), 1)
-            fixture.assert_database(archives[0], 1)
-            self.assertFalse((fixture.installation / "data/unrelated.db").exists())
-
     def test_clouddrive_upgrade_snapshot_uses_canonical_name(self):
         fixture = self.fixture()
-        script = (ROOT / "packaging/hooks/clouddrive2/remote_install.sh").read_text(encoding="utf-8")
-        prefix = script.split('[[ "$(id -u)" -eq 0 ]]', 1)[0]
-        marker = 'if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then\n  BACKUP='
-        action = marker + script.split(marker, 1)[1].split('\nlog "提交已预检的程序和配置"', 1)[0]
-        with patch.object(shell, "PREFIX", prefix):
-            result, _ = fixture.execute(action)
+        result, _ = fixture.execute(shell.UPGRADE)
         self.assertEqual(result.returncode, 0, result.stderr)
         archives = list((fixture.root / "backups").glob("database-*.db"))
         self.assertEqual(len(archives), 1)

@@ -24,8 +24,9 @@ INSTALL_SCRIPT = (ROOT / "packaging/hooks/clouddrive2/remote_install.sh").read_t
 PREFIX = INSTALL_SCRIPT.split('[[ "$(id -u)" -eq 0 ]]', 1)[0]
 
 
-UPGRADE = 'if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then\n  BACKUP=' + INSTALL_SCRIPT.split(
-    'if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then\n  BACKUP=', 1,
+UPGRADE_START = 'if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then\n  CONFIG_BACKUP_PENDING='
+UPGRADE = "ROLLBACK_ARMED=false\n" + UPGRADE_START + INSTALL_SCRIPT.split(
+    UPGRADE_START, 1,
 )[1].split('\nlog "提交已预检的程序和配置"', 1)[0]
 
 
@@ -46,6 +47,22 @@ RELEASE_STAGE="$TGCLOUD_TEST_PAYLOAD"
 
 # All Docker operations are simulated. SQLite and tar use real implementations.
 python3() { "$TGCLOUD_TEST_PYTHON" "$@"; }
+native_check() {
+  if [[ "$1:$TGCLOUD_TEST_MODE" == backup-config:go-config-fail || "$1:$TGCLOUD_TEST_MODE" == snapshot-database:go-snapshot-fail ]]; then
+    printf '%s failed\n' "$1" >> "$test_root/calls"
+    printf 'incomplete fixture\n' > "${@: -1}"
+    return 1
+  fi
+  if [[ "$1:$TGCLOUD_TEST_MODE" == apply-upgrade:go-apply-fail ]]; then
+    printf 'partially replaced fixture\n' > "$INSTALL_DIR/docker-compose.yml"
+    return 1
+  fi
+  if [[ "$1:$TGCLOUD_TEST_MODE" == rollback-upgrade:go-rollback-fail ]]; then
+    printf 'rollback-upgrade failed\n' >> "$test_root/calls"
+    return 1
+  fi
+  return 3
+}
 chown() { :; }
 wait_unsupported_http() { :; }
 wait_unsupported() { :; }
@@ -66,7 +83,8 @@ docker() {
       if [[ "$3" == *'.Config.Image'* ]]; then
         if [[ "${@: -1}" == "$BOT_CONTAINER" ]]; then printf '%s\n' "$OLD_IMAGE_TAG";
         else printf '%s\n' "$OLD_IMAGE_TAG"; fi
-      elif [[ "$3" == *'.State.Running'* ]]; then printf 'true\n';
+      elif [[ "$3" == *'.State.Running'* ]]; then
+        if [[ -f "$test_root/bot-stopped" ]]; then printf 'false\n'; else printf 'true\n'; fi
       elif [[ "$3" == *'.Image'* ]]; then
         if [[ "${@: -1}" == "$BOT_CONTAINER" ]]; then printf 'old-bot\n';
         else printf 'old-bot\n'; fi
@@ -75,7 +93,10 @@ docker() {
     stop)
       if [[ "${@: -1}" == "$BOT_CONTAINER" ]]; then touch "$test_root/bot-stopped"; fi
       ;;
-    start) rm -f -- "$test_root/gateway-stopped" ;;
+    start)
+      if [[ "${@: -1}" == "$BOT_CONTAINER" ]]; then rm -f -- "$test_root/bot-stopped";
+      else rm -f -- "$test_root/gateway-stopped"; fi
+      ;;
     compose)
       if [[ "$2" == rm && "$TGCLOUD_TEST_MODE" == cannot-stop-bot ]]; then return 1; fi
       if [[ "$2" == stop ]]; then touch "$test_root/gateway-stopped"; fi
@@ -98,7 +119,7 @@ install() {
   local target="${@: -1}"
   # Git Bash cannot apply POSIX directory ownership/modes to Windows fixtures.
   if [[ "$1" == -d && "$TGCLOUD_TEST_WINDOWS" == 1 ]]; then return 0; fi
-  if { [[ "$target" == "$BACKUP_DIR"/database-*.db && "$TGCLOUD_TEST_MODE" == backup-copy-* ]]; } \
+  if { [[ "$target" == "$BACKUP_DIR"/database-*.db.partial && "$TGCLOUD_TEST_MODE" == backup-copy-* ]]; } \
     || { [[ "$target" == "$INSTALL_DIR"/data/.rollback-*.db && "$TGCLOUD_TEST_MODE" == restore-copy-fail ]]; }; then
     python3 - "$target" <<'PY'
 import sys

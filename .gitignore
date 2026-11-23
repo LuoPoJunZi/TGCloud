@@ -57,6 +57,7 @@ htmlcov/
 venv/
 
 # Build output
+/hostcli/bin/
 build/
 dist/
 *.exe

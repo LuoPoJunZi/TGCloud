@@ -136,6 +136,18 @@ class StorageWizardTests(unittest.TestCase):
                 tgdep_preflight.choose_storage(self.instance, session, self.log, self.ui)
         self.ui.ask.assert_not_called()
 
+    def test_resource_probe_falls_back_if_go_observation_is_incomplete(self):
+        session = Mock()
+        session.run.return_value = (0, "python observation")
+        with patch.object(tgdep_preflight.host_cli, "invoke", return_value=(0, "partial Go observation")) as go, \
+                patch.object(tgdep_preflight, "build_probe_command", return_value="python probe"), \
+                patch.object(tgdep_preflight, "parse_probe_output",
+                             side_effect=[ValueError("missing field"), resources()]) as parse:
+            self.assertEqual(tgdep_preflight.probe_resources(self.instance, session), resources())
+        go.assert_called_once_with("resources", str(self.instance.directory), self.product.backup_dir)
+        session.run.assert_called_once_with("python probe", timeout=45)
+        self.assertEqual([call.args[0] for call in parse.call_args_list], ["partial Go observation", "python observation"])
+
 
 if __name__ == "__main__":
     unittest.main()
