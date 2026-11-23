@@ -1579,7 +1579,7 @@ class PayloadTests(unittest.TestCase):
         self.assertNotIn("build --pull", remote_install)
         self.assertNotIn("build --pull", manage)
         self.assertNotIn("get.docker.com", remote_install)
-        self.assertIn("download.docker.com/linux/${ID}", remote_install)
+        self.assertIn("https://download.docker.com/linux/", remote_install)
 
     def test_managed_clouddrive_reuse_keeps_network_and_destination_checks(self):
         remote = (PAYLOAD / "remote_install.sh").read_text(encoding="utf-8")
