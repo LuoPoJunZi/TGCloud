@@ -1,5 +1,12 @@
 # TGCloud 更新记录
 
+## TGCloud v0.0.9
+
+- 完成 Go + Python 架构清晰分工：Go 静态单二进制（`tgcloud-host`，纯标准库、AMD64/ARM64、`<= 8 MiB`）全面接管 Linux 宿主机运维，Python 专注容器内 Bot 核心业务并保留兼容回退。
+- 按职责进一步拆分 Go 宿主包（`deps`、`report`、`acceptance`、`uninstall`、`backupops`、`webdav`、`tui` 与底层 `hostutil`），全部补齐 Linux 单元测试与非 Linux 构建桩。
+- 将受管卸载（`uninstall`）、实例/共享代理备份校验与清理（`backups`）、外部 WebDAV 认证写入与挂载核验（`webdav-entry`）纳入 Go 宿主工具并接入优先调度。
+- 新增原生 Go 两级 5 分组管理菜单（`menu` / `tgcloud --go-menu`）与只读脱敏诊断报告（`diagnostics`），业务设置通过 `docker exec` 调用容器内协议，实现宿主机零 Python 运维路径。
+
 ## TGCloud v0.0.8
 
 - 全面加固 Go/Python/Shell 安装与回滚安全性：修复 APT 密钥目录 `umask` 权限、SQLite 回滚旁文件清理顺序、External WebDAV 外部 Nginx 凭据吊销同步、任务取消状态不变量、WebDAV 429/401 探测冷却、凭据脱敏与 CI 测试覆盖。
