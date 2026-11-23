@@ -11,6 +11,9 @@ import (
 
 func TestInstallSourcePreservesPythonDigestAndDeploysExactFiles(t *testing.T) {
 	root, private := t.TempDir(), t.TempDir()
+	if err := os.Chmod(private, 0700); err != nil {
+		t.Fatal(err)
+	}
 	source, payload := filepath.Join(private, "source"), filepath.Join(private, "payload")
 	mapping := map[string]string{
 		"app/main.py":            "program/main.py",

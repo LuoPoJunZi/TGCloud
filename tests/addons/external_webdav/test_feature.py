@@ -895,7 +895,7 @@ class EntryAndReleaseTests(unittest.TestCase):
                 with self.subTest(api=api), self.assertRaisesRegex(ValueError, "不受支持"):
                     releases.supported(root)
             marker.write_text(json.dumps(releases.CONTRACT))
-            with self.assertRaisesRegex(ValueError, "缺失|不完整"):
+            with self.assertRaisesRegex(ValueError, "tgcloud 管理菜单"):
                 releases.supported(root)
 
     def test_offline_host_bundle_is_self_contained_and_detects_tampering(self):
