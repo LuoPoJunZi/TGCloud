@@ -161,7 +161,7 @@ func ensureInstallDirectory(path string) error {
 
 func readInstallConfig(path string) ([]byte, error) {
 	invalid := errors.New("无法读取私有安装配置")
-	file, err := openPrivate(path, syscall.O_RDONLY, managedOwnerUID)
+	file, err := openPrivate(path, syscall.O_RDONLY, hostutil.ManagedOwnerUID)
 	if err != nil {
 		return nil, invalid
 	}

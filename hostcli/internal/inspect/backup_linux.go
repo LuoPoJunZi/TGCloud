@@ -13,7 +13,8 @@ import (
 	"time"
 )
 
-const upgradeBackupDir = "/opt/tgcloud-backups"
+const UpgradeBackupDir = "/opt/tgcloud-backups"
+const upgradeBackupDir = UpgradeBackupDir
 const backupTimeout = 2400 * time.Second
 
 var (

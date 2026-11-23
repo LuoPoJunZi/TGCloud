@@ -14,6 +14,10 @@ import (
 
 const deployTimeout = 2400 * time.Second
 
+func StandaloneComposeArgs(directory string, args ...string) []string {
+	return standaloneComposeArgs(directory, args...)
+}
+
 func standaloneComposeArgs(directory string, args ...string) []string {
 	command := []string{"compose", "--project-directory", directory, "--env-file", filepath.Join(directory, ".env"),
 		"-f", filepath.Join(directory, "docker-compose.yml")}

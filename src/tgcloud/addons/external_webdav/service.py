@@ -182,6 +182,15 @@ class Service:
         if code or not output.strip().isdigit() or not 0 < int(output.strip()) < 65536:
             raise ValueError("不能确认受管 Nginx worker 组，拒绝扩大认证文件权限。")
         gid = int(output.strip())
+        if not external and self.auth == Path(PROXY_ROOT) / "external-auth" / (self.product.key + ".htpasswd"):
+            from tgcloud.cli import host_cli
+            if host_cli.supports("webdav-entry"):
+                res = host_cli.invoke("webdav-entry", "write-auth", self.product.key, str(gid),
+                                      input_text=content.decode("ascii"))
+                if res is not None and res[0] == 0:
+                    return
+                if res is not None:
+                    raise ValueError(res[1].strip() or "Go 外部认证文件写入失败。")
         config.canonical(self.auth.parent)
         self.auth.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
         os.chown(self.auth.parent, 0, gid)

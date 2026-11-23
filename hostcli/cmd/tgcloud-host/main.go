@@ -5,9 +5,17 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/acceptance"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/backupops"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/deps"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/report"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/tui"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/uninstall"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/webdav"
 )
 
 const usage = "用法：tgcloud-host {status|check|logs}\n" +
@@ -48,9 +56,17 @@ const usage = "用法：tgcloud-host {status|check|logs}\n" +
 	"      tgcloud-host fresh-install stage <install-dir> <payload-dir> <config-file>\n" +
 	"      tgcloud-host fresh-install publish <install-dir> <stage-dir>\n" +
 	"      tgcloud-host install-layout prepare <install-dir> <stage-dir> <config-file>\n" +
-	"      tgcloud-host install-layout finalize <install-dir> [<fresh-stage-dir>]"
+	"      tgcloud-host install-layout finalize <install-dir> [<fresh-stage-dir>]\n" +
+	"      tgcloud-host uninstall {check|run} [--keep-data|--purge-data|--purge-all] [--plan <sha256>] [--json] [--yes]\n" +
+	"      tgcloud-host backups {list|proxy-list|proxy-create|proxy-verify|proxy-prune-preview|proxy-prune} ...\n" +
+	"      tgcloud-host webdav-entry {status|write-auth|verify-auth} ...\n" +
+	"      tgcloud-host diagnostics [--install-dir <dir>] [--save <dir>]\n" +
+	"      tgcloud-host menu [--install-dir <dir>]"
 
 func main() {
+	if len(os.Args) == 1 && filepath.Base(os.Args[0]) == "tgcloud" {
+		os.Exit(tui.RunMenu(inspect.InstallDirectory, os.Stdin, os.Stdout))
+	}
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, inspect.InstallDirectory, inspect.RunDocker))
 }
 
@@ -181,7 +197,7 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 		if args[1] == "--supported" {
 			return supportedExit(inspect.LinuxSupported())
 		}
-		if err := inspect.ReportInstall(args[1], out); err != nil {
+		if err := report.Install(args[1], out); err != nil {
 			fmt.Fprintln(errOut, err)
 			return 1
 		}
@@ -191,12 +207,9 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 		switch args[0] {
 		case "install-acceptance":
 			if len(args) == 2 && args[1] == "--supported" {
-				if inspect.InstallAcceptanceSupported() {
-					return 0
-				}
-				return 1
+				return supportedExit(acceptance.Supported())
 			}
-			result, err := inspect.InstallAcceptance(args[1:], os.Stdin, out)
+			result, err := acceptance.Run(args[1:], os.Stdin, out)
 			if err != nil {
 				fmt.Fprintln(errOut, err)
 				return 1
@@ -315,7 +328,7 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 				fmt.Fprintln(errOut, usage)
 				return 2
 			}
-			if err := inspect.PrepareDependencies(args[1] == "upgrade", out); err != nil {
+			if err := deps.PrepareDependencies(args[1] == "upgrade", out); err != nil {
 				fmt.Fprintln(errOut, err)
 				return 1
 			}
@@ -326,6 +339,82 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 			return gatewayCommand(args, out, errOut)
 		case "stage-upgrade", "backup-config", "snapshot-database", "commit-upgrade-backup", "quiesce-upgrade", "resume-upgrade", "apply-upgrade", "rollback-upgrade":
 			return upgrade(args, out, errOut)
+		case "uninstall":
+			if len(args) == 2 && args[1] == "--supported" {
+				return supportedExit(uninstall.Supported())
+			}
+			result, err := uninstall.Run(args[1:], out)
+			if err != nil {
+				fmt.Fprintln(errOut, err)
+				return 1
+			}
+			if result == nil {
+				return 0
+			}
+			return writeJSON(out, errOut, result, 0)
+		case "backups":
+			if len(args) == 2 && args[1] == "--supported" {
+				return supportedExit(backupops.Supported())
+			}
+			result, err := backupops.Run(args[1:])
+			if err != nil {
+				fmt.Fprintln(errOut, err)
+				return 1
+			}
+			return writeJSON(out, errOut, result, 0)
+		case "webdav-entry":
+			if len(args) == 2 && args[1] == "--supported" {
+				return supportedExit(webdav.Supported())
+			}
+			result, err := webdav.Run(args[1:], os.Stdin)
+			if err != nil {
+				fmt.Fprintln(errOut, err)
+				return 1
+			}
+			return writeJSON(out, errOut, result, 0)
+		case "diagnostics":
+			if len(args) == 2 && args[1] == "--supported" {
+				return supportedExit(inspect.LinuxSupported())
+			}
+			dir, saveDir := directory, ""
+			for i := 1; i < len(args); i++ {
+				switch args[i] {
+				case "--install-dir":
+					if i+1 >= len(args) {
+						fmt.Fprintln(errOut, usage)
+						return 2
+					}
+					i++
+					dir = args[i]
+				case "--save":
+					if i+1 >= len(args) {
+						fmt.Fprintln(errOut, usage)
+						return 2
+					}
+					i++
+					saveDir = args[i]
+				default:
+					fmt.Fprintln(errOut, usage)
+					return 2
+				}
+			}
+			if err := tui.RunDiagnosticsCommand(dir, saveDir, out); err != nil {
+				fmt.Fprintln(errOut, err)
+				return 1
+			}
+			return 0
+		case "menu":
+			if len(args) == 2 && args[1] == "--supported" {
+				return supportedExit(inspect.LinuxSupported())
+			}
+			dir := directory
+			if len(args) == 3 && args[1] == "--install-dir" {
+				dir = args[2]
+			} else if len(args) != 1 {
+				fmt.Fprintln(errOut, usage)
+				return 2
+			}
+			return tui.RunMenu(dir, os.Stdin, out)
 		}
 	}
 	if len(args) == 2 && args[1] == "--supported" && (args[0] == "start" || args[0] == "stop" || args[0] == "restart") {

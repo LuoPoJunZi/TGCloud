@@ -26,6 +26,10 @@ var (
 	imageReference  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_./:@-]{0,299}$`)
 )
 
+func CheckUpgradeDirectory(directory string) error {
+	return checkUpgradeDirectory(directory)
+}
+
 func checkUpgradeDirectory(directory string) error {
 	if !strings.HasPrefix(directory, "/opt/") || filepath.Clean(directory) != directory {
 		return errors.New("升级目录路径无效")

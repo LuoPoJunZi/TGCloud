@@ -1,4 +1,4 @@
-package inspect
+package report
 
 import (
 	"errors"
@@ -7,28 +7,30 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
 
-func ReportInstall(directory string, progress io.Writer) error {
-	if err := checkDockerHost(); err != nil {
+func Install(directory string, progress io.Writer) error {
+	if err := inspect.CheckDockerHost(); err != nil {
 		return err
 	}
-	if err := checkUpgradeDirectory(directory); err != nil {
+	if err := inspect.CheckUpgradeDirectory(directory); err != nil {
 		return err
 	}
-	if _, err := installedVersion(directory); err != nil {
+	if _, err := inspect.InstalledVersion(directory); err != nil {
 		return err
 	}
-	showBackupSummary(upgradeBackupDir, progress)
+	showBackupSummary(inspect.UpgradeBackupDir, progress)
 	fmt.Fprintln(progress, "[TGCloud] 部署完成")
-	if _, err := runDocker(true, progress, standaloneComposeArgs(directory, "ps")...); err != nil {
+	if _, err := inspect.RunDockerWithProgress(true, progress, inspect.StandaloneComposeArgs(directory, "ps")...); err != nil {
 		return errors.New("安装已通过验收，但无法显示容器状态，请运行 manage.sh status 核对")
 	}
 	return nil
 }
 
 func showBackupSummary(directory string, output io.Writer) {
-	count, size, err := backupInventory(directory)
+	count, size, err := BackupInventory(directory)
 	if err != nil {
 		fmt.Fprintln(output, "[TGCloud] 警告：无法统计历史备份；部署已经通过验收，请稍后运行 manage.sh backups 检查")
 		return
@@ -39,7 +41,7 @@ func showBackupSummary(directory string, output io.Writer) {
 	}
 }
 
-func backupInventory(directory string) (count int, size uint64, err error) {
+func BackupInventory(directory string) (count int, size uint64, err error) {
 	if resolved, err := filepath.EvalSymlinks(directory); err != nil || !filepath.IsAbs(directory) || resolved != directory {
 		return 0, 0, errors.New("备份目录不是安全的真实绝对目录")
 	}

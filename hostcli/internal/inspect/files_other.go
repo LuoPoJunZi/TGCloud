@@ -72,12 +72,6 @@ func VerifyInstallPlan(expected InstallInstance, source, targetVersion, targetDi
 	return "", errLinuxRequired
 }
 
-func InstallAcceptanceSupported() bool { return false }
-
-func InstallAcceptance(args []string, input io.Reader, progress io.Writer) (any, error) {
-	return nil, errLinuxRequired
-}
-
 func HTTPSEntrySupported() bool { return false }
 
 func HTTPSEntry(args []string, progress io.Writer) (any, error) {
@@ -114,10 +108,6 @@ func AcceptBot(directory string, checkGateway bool, progress io.Writer) error {
 	return errLinuxRequired
 }
 
-func ReportInstall(directory string, progress io.Writer) error {
-	return errLinuxRequired
-}
-
 func StartGateway(directory string, progress io.Writer) error {
 	return errLinuxRequired
 }
@@ -131,10 +121,6 @@ func RestoreGatewayNetwork(directory, stage string) error {
 }
 
 func CleanupInstall(temps InstallTemps) error {
-	return errLinuxRequired
-}
-
-func PrepareDependencies(upgrade bool, progress io.Writer) error {
 	return errLinuxRequired
 }
 

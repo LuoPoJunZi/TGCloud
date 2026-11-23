@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 )
 
 func (entry httpsEntry) certFile(domain, path string) string {
@@ -27,7 +29,7 @@ func (entry httpsEntry) certFile(domain, path string) string {
 		if (directory != "renewal" && strings.HasPrefix(resolved, filepath.Join(root, directory, domain)+"/")) ||
 			(directory == "renewal" && resolved == filepath.Join(root, directory, domain+".conf")) {
 			info, err := os.Lstat(resolved)
-			if err == nil && info.Mode().IsRegular() && info.Sys().(*syscall.Stat_t).Uid == managedOwnerUID &&
+			if err == nil && info.Mode().IsRegular() && info.Sys().(*syscall.Stat_t).Uid == hostutil.ManagedOwnerUID &&
 				info.Size() > 0 && info.Size() <= 256*1024 {
 				return resolved
 			}

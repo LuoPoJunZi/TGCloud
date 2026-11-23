@@ -1,4 +1,4 @@
-package inspect
+package deps
 
 import (
 	"bytes"
@@ -91,7 +91,7 @@ func ensureAPTKeyringDir(directory string) error {
 		return invalid
 	}
 	info, err := os.Lstat(directory)
-	if err != nil || !info.IsDir() || info.Sys().(*syscall.Stat_t).Uid != managedOwnerUID {
+	if err != nil || !info.IsDir() || info.Sys().(*syscall.Stat_t).Uid != hostutil.ManagedOwnerUID {
 		return invalid
 	}
 	// os.MkdirAll is subject to the installer's umask (0077), which would hide

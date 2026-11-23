@@ -12,32 +12,40 @@ import (
 
 const (
 	InstallDirectory = "/opt/tgcloud"
-	botName          = "tgcloud-clouddrive2-bot"
-	gatewayName      = "tgcloud-clouddrive2"
+	BotName          = "tgcloud-clouddrive2-bot"
+	GatewayName      = "tgcloud-clouddrive2"
+	botName          = BotName
+	gatewayName      = GatewayName
 )
 
 // The format intentionally excludes the container environment and health logs.
-const containerFields = `{"id":{{json .ID}},"name":{{json .Name}},"state":{{json .State.Status}},` +
+const ContainerFields = `{"id":{{json .ID}},"name":{{json .Name}},"state":{{json .State.Status}},` +
 	`"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}""{{end}},` +
 	`"project":{{json (index .Config.Labels "com.docker.compose.project")}},` +
 	`"directory":{{json (index .Config.Labels "com.docker.compose.project.working_dir")}},` +
 	`"service":{{json (index .Config.Labels "com.docker.compose.service")}},` +
 	`"mode":{{json (index .Config.Labels "com.tgcloud.install-mode")}},"mounts":{{json .Mounts}}}`
 
+const containerFields = ContainerFields
+
 var (
-	versionPattern   = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
-	containerID      = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	errInstanceOwner = errors.New("容器归属与 /opt/tgcloud 一键安装实例不一致")
+	VersionPattern     = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+	ContainerIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	versionPattern     = VersionPattern
+	containerID        = ContainerIDPattern
+	errInstanceOwner   = errors.New("容器归属与 /opt/tgcloud 一键安装实例不一致")
 )
 
 type Container struct {
 	ID, Name, State, Health, Project, Directory, Service, Mode string
-	Mounts                                                     []mount
+	Mounts                                                     []Mount
 }
 
-type mount struct {
+type Mount struct {
 	Type, Source, Destination string
 }
+
+type mount = Mount
 
 type Instance struct {
 	Version      string
@@ -111,6 +119,10 @@ func hasMounts(container Container, directory string, required map[string]string
 		}
 	}
 	return true
+}
+
+func InstalledVersion(directory string) (string, error) {
+	return installedVersion(directory)
 }
 
 func installedVersion(directory string) (string, error) {

@@ -1,4 +1,4 @@
-package inspect
+package deps
 
 import (
 	"context"
@@ -10,6 +10,9 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
 
 var basePackages = []string{"ca-certificates", "curl", "gnupg", "tar", "gzip", "fuse3", "kmod", "openssh-client", "iproute2", "python3"}
@@ -17,7 +20,7 @@ var basePackages = []string{"ca-certificates", "curl", "gnupg", "tar", "gzip", "
 type dependencyRunner func(name string, args ...string) ([]byte, error)
 
 func PrepareDependencies(upgrade bool, progress io.Writer) error {
-	if err := checkDockerHost(); err != nil {
+	if err := inspect.CheckDockerHost(); err != nil {
 		return err
 	}
 	if os.Geteuid() != 0 {
@@ -45,7 +48,7 @@ func PrepareDependencies(upgrade bool, progress io.Writer) error {
 		}
 	}
 	return prepareDependencies(upgrade, dockerPresent, progress, run, func() error {
-		_, err := DockerPreflight(false)
+		_, err := inspect.DockerPreflight(false)
 		return err
 	}, func() error { return ensureDockerRepository(run) })
 }
@@ -213,21 +216,21 @@ func runDependencyCommand(progress io.Writer, name string, args ...string) ([]by
 		return nil, command.Run()
 	}
 	if name == "dpkg-query" || name == "dpkg" {
-		var stdout, stderr dockerOutput
+		var stdout, stderr hostutil.BoundedBuffer
 		command.Stdout, command.Stderr = &stdout, &stderr
 		err := command.Run()
-		if err != nil && name == "dpkg-query" && strings.TrimSpace(stdout.buffer.String()) == "" {
-			for _, line := range strings.Split(stderr.buffer.String(), "\n") {
+		if err != nil && name == "dpkg-query" && strings.TrimSpace(stdout.String()) == "" {
+			for _, line := range strings.Split(stderr.String(), "\n") {
 				trimmed := strings.TrimSpace(line)
 				if strings.HasPrefix(trimmed, "dpkg-query: no packages found matching ") {
 					return []byte(trimmed), err
 				}
 			}
 		}
-		return stdout.buffer.Bytes(), err
+		return stdout.Bytes(), err
 	}
-	var output dockerOutput
+	var output hostutil.BoundedBuffer
 	command.Stdout, command.Stderr = &output, &output
 	err := command.Run()
-	return output.buffer.Bytes(), err
+	return output.Bytes(), err
 }

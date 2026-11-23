@@ -17,12 +17,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 )
 
 func TestHTTPSManagedTransactionRecoversWithoutChangingBase(t *testing.T) {
-	previousOwner := managedOwnerUID
-	managedOwnerUID = uint32(os.Geteuid())
-	t.Cleanup(func() { managedOwnerUID = previousOwner })
+	previousOwner := hostutil.ManagedOwnerUID
+	hostutil.ManagedOwnerUID = uint32(os.Geteuid())
+	t.Cleanup(func() { hostutil.ManagedOwnerUID = previousOwner })
 	root := t.TempDir()
 	entry := httpsEntry{filepath.Join(root, "proxy"), filepath.Join(root, "tgcloud"), "nginx:1.30.5-alpine", "certbot/certbot:v5.8.0"}
 	const domain = "files.example.test"

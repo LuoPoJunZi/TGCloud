@@ -148,7 +148,7 @@ func TestSupportedReflectsPlatform(t *testing.T) {
 		t.Fatalf("unexpected Docker arguments: %q", args)
 		return nil, nil
 	}
-	for _, cmd := range []string{"install-transaction", "stage-upgrade", "fresh-install", "install-layout", "prepare-dependencies"} {
+	for _, cmd := range []string{"install-transaction", "stage-upgrade", "fresh-install", "install-layout", "prepare-dependencies", "uninstall", "backups", "webdav-entry", "diagnostics", "menu"} {
 		var out, errOut bytes.Buffer
 		if got := run([]string{cmd, "--supported"}, &out, &errOut, t.TempDir(), docker); got != want {
 			t.Fatalf("%s --supported exit=%d, want %d", cmd, got, want)

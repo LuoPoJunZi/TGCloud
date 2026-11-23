@@ -43,6 +43,10 @@ func InstallerPreflight(args []string, input io.Reader) (any, error) {
 	}
 }
 
+func ReadPreflightInput(input io.Reader, value any) error {
+	return readPreflightInput(input, value)
+}
+
 func readPreflightInput(input io.Reader, value any) error {
 	raw, err := io.ReadAll(io.LimitReader(input, 4*installConfigLimit+1))
 	if err != nil || len(raw) > 4*installConfigLimit || !utf8.Valid(raw) || json.Unmarshal(raw, value) != nil {

@@ -10,13 +10,19 @@ import (
 	"regexp"
 	"strings"
 	"syscall"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 )
 
 const (
-	httpsRoot        = "/opt/tgcloud-proxy"
-	httpsProject     = "tgcloud-proxy"
-	httpsNginx       = "tgcloud-proxy-nginx"
-	httpsCertbot     = "tgcloud-proxy-certbot"
+	HTTPSRoot        = "/opt/tgcloud-proxy"
+	HTTPSProject     = "tgcloud-proxy"
+	HTTPSNginx       = "tgcloud-proxy-nginx"
+	HTTPSCertbot     = "tgcloud-proxy-certbot"
+	httpsRoot        = HTTPSRoot
+	httpsProject     = HTTPSProject
+	httpsNginx       = HTTPSNginx
+	httpsCertbot     = HTTPSCertbot
 	httpsEdition     = "clouddrive2"
 	httpsBackendPort = 19798
 )
@@ -109,7 +115,7 @@ func (entry httpsEntry) readState() (httpsState, bool, error) {
 
 func readHTTPSPrivate(path string, limit int64) ([]byte, error) {
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || !privateOwner(info, managedOwnerUID) {
+	if err != nil || !info.Mode().IsRegular() || !privateOwner(info, hostutil.ManagedOwnerUID) {
 		return nil, errHTTPSState
 	}
 	return readSourceFile(path, limit)
@@ -150,7 +156,7 @@ func requireHTTPSDir(path string, mode os.FileMode) error {
 		return errHTTPSState
 	}
 	info, err := os.Lstat(path)
-	if err != nil || !info.IsDir() || info.Sys().(*syscall.Stat_t).Uid != managedOwnerUID || info.Mode().Perm() & ^mode != 0 {
+	if err != nil || !info.IsDir() || info.Sys().(*syscall.Stat_t).Uid != hostutil.ManagedOwnerUID || info.Mode().Perm() & ^mode != 0 {
 		return errHTTPSState
 	}
 	// os.Mkdir is subject to the installer's umask. Nginx workers need
@@ -168,7 +174,7 @@ func (entry httpsEntry) lock() (*os.File, error) {
 		return nil, err
 	}
 	path := filepath.Join(entry.root, "transaction.lock")
-	file, err := openPrivate(path, syscall.O_CREAT|syscall.O_RDWR, managedOwnerUID)
+	file, err := openPrivate(path, syscall.O_CREAT|syscall.O_RDWR, hostutil.ManagedOwnerUID)
 	if err != nil {
 		return nil, errHTTPSState
 	}

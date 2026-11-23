@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
+import subprocess  # nosec B404
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -431,6 +433,17 @@ class Management:
         # branches, locks, identity checks and destructive-operation confirmations.
         action = {"1": "1", "2": "6", "3": "7", "4": "2", "5": "3", "6": "4", "7": "5"}[selected]
         if action == "1":
+            result = self.run_host_cli(instance, "backups", "list", "--json")
+            if result is not None and result[0] == 0:
+                try:
+                    items = json.loads(result[1]).get("items", [])
+                    for item in items:
+                        self.log(f"{item['name']}（{item['size_bytes']} 字节，尚未校验内容）")
+                    if not items:
+                        self.log("没有受管实例历史备份。")
+                    return True
+                except (ValueError, TypeError, KeyError):
+                    pass
             root = Path(self.product.backup_dir)
             pattern = uninstall.backup_targets((self.product.key,), {}, False)[root]
             identity = uninstall.backup_identity(root, pattern)
@@ -468,7 +481,16 @@ class Management:
                 self.log("外部模式备份位于 /opt/tgcloud-proxy/external-backups，仅含元数据与专属站点；不运行独立代理的整目录清理。可选创建或隔离核验，旧备份需人工保管。")
                 return True
             if action == "3":
-                for item in manager.manage_backups("list")["items"]:
+                go_items = None
+                if not manager.external_entry():
+                    go_res = self.run_host_cli(instance, "backups", "proxy-list", "--json")
+                    if go_res is not None and go_res[0] == 0:
+                        try:
+                            go_items = json.loads(go_res[1])["items"]
+                        except (ValueError, TypeError, KeyError):
+                            go_items = None
+                items = go_items if go_items is not None else manager.manage_backups("list")["items"]
+                for item in items:
                     self.log(f"{item['name']}（{item['size_bytes']} 字节，完整性 {item['integrity']}）")
             elif action in {"2", "4"}:
                 if self.ui.confirm("确认在 VPS 私密目录备份/校验？含证书私钥，不要公开上传；不会覆盖运行数据"):
@@ -600,7 +622,17 @@ def main(argv=None, *, mode_hint=None) -> int:
     parser.add_argument("--edition", choices=tuple(PRODUCTS), default="clouddrive2")
     parser.add_argument("--install-dir", help="指定已核验的单实例自定义目录")
     parser.add_argument("--source-dir", type=Path, help="显式指定完整安装源码；默认识别当前安装脚本所在源码目录")
+    parser.add_argument("--go-menu", action="store_true", help="使用原生 Go 宿主管理菜单（零宿主 Python 业务依赖）")
     args = parser.parse_args(argv)
+    if args.go_menu:
+        tool = runtime.installed_host_cli()
+        if tool is not None and host_cli.supports("menu", executable=tool):
+            menu_args = ["menu"]
+            if args.install_dir:
+                menu_args.extend(["--install-dir", args.install_dir])
+            if os.name == "posix":
+                os.execv(str(tool), [str(tool), *menu_args])  # nosec B606
+            return subprocess.run([str(tool), *menu_args], check=False).returncode  # nosec B603
     log, ui = InstallerLog(SafeLog()), None
     started = False
     try:

@@ -1,4 +1,4 @@
-package inspect
+package acceptance
 
 import (
 	"context"
@@ -12,6 +12,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
 
 type installEvidence struct {
@@ -31,24 +34,24 @@ type installSummary struct {
 
 var installChecks = []string{"base", "config", "backup", "code", "health", "entry", "webdav"}
 
-func InstallAcceptanceSupported() bool { return true }
+func Supported() bool { return true }
 
-func InstallAcceptance(args []string, input io.Reader, progress io.Writer) (any, error) {
+func Run(args []string, input io.Reader, progress io.Writer) (any, error) {
 	if len(args) < 2 || len(args) > 4 {
 		return nil, errors.New("安装后验收参数无效")
 	}
 	directory := args[1]
-	if err := checkPlanningDirectory(directory); err != nil {
+	if err := inspect.CheckPlanningDirectory(directory); err != nil {
 		return nil, err
 	}
 	switch {
 	case args[0] == "summary" && len(args) == 2:
 		var observed installEvidence
-		if err := readPreflightInput(input, &observed); err != nil {
+		if err := inspect.ReadPreflightInput(input, &observed); err != nil {
 			return nil, err
 		}
 		return summarizeInstallation(directory, observed)
-	case args[0] == "webdav" && len(args) == 4 && args[3] == "--yes" && versionPattern.MatchString(args[2]):
+	case args[0] == "webdav" && len(args) == 4 && args[3] == "--yes" && inspect.VersionPattern.MatchString(args[2]):
 		return nil, verifyInstalledDestination(directory, args[2], progress)
 	default:
 		return nil, errors.New("安装后验收参数无效；WebDAV 写入需要确认")
@@ -56,7 +59,7 @@ func InstallAcceptance(args []string, input io.Reader, progress io.Writer) (any,
 }
 
 func summarizeInstallation(directory string, observed installEvidence) (installSummary, error) {
-	if !versionPattern.MatchString(observed.Target) ||
+	if !inspect.VersionPattern.MatchString(observed.Target) ||
 		(observed.Mode != "https" && observed.Mode != "lan") {
 		return installSummary{}, errors.New("安装汇总的版本或模式无效")
 	}
@@ -71,7 +74,7 @@ func summarizeInstallation(directory string, observed installEvidence) (installS
 	if observed.Interrupted || summary.Checks["entry"] != "ok" {
 		return summary, nil
 	}
-	if _, err := DockerPreflight(false); err != nil {
+	if _, err := inspect.DockerPreflight(false); err != nil {
 		summary.ActualVersion = ""
 		summary.Checks["health"] = "unknown"
 		return summary, nil
@@ -79,7 +82,7 @@ func summarizeInstallation(directory string, observed installEvidence) (installS
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
 	defer cancel()
 	docker := func(args ...string) ([]byte, error) {
-		return runDockerCommandContext(ctx, true, nil, 10*time.Second, nil, args...)
+		return inspect.RunDockerContext(ctx, true, nil, 10*time.Second, nil, args...)
 	}
 	summary.observe(directory, observed, docker)
 	return summary, nil
@@ -111,22 +114,22 @@ func summarizeInstallEvidence(observed installEvidence) installSummary {
 	return summary
 }
 
-func (summary *installSummary) observe(directory string, observed installEvidence, docker DockerRunner) {
-	instance, err := Discover(directory, docker)
+func (summary *installSummary) observe(directory string, observed installEvidence, docker inspect.DockerRunner) {
+	instance, err := inspect.Discover(directory, docker)
 	if err != nil || instance == nil {
 		summary.ActualVersion = ""
 		summary.Checks["health"] = "unknown"
 		return
 	}
 	summary.LogRotation = map[string]string{
-		"Bot":      inspectInstallLogRotation(instance.Bot.ID, directory, botName, instance.Bot.Project, "", docker),
-		"网关":       inspectInstallLogRotation(instance.Gateway.ID, directory, "clouddrive2", instance.Gateway.Project, "", docker),
+		"Bot":      InspectContainerLogRotation(instance.Bot.ID, directory, inspect.BotName, instance.Bot.Project, "", docker),
+		"网关":       InspectContainerLogRotation(instance.Gateway.ID, directory, "clouddrive2", instance.Gateway.Project, "", docker),
 		"共享 Nginx": "unknown",
 		"Certbot":  "unknown",
 	}
 	if observed.Mode == "https" {
-		summary.LogRotation["共享 Nginx"] = inspectInstallLogRotation(httpsNginx, httpsRoot, "nginx", httpsProject, "reverse-proxy", docker)
-		summary.LogRotation["Certbot"] = inspectInstallLogRotation(httpsCertbot, httpsRoot, "certbot", httpsProject, "certificate-manager", docker)
+		summary.LogRotation["共享 Nginx"] = InspectContainerLogRotation(inspect.HTTPSNginx, inspect.HTTPSRoot, "nginx", inspect.HTTPSProject, "reverse-proxy", docker)
+		summary.LogRotation["Certbot"] = InspectContainerLogRotation(inspect.HTTPSCertbot, inspect.HTTPSRoot, "certbot", inspect.HTTPSProject, "certificate-manager", docker)
 	}
 
 	switch {
@@ -163,7 +166,7 @@ var (
 	installLogFiles = regexp.MustCompile(`^[1-9][0-9]{0,6}$`)
 )
 
-func inspectInstallLogRotation(id, directory, service, project, role string, docker DockerRunner) string {
+func InspectContainerLogRotation(id, directory, service, project, role string, docker inspect.DockerRunner) string {
 	raw, err := docker("container", "inspect", "--format", installLogFields, id)
 	var limits struct {
 		Driver                                                  *string
@@ -191,28 +194,28 @@ func inspectInstallLogRotation(id, directory, service, project, role string, doc
 }
 
 func verifyInstalledDestination(directory, target string, progress io.Writer) error {
-	if _, err := DockerPreflight(false); err != nil {
+	if _, err := inspect.DockerPreflight(false); err != nil {
 		return err
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer cancel()
 	discover := func(args ...string) ([]byte, error) {
-		return runDockerCommandContext(ctx, true, nil, 15*time.Second, nil, args...)
+		return inspect.RunDockerContext(ctx, true, nil, 15*time.Second, nil, args...)
 	}
 	writeProbe := func(args ...string) ([]byte, error) {
 		// Capture both streams. Only the standard verifier's bounded stage
 		// markers are echoed; remote paths and storage error bodies stay private.
-		var output dockerOutput
-		_, err := runDockerCommandContext(ctx, true, &output, 600*time.Second, nil, args...)
-		return output.buffer.Bytes(), err
+		var output hostutil.BoundedBuffer
+		_, err := inspect.RunDockerContext(ctx, true, &output, 600*time.Second, nil, args...)
+		return output.Bytes(), err
 	}
 	return verifyInstallWebDAV(directory, target, discover, writeProbe, progress)
 }
 
 var installWebDAVStage = regexp.MustCompile(`^TGCLOUD_(WEBDAV_(AUTH|LIST|WRITE|SIZE|MOVE|DELETE)|WEBDAV|UPLOAD|RENAME|DELETE)=(OK|FAILED)$`)
 
-func verifyInstallWebDAV(directory, target string, discover, writeProbe DockerRunner, progress io.Writer) error {
-	instance, err := Discover(directory, discover)
+func verifyInstallWebDAV(directory, target string, discover, writeProbe inspect.DockerRunner, progress io.Writer) error {
+	instance, err := inspect.Discover(directory, discover)
 	if err != nil || instance == nil || instance.Version != target ||
 		instance.Bot.State != "running" || instance.Gateway.State != "running" {
 		return errors.New("无法核对 Bot、网关和目标版本；未执行 WebDAV 写入验收")

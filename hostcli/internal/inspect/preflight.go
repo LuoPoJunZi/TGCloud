@@ -40,6 +40,10 @@ func DockerPreflight(allowMissing bool) (*PreflightResult, error) {
 	})
 }
 
+func CheckDockerHost() error {
+	return checkDockerHost()
+}
+
 func checkDockerHost() error {
 	if runtime.GOOS != "linux" || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
 		return errors.New("需要 Linux AMD64 或 ARM64 宿主机")

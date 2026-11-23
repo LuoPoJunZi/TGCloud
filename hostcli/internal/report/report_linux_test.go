@@ -1,4 +1,4 @@
-package inspect
+package report
 
 import (
 	"bytes"
@@ -24,7 +24,7 @@ func TestInstallBackupSummary(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(directory, "config-not-a-file.tar.gz"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if count, size, err := backupInventory(directory); err != nil || count != 3 || size != 18 {
+	if count, size, err := BackupInventory(directory); err != nil || count != 3 || size != 18 {
 		t.Fatalf("inventory = %d files, %d bytes, %v", count, size, err)
 	}
 	large := filepath.Join(directory, "database-previous.db")

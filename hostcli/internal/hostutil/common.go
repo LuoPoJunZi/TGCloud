@@ -1,6 +1,8 @@
 package hostutil
 
 import (
+	"bytes"
+	"errors"
 	"regexp"
 	"strconv"
 	"strings"
@@ -8,9 +10,49 @@ import (
 )
 
 var (
-	EnvKeyPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
-	OptPathRegex  = regexp.MustCompile(`^/opt/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$`)
+	ErrLinuxRequired = errors.New("此操作需要 Linux 宿主机")
+	ErrOutputLimit   = errors.New("Docker 输出超过 8 MiB")
+	EnvKeyPattern    = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+	OptPathRegex     = regexp.MustCompile(`^/opt/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$`)
 )
+
+const MaxOutputBytes = 8 * 1024 * 1024
+
+type BoundedBuffer struct {
+	buf bytes.Buffer
+}
+
+func (b *BoundedBuffer) Write(chunk []byte) (int, error) {
+	if len(chunk) > MaxOutputBytes-b.buf.Len() {
+		return 0, ErrOutputLimit
+	}
+	return b.buf.Write(chunk)
+}
+
+func (b *BoundedBuffer) Bytes() []byte { return b.buf.Bytes() }
+
+func (b *BoundedBuffer) String() string { return b.buf.String() }
+
+func UnescapeMountPath(raw string) string {
+	if !strings.ContainsRune(raw, '\\') {
+		return raw
+	}
+	var out strings.Builder
+	out.Grow(len(raw))
+	for i := 0; i < len(raw); i++ {
+		if raw[i] == '\\' && i+3 < len(raw) &&
+			raw[i+1] >= '0' && raw[i+1] <= '7' &&
+			raw[i+2] >= '0' && raw[i+2] <= '7' &&
+			raw[i+3] >= '0' && raw[i+3] <= '7' {
+			val := (raw[i+1]-'0')*64 + (raw[i+2]-'0')*8 + (raw[i+3] - '0')
+			out.WriteByte(val)
+			i += 3
+			continue
+		}
+		out.WriteByte(raw[i])
+	}
+	return out.String()
+}
 
 func ParseEnvLines(data []byte, invalid error) (map[string]string, error) {
 	if !utf8.Valid(data) {

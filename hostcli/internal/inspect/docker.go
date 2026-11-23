@@ -33,6 +33,14 @@ func RunDocker(args ...string) ([]byte, error) {
 	return runDocker(true, nil, args...)
 }
 
+func RunDockerWithProgress(forceLocal bool, progress io.Writer, args ...string) ([]byte, error) {
+	return runDocker(forceLocal, progress, args...)
+}
+
+func RunDockerContext(parent context.Context, forceLocal bool, progress io.Writer, timeout time.Duration, environment []string, args ...string) ([]byte, error) {
+	return runDockerCommandContext(parent, forceLocal, progress, timeout, environment, args...)
+}
+
 func runDocker(forceLocal bool, progress io.Writer, args ...string) ([]byte, error) {
 	timeout := 20 * time.Second
 	if len(args) > 0 {

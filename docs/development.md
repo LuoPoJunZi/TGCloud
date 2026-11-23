@@ -5,6 +5,7 @@
 | 路径 | 职责 |
 | --- | --- |
 | `src/tgcloud/cli/` | 标准库命令入口、管理菜单和终端交互 |
+| `src/tgcloud/deployment/ops/` | 宿主交互维护模块（用户、监听、分类/通知设置、诊断、就绪检查） |
 | `src/tgcloud/deployment/lifecycle/` | 宿主安装、内网初始化、升级、备份与卸载 |
 | `src/tgcloud/deployment/proxy/` | 内网网关、HTTPS、代理配置和归属核验 |
 | `src/tgcloud/telegram/` | Bot 事件、界面、命令与授权 |
@@ -14,7 +15,7 @@
 | `src/tgcloud/listening/` | 个人账号授权、来源与筛选 |
 | `src/tgcloud/compose/`、`addons/` | 独立 Compose、HTTPS 和外部访问 |
 | `packaging/` | Dockerfile、CloudDrive2 Compose、受管钩子与源码清单 |
-| `hostcli/` | Go 宿主管理工具（`tgcloud-host`），负责宿主机预检、安装事务与容器诊断 |
+| `hostcli/` | Go 宿主管理工具（`tgcloud-host`），静态单二进制，负责宿主机预检、依赖/安装事务、入口/备份/卸载/诊断与原生交互菜单 |
 | `scripts/` | 从源码运行 TGCloud、构建 Compose 部署包 |
 | `scripts/dev/` | 本地合成数据库基准和依赖锁生成 |
 | `.github/workflows/`、`.github/scripts/` | 自动化检查与发布工具 |

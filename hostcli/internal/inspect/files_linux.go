@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 )
 
 const instanceLock = "/opt/tgcloud-cli-locks/clouddrive2.lock"
-
-var managedOwnerUID uint32 = 0
 
 func LinuxSupported() bool { return true }
 
@@ -65,21 +65,11 @@ func openInstanceLock(owner uint32) (*os.File, error) {
 }
 
 func openPrivate(path string, flags int, owner uint32) (*os.File, error) {
-	fd, err := syscall.Open(path, flags|syscall.O_NOFOLLOW|syscall.O_CLOEXEC|syscall.O_NONBLOCK, 0600)
-	if err != nil {
-		return nil, err
-	}
-	file := os.NewFile(uintptr(fd), path)
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() || !privateOwner(info, owner) {
-		file.Close()
-		return nil, errors.New("文件归属或权限不符合要求")
-	}
-	return file, nil
+	return hostutil.OpenPrivate(path, flags, owner)
 }
 
 func privateOwner(info os.FileInfo, owner uint32) bool {
-	return info.Sys().(*syscall.Stat_t).Uid == owner && info.Mode().Perm()&0077 == 0
+	return hostutil.PrivateOwner(info, owner)
 }
 
 func verifyCandidateStage(directory string) error {

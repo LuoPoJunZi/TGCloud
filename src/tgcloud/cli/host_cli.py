@@ -94,7 +94,8 @@ def invoke(*args: str, lock_fd: int | None = None, inherit_output: bool = False,
                         "apply-upgrade": 2500, "rollback-upgrade": 3000, "deploy-bot": 2700, "accept-bot": 420,
                         "start-gateway": 360, "repair-gateway-network": 300, "prepare-dependencies": 1800,
                         "install-layout": 2500, "discover-install": 200, "plan-install": 200, "install-source": 200,
-                        "manager-runtime": 180, "installer-preflight": 65, "lan-entry": 1100, "https-entry": 225, "install-acceptance": 140}
+                        "manager-runtime": 180, "installer-preflight": 65, "lan-entry": 1100, "https-entry": 225, "install-acceptance": 140,
+                        "uninstall": 300, "backups": 300, "webdav-entry": 60, "diagnostics": 60, "menu": 3600}
             timeout = 10 if args[1:] == ("--supported",) else timeouts.get(args[0], 135)
             stdout, stderr = process.communicate(input=input_text, timeout=timeout)
         except subprocess.TimeoutExpired:

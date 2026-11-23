@@ -89,6 +89,10 @@ func discoverInstall(requested string, native *PreflightResult, docker DockerRun
 	return instance, inventory, err
 }
 
+func CheckPlanningDirectory(directory string) error {
+	return checkPlanningDirectory(directory)
+}
+
 func checkPlanningDirectory(directory string) error {
 	if err := checkInstallLayoutPath(directory); err != nil {
 		return err

@@ -1,16 +1,18 @@
-package inspect
+package deps
 
 import (
 	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 )
 
 func TestEnsureAPTKeyringDirRestoresModeUnderRestrictiveUmask(t *testing.T) {
-	previousOwner := managedOwnerUID
-	managedOwnerUID = uint32(os.Geteuid())
-	t.Cleanup(func() { managedOwnerUID = previousOwner })
+	previousOwner := hostutil.ManagedOwnerUID
+	hostutil.ManagedOwnerUID = uint32(os.Geteuid())
+	t.Cleanup(func() { hostutil.ManagedOwnerUID = previousOwner })
 
 	oldUmask := syscall.Umask(0077)
 	t.Cleanup(func() { syscall.Umask(oldUmask) })

@@ -1,4 +1,4 @@
-package inspect
+package acceptance
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
 
 func TestInstallAcceptanceSummarizesOwnedRuntimeWithoutWriting(t *testing.T) {
@@ -45,7 +47,7 @@ func TestInstallAcceptanceSummarizesOwnedRuntimeWithoutWriting(t *testing.T) {
 }
 
 func TestInstallAcceptanceWebDAVRequiresExitSuccessAndUnambiguousResult(t *testing.T) {
-	directory, inspect := installAcceptanceFixture(t)
+	directory, discover := installAcceptanceFixture(t)
 	for _, sample := range []struct {
 		output string
 		err    error
@@ -66,7 +68,7 @@ func TestInstallAcceptanceWebDAVRequiresExitSuccessAndUnambiguousResult(t *testi
 			}
 			return []byte(sample.output), sample.err
 		}
-		err := verifyInstallWebDAV(directory, "0.0.6", inspect, run, &report)
+		err := verifyInstallWebDAV(directory, "0.0.6", discover, run, &report)
 		if (err == nil) != sample.pass || calls != 1 || strings.Contains(report.String(), "PRIVATE_FIXTURE") ||
 			strings.Contains(report.String(), "TGCLOUD_DESTINATION=OK") != sample.pass {
 			t.Fatalf("incorrect WebDAV result: %v, %d, %s", err, calls, report.String())
@@ -74,7 +76,7 @@ func TestInstallAcceptanceWebDAVRequiresExitSuccessAndUnambiguousResult(t *testi
 	}
 }
 
-func installAcceptanceFixture(t *testing.T) (string, DockerRunner) {
+func installAcceptanceFixture(t *testing.T) (string, inspect.DockerRunner) {
 	t.Helper()
 	directory, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -84,21 +86,21 @@ func installAcceptanceFixture(t *testing.T) (string, DockerRunner) {
 	if err := os.WriteFile(filepath.Join(directory, "tgcloud-source.json"), []byte(marker), 0600); err != nil {
 		t.Fatal(err)
 	}
-	container := func(name, service, id string, files map[string]string) Container {
-		result := Container{ID: strings.Repeat(id, 64), Name: "/" + name, Directory: directory,
+	container := func(name, service, id string, files map[string]string) inspect.Container {
+		result := inspect.Container{ID: strings.Repeat(id, 64), Name: "/" + name, Directory: directory,
 			Project: "tgcloud", Service: service, State: "running", Health: "healthy"}
 		for dest, file := range files {
-			result.Mounts = append(result.Mounts, mount{"bind", filepath.Join(directory, file), dest})
+			result.Mounts = append(result.Mounts, inspect.Mount{Type: "bind", Source: filepath.Join(directory, file), Destination: dest})
 		}
 		return result
 	}
-	bot := container(botName, botName, "a", map[string]string{"/data": "data", "/config": "config", "/downloads": "downloads", "/logs": "logs"})
-	gateway := container(gatewayName, "clouddrive2", "b", map[string]string{"/Config": "clouddrive/config", "/CloudNAS": "clouddrive/mounts"})
+	bot := container(inspect.BotName, inspect.BotName, "a", map[string]string{"/data": "data", "/config": "config", "/downloads": "downloads", "/logs": "logs"})
+	gateway := container(inspect.GatewayName, "clouddrive2", "b", map[string]string{"/Config": "clouddrive/config", "/CloudNAS": "clouddrive/mounts"})
 	return directory, func(args ...string) ([]byte, error) {
 		switch {
 		case args[0] == "container" && args[1] == "ls":
-			return []byte(botName + "\n" + gatewayName), nil
-		case args[0] == "container" && args[3] == containerFields:
+			return []byte(inspect.BotName + "\n" + inspect.GatewayName), nil
+		case args[0] == "container" && args[3] == inspect.ContainerFields:
 			a, _ := json.Marshal(bot)
 			b, _ := json.Marshal(gateway)
 			return append(append(a, '\n'), b...), nil
