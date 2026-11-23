@@ -257,8 +257,9 @@ def build_candidate(session, stage: Path, tag: str, host: NativeHost) -> None:
     if subprocess.run(build, check=False).returncode:  # nosec B603
         raise ValueError("候选 Bot 镜像构建失败；现有实例保留")
     check_image(session, tag)
+    # Docker creates a private tmpfs inside the read-only candidate container.
     validate = ["docker", "run", "--rm", "--label", "com.tgcloud.candidate=" + tag,
-                "--read-only", "--network", "none", "--tmpfs", "/tmp",
+                "--read-only", "--network", "none", "--tmpfs", "/tmp",  # nosec B108
                 "--entrypoint", "python", "--env-file", str(stage / ".env"), tag,
                 "-m", "app.deployment_check", "--validate-only"]
     if subprocess.run(validate, check=False).returncode:  # nosec B603
