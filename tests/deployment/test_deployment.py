@@ -18,7 +18,7 @@ from tests.fixtures.shell import BASH, bash_path
 class DeploymentShellTests(unittest.TestCase):
     def test_gateway_discovery_queries_only_the_managed_container(self):
         script = (SOURCE / "packaging/hooks/clouddrive2/remote_install.sh").read_text(encoding="utf-8")
-        discovery = 'EXISTING_CD2=""\n' + script.split('EXISTING_CD2=""\n', 1)[1].split('  PORT_19798_CONTAINER=', 1)[0]
+        discovery = 'EXISTING_CD2=""\n' + script.split('EXISTING_CD2=""\n', 1)[1].split('PORT_19798_CONTAINER=', 1)[0]
         for running in ("true", "false"):
             harness = 'running="$1"; docker() { [[ "${@: -1}" == tgcloud-clouddrive2 ]] || exit 9; printf "%s\\n" "$running"; }; ' + discovery + '\nprintf "%s" "$EXISTING_CD2"'
             result = subprocess.run([BASH, "-c", harness, "fixture", running], capture_output=True, text=True, timeout=10, check=False)
@@ -539,7 +539,7 @@ class DeploymentStructureTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertLess(
-            script.index('tar -tzf "$BACKUP"'),
+            script.index('publish_upgrade_backup "$CONFIG_BACKUP_PENDING"'),
             script.index('log "提交已预检的程序和配置"'),
         )
         self.assertIn('. || fail "配置备份失败', script)
@@ -549,7 +549,7 @@ class DeploymentStructureTests(unittest.TestCase):
             encoding="utf-8"
         )
         commit = script.index('log "提交已预检的程序和配置"')
-        self.assertLess(script.index("-m app.deployment_check --validate-only"), commit)
+        self.assertLess(script.index("native_check build-candidate"), commit)
         self.assertIn("-m app.backup_database", script)
         self.assertIn('install -m 600 "$DATABASE_BACKUP" "$ROLLBACK_DATABASE"', script)
         self.assertIn('validate_database_backup "$ROLLBACK_DATABASE"', script)
@@ -566,7 +566,7 @@ class DeploymentStructureTests(unittest.TestCase):
         )
         docker_ready = script.index("docker compose version >/dev/null 2>&1 || fail")
         storage_check = script.index("DOCKER_ROOT_DIR=", docker_ready)
-        candidate_build = script.index('docker build --platform "$NATIVE_PLATFORM" --tag "$CANDIDATE_TAG"')
+        candidate_build = script.index("native_check build-candidate")
         self.assertLess(docker_ready, storage_check)
         self.assertLess(storage_check, candidate_build)
         self.assertIn("Docker 数据文件系统空间不足", script)

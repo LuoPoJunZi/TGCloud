@@ -2,21 +2,20 @@ from __future__ import annotations
 
 import argparse
 import sys
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from zoneinfo import ZoneInfoNotFoundError
 
-from tgcloud.cli import terminal
+from tgcloud.cli import host_cli, terminal
 from tgcloud.cli.presentation import InstallerLog
 from tgcloud.deployment import (
-    architecture,
     instances,
     local_source,
     preflight,
     runtime,
 )
 from tgcloud.deployment.host import LocalSession, SafeLog
-from tgcloud.deployment.lifecycle import install
+from tgcloud.deployment.lifecycle import install, upgrade
 from tgcloud.deployment.profiles import PRODUCTS
 
 
@@ -41,14 +40,15 @@ def main(argv: list[str] | None = None, *, friendly: bool | None = None) -> int:
     friendly = not arguments if friendly is None else friendly
     log = InstallerLog(SafeLog(), friendly=friendly)
     ui = None
+    planner = ExitStack()
     try:
         if args.show_credentials and (args.check or args.configure_https or args.verify):
             raise ValueError("--show-credentials 必须单独使用，不能与检查、HTTPS 修复或验收组合")
-        preflight.validate_host(log=log)
+        planner.enter_context(host_cli.planning_tool())
+        preflight.validate_install_host(log=log)
         session = LocalSession(log)
-        architecture.check_docker(session, allow_missing=True)
-        inventory = instances.docker_inventory(session)
-        selected_instances = [instances.discover(PRODUCTS["clouddrive2"], inventory, session, log, install_dir=args.install_dir)]
+        preflight.check_install_docker(session, "base")
+        selected_instances = [instances.discover_for_install(PRODUCTS["clouddrive2"], session, log, install_dir=args.install_dir)]
         if args.show_credentials:
             if not all(item.present for item in selected_instances):
                 raise ValueError("尚无完整实例，不生成凭据、不启动安装")
@@ -58,7 +58,7 @@ def main(argv: list[str] | None = None, *, friendly: bool | None = None) -> int:
                 terminal.show_credentials(ui, instance.product, instance.config, log)
             log("TGCLOUD_CLI_RESULT=NO_CHANGE；凭据查看结束，未修改实例或配置")
             return 0
-        with local_source.snapshot(args.source_dir) as release:
+        with local_source.snapshot(args.source_dir, host_cli=True) as release:
             source = release.root
             log("TGCloud 正式源码：v" + release.version + "；SHA256：" + release.digest)
             plans = []
@@ -82,18 +82,17 @@ def main(argv: list[str] | None = None, *, friendly: bool | None = None) -> int:
             manage_runtime = friendly or runtime.COMMAND.exists()
             if not actionable:
                 if friendly:
-                    runtime.check_destination()
+                    runtime.check_install_destination()
                     if ui.confirm("实例无需安装/升级；是否仅安装本地管理命令 tgcloud？不重启容器"):
                         with runtime.lifecycle_lock():
-                            for selected in selected_instances:
-                                current = instances.discover(selected.product, instances.docker_inventory(session), session, log, install_dir=str(selected.directory))
-                                if not current.present or current.raw_config != selected.raw_config or current.version != selected.version:
-                                    raise ValueError("确认期间实例已移除或变化；不重新创建管理命令")
+                            upgrade.verify_confirmed_source(release, args.source_dir)
+                            for plan, baseline in plans:
+                                upgrade.recheck_plan(plan.instance, plan.action, release, source, baseline, session, log)
                             log.cli = runtime.install_release(source, release, log)
                 log("TGCLOUD_CLI_RESULT=NO_CHANGE")
                 return 0
             if manage_runtime:
-                runtime.check_destination()
+                runtime.check_install_destination()
             if friendly:
                 log("\n── 执行确认 ──\n将安装本地管理命令 tgcloud；备份含敏感配置，仅保存在本机。请勿同时运行其他安装器。")
             else:
@@ -102,10 +101,10 @@ def main(argv: list[str] | None = None, *, friendly: bool | None = None) -> int:
                 log("TGCLOUD_CLI_RESULT=CANCELLED；未执行安装/升级/HTTPS变更")
                 return 0
             with runtime.lifecycle_lock() if manage_runtime else nullcontext():
-                if manage_runtime:
-                    log.cli = runtime.install_release(source, release, log)
+                upgrade.verify_confirmed_source(release, args.source_dir)
                 for plan, baseline in actionable:
-                    install.execute_plan(plan, release, source, baseline, session, log, ui, verify=args.verify)
+                    install.execute_plan(plan, release, source, baseline, session, log, ui, verify=args.verify,
+                                         install_manager=manage_runtime)
             log("TGCLOUD_CLI_RESULT=BASE_HTTPS_OK；WebDAV 是否验收请以独立结果为准")
         return 0
     except KeyboardInterrupt:
@@ -119,6 +118,7 @@ def main(argv: list[str] | None = None, *, friendly: bool | None = None) -> int:
         log("TGCLOUD_CLI_RESULT=FAILED：检查/操作发生异常；未输出配置或凭据，请核对实例状态后重试")
         return 1
     finally:
+        planner.close()
         if ui is not None:
             ui.close()
 

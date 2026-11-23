@@ -122,13 +122,11 @@ getent() {{ printf 'UNEXPECTED_DNS_CALL\\n'; }}
                 self.assertEqual(result.returncode, 3, result.stderr)
                 self.assertEqual(result.stdout.strip(), "TGCLOUD_PROXY_MISSING_TOOLS=" + missing)
 
-    def test_both_installers_include_host_dependencies(self):
-        root = ROOT
-        for edition in PRODUCTS:
-            text = (root / "packaging/hooks" / edition / "remote_install.sh").read_text(encoding="utf-8")
-            packages = text.split("install -y --no-install-recommends \\\n", 1)[1].splitlines()[0].split()
-            self.assertIn("iproute2", packages)
-            self.assertIn("python3", packages)
+    def test_shell_fallback_includes_proxy_dependencies(self):
+        script = ROOT / "packaging/hooks/clouddrive2/remote_install.sh"
+        package_lists = [line.partition(";")[0].split() for line in script.read_text(encoding="utf-8").splitlines()
+                         if line.lstrip().startswith("for package in ")]
+        self.assertTrue(any({"iproute2", "python3"}.issubset(packages) for packages in package_lists))
 
 
 class NatProxyTests(unittest.TestCase):

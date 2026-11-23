@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
+import struct
+from dataclasses import asdict
+from pathlib import Path
 
-from tgcloud.cli import terminal
+from tgcloud.cli import host_cli, terminal
 from tgcloud.deployment import architecture, configuration, instances
 from tgcloud.deployment.host import LocalSession, SafeLog
 from tgcloud.deployment.profiles import ProductProfile
 from tgcloud.deployment.resources import (
     GIB,
+    StorageAdvice,
+    StorageAssessment,
+    StoragePlan,
     assess_storage_choice,
     build_probe_command,
     parse_probe_output,
@@ -27,9 +35,70 @@ def validate_host(*, log=None) -> None:
         host.describe(log)
 
 
+def native_preflight(*args: str, input_data=None) -> dict | None:
+    if not host_cli.supports("installer-preflight"):
+        return None
+    output = host_cli.checked_output("installer-preflight", *args,
+                                     input_text=None if input_data is None else json.dumps(input_data, ensure_ascii=False))
+    if output is None:
+        return None
+    result = json.loads(output)
+    if not isinstance(result, dict) or not result:
+        raise ValueError("Go 返回的一键预检结果无法核实")
+    return result
+
+
+def validate_install_host(*, log=None, lan: bool = False) -> bool:
+    result = native_preflight("host", "lan" if lan else "public")
+    if result is None:
+        validate_host(log=log)
+        return False
+    if struct.calcsize("P") != 8:
+        raise ValueError("需要 64 位 Linux 用户态与 Python；不支持 32 位用户态")
+    host = architecture.NativeHost(**result)
+    if log:
+        host.describe(log)
+    return True
+
+
+def check_install_docker(session: LocalSession, mode: str) -> None:
+    if native_preflight("docker", mode) is not None:
+        return
+    if mode == "upgrade":
+        code, _ = session.run("docker compose version >/dev/null 2>&1", timeout=15)
+        if code:
+            raise ValueError("升级要求现有 Docker Compose 可用；不在升级中自动安装依赖")
+        return
+    info = architecture.check_standalone_docker(session, allow_missing=True)
+    if mode == "lan" and info is not None:
+        version = info.get("version", "")
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+].*)?", version) or int(version.split(".")[0]) < 28:
+            raise ValueError("内网模式要求 Docker Engine 28+，避免旧版回环端口被同网段直接访问；请人工升级，不重启其他容器")
+
+
+def write_candidate_config(path: Path, action: str, config: dict[str, str]) -> None:
+    entries = list(config.items()) if action == "install" else []
+    if native_preflight("write-config", str(path), action, input_data=entries) is not None:
+        return
+    content = ("TGCLOUD_REDEPLOY_APPLY_CONFIG=false\n" if action == "upgrade" else
+               "".join(key + "=" + value + "\n" for key, value in entries))
+    with path.open("x", encoding="utf-8") as writer:
+        path.chmod(0o600)
+        writer.write(content)
+
+
 def probe_resources(instance: instances.Instance, session: LocalSession):
+    install_dir = str(instance.directory)
+    backup_dir = instance.product.backup_dir
+    try:
+        result = host_cli.invoke("resources", install_dir, backup_dir)
+        if result is not None and result[0] == 0:
+            return parse_probe_output(result[1])
+    except (OSError, TimeoutError, ValueError):
+        # Incomplete Go observations never feed the recommendation or write guard.
+        pass
     code, output = session.run(
-        build_probe_command(str(instance.directory), instance.product.backup_dir), timeout=45,
+        build_probe_command(install_dir, backup_dir), timeout=45,
     )
     if code:
         raise ValueError("资源预检未完整执行")
@@ -44,13 +113,31 @@ def storage_options(product: ProductProfile) -> dict:
     }
 
 
+def storage_advice(resources, product: ProductProfile) -> StorageAdvice:
+    result = native_preflight("storage", "recommend",
+                              input_data={"resources": asdict(resources), "requires_fuse": product.requires_fuse})
+    if result is None:
+        return recommend_storage(resources, **storage_options(product))
+    return StorageAdvice(result["performance_profile"], result["preferred_key"],
+                         StoragePlan(**result["balanced"]), StoragePlan(**result["stream_first"]))
+
+
+def storage_assessment(resources, product: ProductProfile, budget: float, reserve: float) -> StorageAssessment:
+    result = native_preflight("storage", "assess", input_data={
+        "resources": asdict(resources), "requires_fuse": product.requires_fuse,
+        "budget_gb": budget, "reserve_gb": reserve,
+    })
+    if result is None:
+        return assess_storage_choice(resources, budget_gb=budget, reserve_gb=reserve, **storage_options(product))
+    return StorageAssessment(**result)
+
+
 def choose_storage(instance: instances.Instance, session: LocalSession, log: SafeLog, ui: terminal.Terminal) -> tuple[str, str]:
     """First-install advice only. Never rewrite an existing instance's settings."""
     if instance.present:
         raise ValueError("已有实例保留磁盘配置，不进入首次安装推荐")
     resources = probe_resources(instance, session)
-    options = storage_options(instance.product)
-    advice = recommend_storage(resources, **options)
+    advice = storage_advice(resources, instance.product)
     log(f"安装目录所在磁盘：总计 {resources.storage_total_bytes / GIB:.1f}GB；可用 {resources.storage_available_bytes / GIB:.1f}GB")
     log(f"CPU {resources.cpu_cores} 核；内存 {resources.memory_total_bytes / GIB:.1f}GB；可用 {resources.memory_available_bytes / GIB:.1f}GB")
     if resources.docker_root_detected and not resources.docker_same_filesystem:
@@ -86,7 +173,7 @@ def choose_storage(instance: instances.Instance, session: LocalSession, log: Saf
                     raise ValueError("已停止安装，未写入配置")
                 continue
             budget, reserve = str(plan.budget_gb), str(plan.reserve_gb)
-        assessment = assess_storage_choice(resources, budget_gb=float(budget), reserve_gb=float(reserve), **options)
+        assessment = storage_assessment(resources, instance.product, float(budget), float(reserve))
         if float(reserve) >= 8 and assessment.safe:
             log(f"已选择任务预算 {budget}GB / 最少保留 {reserve}GB；执行前将重新探测并校验")
             return budget, reserve
@@ -97,10 +184,9 @@ def choose_storage(instance: instances.Instance, session: LocalSession, log: Saf
 
 def resource_check(instance: instances.Instance, config: dict[str, str], session: LocalSession, log: SafeLog) -> None:
     resources = probe_resources(instance, session)
-    assessment = assess_storage_choice(
-        resources, budget_gb=float(configuration.size_gb(config.get("LOCAL_TEMP_BUDGET_GB", "20"))),
-        reserve_gb=float(configuration.size_gb(config.get("MIN_FREE_DISK_GB", "8"))),
-        **storage_options(instance.product),
+    assessment = storage_assessment(
+        resources, instance.product, float(configuration.size_gb(config.get("LOCAL_TEMP_BUDGET_GB", "20"))),
+        float(configuration.size_gb(config.get("MIN_FREE_DISK_GB", "8"))),
     )
     log(assessment.reason)
     if not assessment.safe:

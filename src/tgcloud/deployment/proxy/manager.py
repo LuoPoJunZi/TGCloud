@@ -463,6 +463,7 @@ class DomainProxyManager:
         self.external_plan: dict | None = None
         self._entry_state: dict | None = None
         self._expected_compose_sha256: str | None = None
+        self.installer_source: Path | None = None
 
     def external_entry(self, state=None):
         from .external_entry import selected_entry
@@ -504,12 +505,59 @@ fi
         self._entry_state = state
         return state
 
+    def _native_managed(self, state=None) -> bool:
+        current = self._entry_state if state is None else state
+        return (self.installer_source is not None and not self.use_sudo and self.external_plan is None
+                and current is not None and current["version"] == 1)
+
+    def _native_arguments(self, operation: str, domain: str) -> tuple[str, ...]:
+        return ("https-entry", operation, self.values.get("install_dir", self.product.install_dir),
+                NGINX_IMAGE, CERTBOT_IMAGE, validate_domain(domain))
+
+    def _native_read(self, operation: str, domain: str, state=None) -> dict | None:
+        if not self._native_managed(state):
+            return None
+        from tgcloud.cli import host_cli
+        raw = host_cli.read_install_check(*self._native_arguments(operation, domain))
+        return None if raw is None else json.loads(raw)
+
+    def _native_tool(self) -> Path | None:
+        if self.installer_source is None or not self._native_managed():
+            return None
+        from tgcloud.cli import host_cli
+        return host_cli.deployment_tool("https-entry", self.installer_source)
+
+    def recheck_install_entry(self, domain: str, *, present: bool, configure: bool) -> None:
+        if not domain or self._native_tool() is None:
+            return
+        expected = self._entry_state
+        if self.read_state() != expected:
+            raise ValueError("确认后共享 HTTPS 状态已变化；请重新预检")
+        if not configure:
+            if self.status(expected).state != "healthy":
+                raise ValueError("确认后 HTTPS 入口检查未通过；请先单独修复")
+            return
+        environment = self.probe(domain)
+        if present:
+            self._validate_environment(environment)
+        else:
+            error = public_endpoint_error(environment, self.values["vps_host"])
+            if error:
+                raise ValueError(error + "\n" + dns_diagnostic(environment, self.values["vps_host"]))
+
     def probe(self, domain: str) -> ProxyEnvironment:
-        code, output = self._run(environment_probe_command(self.product, domain), timeout=30)
-        raise_missing_host_tools(output)
-        if code != 0:
-            raise RuntimeError("无法完成域名、Docker 与端口环境检测。")
-        environment = parse_environment(output)
+        observed = self._native_read("probe", domain)
+        if observed is None:
+            code, output = self._run(environment_probe_command(self.product, domain), timeout=30)
+            raise_missing_host_tools(output)
+            if code != 0:
+                raise RuntimeError("无法完成域名、Docker 与端口环境检测。")
+            environment = parse_environment(output)
+        else:
+            environment = ProxyEnvironment(
+                observed["core"], observed["docker"], observed["port_80"], observed["port_443"],
+                tuple(observed["dns_a"]), tuple(observed["dns_aaaa"]), tuple(observed["local_addresses"]),
+            )
         # A plain port probe remains a pure probe. Entry callers read state
         # explicitly; write paths always re-read it under the shared lock.
         adapter = self.external_entry(self._entry_state or {"version": 1, "domains": {}})
@@ -771,8 +819,11 @@ fi
         if not item:
             return ProxyReport("", "not_configured", "当前实例尚未配置域名访问。", ())
         domain = item["domain"]
-        code, output = self._run(status_command(self.product, domain), timeout=90)
-        markers = parse_markers(output)
+        markers = self._native_read("status", domain, current)
+        code, output = 0, ""
+        if markers is None:
+            code, output = self._run(status_command(self.product, domain), timeout=90)
+            markers = parse_markers(output)
         if code != 0 or markers.get("PROXY_STATUS") != "OK":
             self.log(
                 "TGCLOUD_PROXY_STATUS_SCRIPT=FAILED: "
@@ -838,6 +889,16 @@ fi
     def configure(self, domain: str, email: str) -> ProxyReport:
         domain = validate_domain(domain)
         email = validate_email(email)
+        helper = self._native_tool()
+        if helper is not None:
+            expected = self._entry_state["domains"].get(self.product.key, {}).get("domain", "")
+            confirmed = (self._nat_confirmation[1] if self._nat_confirmation and self._nat_confirmation[0] == domain else "")
+            arguments = self._native_arguments("configure", domain)
+            command = "exec " + shlex.join((str(helper), *arguments, email, confirmed, expected))
+            code, output = self.session.run(command, stream=self.log, timeout=2300, shutdown_grace=440, stream_recovery=True)
+            if code or "TGCLOUD_HTTPS=OK" not in output.splitlines():
+                raise RuntimeError("共享 HTTPS 未通过；基础服务和数据保留，可用 --configure-https 单独修复。")
+            return self.status()
         with self.session.hold_lock(proxy_lock_command(), sudo=self.use_sudo):
             return self._configure_locked(domain, email)
 

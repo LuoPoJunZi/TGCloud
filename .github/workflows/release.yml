@@ -177,6 +177,13 @@ jobs:
           TGCLOUD_TEST_EXTERNAL_NGINX_DOCKER: "1"
         run: python -B -m unittest discover -s tests -p test_external_nginx_docker.py -v
 
+      - name: Set up Go for standalone source packaging
+        if: matrix.arch == 'amd64' && hashFiles('hostcli/go.mod') != ''
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.4'
+          cache: false
+
       - name: Package immutable source once and verify bootstrap pins and SHA256
         if: matrix.arch == 'amd64'
         run: python .github/scripts/source_release.py build --tag "${RELEASE_TAG}" --directory build/source-release

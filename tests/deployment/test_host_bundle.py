@@ -67,19 +67,15 @@ class HostBundleTests(unittest.TestCase):
 
     def test_installer_does_not_report_cli_success_without_version_and_commands(self):
         release = source()
-        for result in (
-            {"version": "0.0.0", "matches": False, "state": "failed", "commands": {}},
-            {"version": VERSION, "matches": True, "state": "failed", "commands": {"listen": "failed"}},
+        output = Mock()
+        with (
+            patch.object(runtime, "native_install_release", return_value=None),
+            patch.object(runtime, "install", side_effect=RuntimeError("管理工具版本或命令核验未通过；未开始升级 Bot")) as install,
+            self.assertRaisesRegex(RuntimeError, "未开始升级 Bot"),
         ):
-            output = Mock()
-            with (
-                patch.object(runtime, "install") as install,
-                patch.object(runtime, "installed_status", return_value=result),
-                self.assertRaisesRegex(RuntimeError, "未开始升级 Bot"),
-            ):
-                runtime.install_release(ROOT, release, output)
-            install.assert_called_once_with(source=ROOT)
-            self.assertNotIn("本地管理命令已安装", str(output.call_args_list))
+            runtime.install_release(ROOT, release, output)
+        install.assert_called_once_with(source=ROOT, target_version=release.version)
+        self.assertNotIn("本地管理命令已安装", str(output.call_args_list))
 
     def test_foreign_manager_origin_is_rejected_without_executing_candidate(self):
         from tests.fixtures.local_project import host_source

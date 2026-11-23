@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
 import re
 import runpy
 import shlex
@@ -17,6 +18,25 @@ ROOT = Path("/opt/tgcloud-cli")
 COMMAND = Path("/usr/local/bin/tgcloud")
 LOCK_ROOT = Path("/opt/tgcloud-cli-locks")
 HEADER = "#!/bin/sh\n# CloudDrive2 standalone manager managed v1\n"
+HOST_CLI = "tgcloud-host"
+HOST_CLI_LIMIT = 8 * 1024 * 1024
+
+
+def packaged_host_cli(source: Path) -> tuple[str, bytes] | None:
+    """Read only the optional executable for this standalone install's architecture."""
+    machine = {"x86_64": ("amd64", 62), "aarch64": ("arm64", 183)}.get(platform.machine())
+    if sys.platform != "linux" or machine is None:
+        return None
+    arch, elf_machine = machine
+    name = f"hostcli/bin/linux-{arch}/{HOST_CLI}"
+    from tgcloud.deployment.local_source import regular_bytes
+    try:
+        body = regular_bytes(source / name, limit=HOST_CLI_LIMIT)
+    except (ValueError, OSError):
+        return None
+    if body[:6] != b"\x7fELF\x02\x01" or body[18:20] != elf_machine.to_bytes(2, "little"):
+        return None
+    return name, body
 
 
 def lifecycle_lock():
@@ -25,11 +45,14 @@ def lifecycle_lock():
     return edition_lock(LOCK_ROOT / "manager-lifecycle.lock")
 
 
+def publication_lock_path(root: Path) -> Path:
+    # Locks live outside the removable runtime: never unlink a locked inode.
+    return LOCK_ROOT / "manager-code.lock" if root == ROOT else root.parent / (root.name + "-code.lock")
+
+
 def publication_lock(root: Path):
     from tgcloud.deployment.host import edition_lock
-    # Locks live outside the removable runtime: never unlink a locked inode.
-    path = LOCK_ROOT / "manager-code.lock" if root == ROOT else root.parent / (root.name + "-code.lock")
-    return edition_lock(path)
+    return edition_lock(publication_lock_path(root))
 
 
 def safe_path(path: Path, *, private: bool = False) -> None:
@@ -46,7 +69,7 @@ def safe_path(path: Path, *, private: bool = False) -> None:
         raise ValueError("本地管理目录必须为私有目录")
 
 
-def files(source: Path) -> dict[str, bytes]:
+def file_names(source: Path) -> tuple[str, ...]:
     names = ["scripts/run_source.py", "src/tgcloud/__init__.py", "src/tgcloud/version.py", "src/tgcloud/config.py"]
     # Old installed manager bundles remain verifiable under their original
     # layout. New commands explicitly require these stdlib-only shared helpers.
@@ -65,14 +88,19 @@ def files(source: Path) -> dict[str, bytes]:
         names.extend(p.relative_to(source).as_posix() for p in (source / "src/tgcloud/compose").rglob("*.py"))
         names.extend(("packaging/compose/docker-compose.clouddrive2.yml", "packaging/compose-https.sh",
                       "packaging/external-webdav.json"))
+    selected = tuple(sorted(set(names)))
+    if "src/tgcloud/cli/management.py" not in selected:
+        raise ValueError("此代码来源尚不支持 tgcloud 管理菜单")
+    return selected
+
+
+def files(source: Path) -> dict[str, bytes]:
     result = {}
-    for name in sorted(set(names)):
+    for name in file_names(source):
         path = source / name
         if path.is_symlink() or path.resolve() != path.absolute() or not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
             raise ValueError("本地维护源码缺失、过大或经过链接")
         result[name] = path.read_bytes()
-    if "src/tgcloud/cli/management.py" not in result:
-        raise ValueError("此代码来源尚不支持 tgcloud 管理菜单")
     return result
 
 
@@ -96,7 +124,15 @@ def verify(bundle: Path) -> dict:
     if hashes != data["files"]:
         raise ValueError("本地管理源码与安装清单不一致；停止，不执行未知代码")
     expected = {*actual, "installation.json"}
+    if "host_cli_sha256" in data:
+        if not isinstance(data["host_cli_sha256"], str) or not re.fullmatch(r"[a-f0-9]{64}", data["host_cli_sha256"]):
+            raise ValueError("本地 Go 管理工具清单无效")
+        expected.add(HOST_CLI)
     for path in bundle.rglob("*"):
+        if path == bundle / HOST_CLI and HOST_CLI in expected:
+            # The optional executable is verified separately so its loss or
+            # corruption cannot disable the Python management entry.
+            continue
         safe_path(path)
         if path.is_file() and path.relative_to(bundle).as_posix() not in expected:
             raise ValueError("本地管理目录含未知文件")
@@ -105,8 +141,49 @@ def verify(bundle: Path) -> dict:
     return data
 
 
+def verified_host_cli(bundle: Path, expected: str) -> Path | None:
+    executable = bundle / HOST_CLI
+    try:
+        safe_path(executable, private=True)
+        if not executable.is_file() or executable.stat().st_size > HOST_CLI_LIMIT or not os.access(executable, os.X_OK):
+            return None
+        if hashlib.sha256(executable.read_bytes()).hexdigest() == expected:
+            return executable
+    except (ValueError, OSError):
+        pass
+    return None
+
+
+def installed_host_cli() -> Path | None:
+    try:
+        bundle = launcher_bundle(ROOT, COMMAND)
+        expected = verify(bundle).get("host_cli_sha256")
+        return verified_host_cli(bundle, expected) if expected is not None else None
+    except (ValueError, OSError):
+        return None
+
+
 def launcher(bundle: Path) -> str:
     return HEADER + "exec python3 -B " + shlex.quote(str(bundle / "src/tgcloud/deployment/runtime.py")) + ' "$@"\n'
+
+
+def launcher_bundle(root: Path, command: Path) -> Path:
+    safe_path(command)
+    if not command.is_file() or command.stat().st_size > 4096:
+        raise ValueError("tgcloud 命令已被其他程序占用")
+    text = command.read_text(encoding="utf-8")
+    match = re.fullmatch(re.escape(HEADER) + r'exec python3 -B (.+) "\$@"\n', text)
+    args = shlex.split(match[1]) if match else []
+    if len(args) != 1:
+        raise ValueError("tgcloud 命令不属于本项目；不会覆盖")
+    entry = Path(args[0])
+    if len(entry.parents) < 4:
+        raise ValueError("tgcloud 命令的运行路径不符合受管布局")
+    bundle = entry.parents[3]
+    if (bundle.parent != root / "runtime" or not re.fullmatch(r"[a-f0-9]{64}", bundle.name)
+            or entry != bundle / "src/tgcloud/deployment/runtime.py" or text != launcher(bundle)):
+        raise ValueError("tgcloud 命令的运行路径不符合受管布局")
+    return bundle
 
 
 def check_destination(*, root: Path = ROOT, command: Path = COMMAND) -> dict | None:
@@ -119,37 +196,24 @@ def check_destination(*, root: Path = ROOT, command: Path = COMMAND) -> dict | N
         if not (root / "runtime").is_dir():
             raise ValueError("本地管理目录不是完整的受管目录")
     if command.exists():
-        if not command.is_file() or command.stat().st_size > 4096:
-            raise ValueError("tgcloud 命令已被其他程序占用")
-        text = command.read_text(encoding="utf-8")
-        match = re.fullmatch(re.escape(HEADER) + r"exec python3 -B (.+) \"\$@\"\n", text)
-        args = shlex.split(match[1]) if match else []
-        if len(args) != 1:
-            raise ValueError("tgcloud 命令不属于本项目；不会覆盖")
-        entry = Path(args[0])
-        if len(entry.parents) < 4:
-            raise ValueError("tgcloud 命令的运行路径不符合受管布局")
-        bundle = entry.parents[3]
-        if (bundle.parent != root / "runtime" or not re.fullmatch(r"[a-f0-9]{64}", bundle.name)
-                or entry != bundle / "src/tgcloud/deployment/runtime.py" or text != launcher(bundle)):
-            raise ValueError("tgcloud 命令的运行路径不符合受管布局")
-        return verify(bundle)
+        return verify(launcher_bundle(root, command))
     return None
 
 
-def installed_status(target: str, *, root: Path | None = None, command: Path | None = None) -> dict:
-    """Read only: verify active launcher, static version and offline help capabilities."""
+def check_install_destination() -> None:
+    from tgcloud.cli import host_cli
+
+    output = host_cli.read_install_check("manager-runtime", "check", str(ROOT), str(COMMAND))
+    if output is None:
+        check_destination()
+
+
+def probe_bundle(bundle: Path, marker: dict, target: str) -> dict:
     from tgcloud.deployment.releases import source_version
 
-    root, command = root or ROOT, command or COMMAND
-    result = {"version": "", "matches": False, "state": "missing", "commands": {}}
+    result = {"version": "", "matches": False, "state": "failed", "commands": {}}
+    entry = bundle / "src/tgcloud/deployment/runtime.py"
     try:
-        marker = check_destination(root=root, command=command)
-        if marker is None:
-            return result
-        result["state"] = "failed"
-        entry = Path(shlex.split(command.read_text(encoding="utf-8").splitlines()[-1])[3])
-        bundle = entry.parents[3]
         version = source_version(bundle)
         if version != marker.get("version"):
             return result
@@ -172,10 +236,49 @@ def installed_status(target: str, *, root: Path | None = None, command: Path | N
     return result
 
 
+def installed_status(target: str, *, root: Path | None = None, command: Path | None = None) -> dict:
+    """Read only: verify active launcher, static version and offline help capabilities."""
+    root, command = root or ROOT, command or COMMAND
+    result = {"version": "", "matches": False, "state": "missing", "commands": {}}
+    try:
+        marker = check_destination(root=root, command=command)
+        if marker is not None:
+            return probe_bundle(launcher_bundle(root, command), marker, target)
+    except (ValueError, OSError, RuntimeError):
+        result["state"] = "failed"
+    return result
+
+
+def native_install_release(source: Path, release) -> dict | None:
+    from tgcloud.cli import host_cli
+    from tgcloud.deployment.local_source import source_names
+
+    executable = host_cli.deployment_tool("manager-runtime", source)
+    if executable is None:
+        return None
+    selection = {"files": source_names(source)}
+    packaged = packaged_host_cli(source)
+    if packaged is not None:
+        name, body = packaged
+        selection.update(tool=name, tool_sha256=hashlib.sha256(body).hexdigest())
+    output = host_cli.checked_output("manager-runtime", "publish", str(ROOT), str(COMMAND),
+                                     str(publication_lock_path(ROOT)), str(source), release.version, release.digest,
+                                     input_text=json.dumps(selection, ensure_ascii=False), executable=executable)
+    if output is None:
+        return None
+    result = json.loads(output)
+    if (not isinstance(result, dict) or result.get("version") != release.version
+            or result.get("commands") != {"version": "ok", "listen": "ok"} or result.get("matches") is not True):
+        raise ValueError("Go 返回的管理工具发布结果无法核实")
+    return result
+
+
 def install_release(source: Path, release, log) -> dict:
     """Install the offline manager from verified TGCloud source."""
-    install(source=source)
-    result = installed_status(release.version)
+    result = native_install_release(source, release)
+    if result is None:
+        install(source=source, target_version=release.version)
+        result = {"version": release.version, "matches": True, "state": "ok", "commands": {"version": "ok", "listen": "ok"}}
     label = "v" + result["version"] if result["version"] else "未核实"
     log("本地管理工具：" + label + "；目标 v" + release.version)
     if result["state"] != "ok":
@@ -184,7 +287,8 @@ def install_release(source: Path, release, log) -> dict:
     return result
 
 
-def install(*, source: Path | None = None, root: Path = ROOT, command: Path = COMMAND, release=None) -> dict:
+def install(*, source: Path | None = None, root: Path = ROOT, command: Path = COMMAND, release=None,
+            target_version: str | None = None) -> dict:
     from tgcloud.deployment.releases import source_version
 
     source = source or Path(__file__).resolve().parents[3]
@@ -200,6 +304,12 @@ def install(*, source: Path | None = None, root: Path = ROOT, command: Path = CO
                   "source_sha256": local_source.digest(local_source.content(source))}
     metadata = {"schema": 1, "owner": "tgcloud.cli", "version": version, "origin": origin,
                 "files": {name: hashlib.sha256(body).hexdigest() for name, body in content.items()}}
+    host_cli = packaged_host_cli(source)
+    optional = {}
+    if host_cli is not None:
+        _, body = host_cli
+        metadata["host_cli_sha256"] = hashlib.sha256(body).hexdigest()
+        optional[HOST_CLI] = body
     manifest = (json.dumps(metadata, sort_keys=True, ensure_ascii=True) + "\n").encode()
     key = hashlib.sha256(manifest).hexdigest()
     check_destination(root=root, command=command)
@@ -215,11 +325,11 @@ def install(*, source: Path | None = None, root: Path = ROOT, command: Path = CO
             with tempfile.TemporaryDirectory(prefix=".candidate-", dir=root) as private:
                 candidate = Path(private) / "bundle"
                 candidate.mkdir(mode=0o700)
-                for name, body in {**content, "installation.json": manifest}.items():
+                for name, body in {**content, **optional, "installation.json": manifest}.items():
                     path = candidate / name
                     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                     with path.open("xb") as writer:
-                        path.chmod(0o600)
+                        path.chmod(0o700 if name == HOST_CLI else 0o600)
                         writer.write(body)
                         writer.flush()
                         os.fsync(writer.fileno())
@@ -227,6 +337,14 @@ def install(*, source: Path | None = None, root: Path = ROOT, command: Path = CO
                 candidate.rename(bundle)
         if verify(bundle) != metadata:
             raise ValueError("本地维护候选清单不一致")
+        if optional and verified_host_cli(bundle, metadata["host_cli_sha256"]) is None:
+            with tempfile.TemporaryDirectory(prefix=".host-cli-", dir=root) as private:
+                candidate = Path(private) / HOST_CLI
+                candidate.write_bytes(optional[HOST_CLI])
+                candidate.chmod(0o700)
+                candidate.replace(bundle / HOST_CLI)
+        if target_version is not None and probe_bundle(bundle, metadata, target_version)["state"] != "ok":
+            raise RuntimeError("管理工具版本或命令核验未通过；未开始升级 Bot")
         command.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
         descriptor, name = tempfile.mkstemp(prefix=".tgcloud-", dir=command.parent)
         temporary = Path(name)

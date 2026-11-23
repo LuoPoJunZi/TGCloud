@@ -100,9 +100,9 @@ class LocalSourceInstallTests(unittest.TestCase):
 
     def test_public_check_uses_real_local_snapshot_without_release_downloads_or_terminal(self):
         instance = instances.Instance(CLOUDDRIVE2_PRODUCT, self.root / "new-instance", False)
-        with (patch.object(vps.preflight, "validate_host"), patch.object(vps.architecture, "check_docker"),
-              patch.object(vps.instances, "docker_inventory", return_value=set()),
-              patch.object(vps.instances, "discover", return_value=instance),
+        with (patch.object(vps.preflight, "validate_install_host"),
+              patch.object(vps.preflight, "check_install_docker"),
+              patch.object(vps.instances, "discover_for_install", return_value=instance),
               patch.object(vps.install, "make_plan", return_value=Mock()) as plan,
               patch.object(vps.terminal, "preview"), patch.object(vps.terminal, "Terminal") as terminal,
               patch.object(releases, "ReleaseClient", side_effect=AssertionError("must stay offline")) as client):

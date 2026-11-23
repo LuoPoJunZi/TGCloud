@@ -8,11 +8,12 @@ import json
 import os
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import ExitStack, nullcontext, redirect_stdout
+from contextlib import ExitStack, closing, nullcontext, redirect_stdout
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
@@ -542,6 +543,39 @@ class PlanExecutionTests(unittest.TestCase):
         self.assertNotIn("TGCLOUD_LAN_BASE=OK", "\n".join(self.messages))
         self.patches["verify_destination"].assert_not_called()
 
+    def test_native_entry_failure_can_resume_without_rebuilding_bot(self):
+        plan = self.plan()
+        self.assertEqual(plan.action, "current")
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            plan.instance.directory = base
+            config = base / ".env"
+            config.write_bytes(plan.instance.raw_config)
+            database = base / "tasks.db"
+            with closing(sqlite3.connect(database)) as connection, connection:
+                connection.execute("CREATE TABLE tasks (state TEXT)")
+                connection.execute("INSERT INTO tasks VALUES ('queued')")
+            original_db = database.read_bytes()
+            session = Mock(run=Mock(return_value=(0, "")))
+            observed = {"saved": plan.saved, "running": False, "healthy": False}
+            with (
+                patch.object(lan_installer, "edition_lock", return_value=nullcontext()),
+                patch.object(tgdep_instances, "discover", return_value=plan.instance),
+                patch.object(lan_installer, "native_entry",
+                             side_effect=[observed, {}, ValueError("入口启动失败"), observed, {}, {}]) as entry,
+            ):
+                with self.assertRaisesRegex(ValueError, "入口启动失败"):
+                    lan_installer.execute(plan, RELEASE, ROOT, ROOT, session, self.log, Mock())
+                self.assertNotIn("TGCLOUD_LAN_ENTRY=OK", "\n".join(self.messages))
+                lan_installer.execute(plan, RELEASE, ROOT, ROOT, session, self.log, Mock())
+            self.assertEqual([call.args[0] for call in entry.call_args_list], ["check", "save", "activate"] * 2)
+            self.patches["save_state"].assert_not_called()
+            self.assertTrue(all(not call.args[0].startswith(("docker compose", "exec ", "INSTALL_DIR="))
+                                for call in session.run.call_args_list))
+            self.assertIn("TGCLOUD_LAN_ENTRY=OK", "\n".join(self.messages))
+            self.assertEqual(config.read_bytes(), plan.instance.raw_config)
+            self.assertEqual(database.read_bytes(), original_db)
+
     def test_healthy_entry_revalidated_without_restart_and_verify_requires_explicit_flow(self):
         plan = self.plan()
         plan.entry_healthy = True
@@ -618,15 +652,15 @@ class FreshLanInstallFlowTests(unittest.TestCase):
             self.assertEqual(events, ["confirmed"])
             lan_state = lan.state_for(selected, address)
 
-        def run(command, *, timeout, stream=None):
+        def run(command, *, timeout, stream=None, shutdown_grace=150):
             nonlocal deployed
             if command.startswith("INSTALL_DIR="):
                 self.assertEqual(events, ["confirmed"])
                 self.assertEqual(lan_state["bind_ip"], IP)
-                target, interpreter, hook, bundle, candidate = shlex.split(command)
+                target, launch, interpreter, hook, bundle, candidate = shlex.split(command)
                 bundle = Path(bundle)
-                self.assertEqual((target, interpreter, Path(hook), timeout),
-                                 ("INSTALL_DIR=" + str(directory), "bash", bundle / "remote_install.sh", 2400))
+                self.assertEqual((target, launch, interpreter, Path(hook), timeout, shutdown_grace),
+                                 ("INSTALL_DIR=" + str(directory), "exec", "bash", bundle / "remote_install.sh", 2400, 600))
                 self.assertEqual(Path(hook).read_bytes(),
                                  (ROOT / "packaging/hooks/clouddrive2/remote_install.sh").read_bytes())
                 self.assertEqual((bundle / "docker-compose.yml").read_bytes(),
@@ -772,12 +806,16 @@ class FreshLanInstallFlowTests(unittest.TestCase):
 
 
 class MainBootstrapTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.release = replace(RELEASE, digest=local_source.digest(local_source.content(ROOT)))
+
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.product = PRODUCTS["clouddrive2"]
         self.instance = instance(self.product)
-        self.stack.enter_context(patch.object(local_source, "snapshot", side_effect=lambda path: nullcontext(RELEASE)))
+        self.stack.enter_context(patch.object(local_source, "snapshot", side_effect=lambda path, **_: nullcontext(self.release)))
         self.plan = lan_installer.Plan(self.instance, "current", IP, lan.state_for(self.product, IP), dict(self.instance.config), True, True)
         self.messages = []
         self.log = SafeLog(self.messages.append)

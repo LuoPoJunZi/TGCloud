@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from tgcloud.deployment.host import SafeLog
 
@@ -109,6 +110,9 @@ class OperationReport:
     readiness: dict[str, str] | None = None
     cli: dict | None = None
     log_rotation: dict[str, str] | None = None
+    actual_version: str | None = None
+    summary_outcome: str = ""
+    acceptance_tool: Path | None = field(default=None, repr=False)
 
     def observe_line(self, line: str) -> tuple[str, str, str]:
         result = classify_install_line(line, base=self.stage == "基础安装与升级")
@@ -138,10 +142,17 @@ class OperationReport:
         def state(key):
             return labels[self.checks.get(key, "unknown")]
         title = "安装结果" if self.action == "install" else "升级结果" if self.action == "upgrade" else "维护结果"
-        outcome = "操作中断；请核对当前状态，不假定已回退" if self.interrupted else (
-            "执行未全部完成；请核对当前状态，不假定已回退" if self.failure_stage else
-            "本次执行完成；不等于全部业务验收通过" if self.completed else "尚无完整执行结果")
-        version = f"{self.label} · {self.previous or '未安装'} → {self.target}" if self.completed and not self.interrupted else (
+        outcome_state = self.summary_outcome or (
+            "interrupted" if self.interrupted else "failed" if self.failure_stage else
+            "completed" if self.completed else "incomplete"
+        )
+        outcome = {
+            "interrupted": "操作中断；请核对当前状态，不假定已回退",
+            "failed": "执行未全部完成；请核对当前状态，不假定已回退",
+            "completed": "本次执行完成；不等于全部业务验收通过",
+            "incomplete": "尚无完整执行结果",
+        }[outcome_state]
+        version = f"{self.label} · {self.previous or '未安装'} → {self.target}" if outcome_state == "completed" else (
             f"{self.label} · 原版本 {self.previous or '未安装'} · 目标 {self.target}（实际运行版本请复核）")
         lines = [f"\n── {title} ──\n", version, "流程结果：" + outcome]
         if self.failure_stage:
@@ -150,7 +161,10 @@ class OperationReport:
                   "升级前数据库备份：" + state("backup"), "运行代码与版本：" + state("code"),
                   "Bot 容器健康：" + state("health"),
                   ("本机 HTTPS：" if self.mode == "https" else "本机内网入口：") + state("entry")]
-        lines.append("Bot 实际版本：" + ("v" + self.target if self.checks.get("code") == "ok" else "未核实"))
+        observed_version = self.actual_version
+        if observed_version is None and self.checks.get("code") == "ok":
+            observed_version = self.target
+        lines.append("Bot 实际版本：" + ("v" + observed_version if observed_version else "未核实"))
         if self.cli is None:
             lines.append("本地管理工具：未核实；请使用本次安装入口更新管理工具")
         else:
@@ -176,7 +190,7 @@ class OperationReport:
             ready = all(value == "ok" for value in self.readiness.values())
             lines.append("业务就绪：" + ("基础条件通过（最近观察，不代表写入）" if ready else "尚未全部确认（最近观察）"))
             from tgcloud.deployment.readiness import LABELS, STATES
-            lines.extend(status_rows((LABELS[key], STATES[value]) for key, value in self.readiness.items()))
+            lines.extend(status_rows((label, STATES[self.readiness[key]]) for key, label in LABELS.items()))
         lines += ["WebDAV 写入与大小复验：" + state("webdav"), "实际 Telegram 转存：待人工验收",
                   ("公网访问：待外部网络验收" if self.mode == "https" else "局域网客户端访问：待其他设备验收"),
                   "\n下一步："]

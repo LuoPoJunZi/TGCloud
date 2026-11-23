@@ -9,13 +9,14 @@ import json
 import os
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tarfile
 import tempfile
 import time
 import unittest
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack, closing, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -34,7 +35,12 @@ from tgcloud.cli import vps as cli
 from tgcloud.deployment import architecture, local_source
 from tgcloud.deployment.host import LocalFiles, LocalSession, SafeLog, edition_lock
 from tgcloud.deployment.profiles import PRODUCTS
-from tgcloud.deployment.proxy.manager import ProxyEnvironment, ProxyReport
+from tgcloud.deployment.proxy.manager import (
+    DomainProxyManager,
+    ProxyEnvironment,
+    ProxyReport,
+    empty_state,
+)
 from tgcloud.deployment.resources import StorageAssessment
 from tgcloud.version import VERSION
 
@@ -724,7 +730,7 @@ class InstanceTests(unittest.TestCase):
             context = patch.object(target, name)
             context.start()
             self.addCleanup(context.stop)
-        context = patch.object(local_source, "snapshot", side_effect=lambda path: nullcontext(
+        context = patch.object(local_source, "snapshot", side_effect=lambda path, **_: nullcontext(
             local_source.LocalSource(ROOT, self.product.app_version, "a" * 64)))
         context.start()
         self.addCleanup(context.stop)
@@ -954,6 +960,47 @@ class InstanceTests(unittest.TestCase):
         self.assertNotIn(VALUES["admin_password"], str(ui.reveal.call_args_list))
         self.assertEqual((self.directory / ".env").read_bytes(), self.raw)
 
+    def test_native_https_repair_can_retry_without_installing_base(self):
+        domain = "files.example.test"
+        database = self.directory / "data/tasks.db"
+        with closing(sqlite3.connect(database)) as connection, connection:
+            connection.execute("CREATE TABLE tasks (state TEXT)")
+            connection.execute("INSERT INTO tasks VALUES ('queued')")
+        original_db = database.read_bytes()
+        commands = []
+
+        def run(command, **_options):
+            commands.append(command)
+            if command.startswith("exec "):
+                return next(results)
+            return 0, ""
+
+        results = iter(((1, ""), (0, "TGCLOUD_HTTPS=OK\n")))
+        session = Mock(run=run)
+        manager = DomainProxyManager(session, self.product, {"vps_host": "127.0.0.1"}, self.log)
+        manager.installer_source = ROOT
+        manager._entry_state = empty_state()
+        environment = ProxyEnvironment("OK", "OK", "FREE", "FREE", ("8.8.8.8",), (), ("8.8.8.8",))
+        plan = tgdep_install.Plan(self.instance, "current", manager, self.instance.config,
+                                  domain, configure_https=True)
+        with (
+            patch.object(tgdep_install, "edition_lock", return_value=nullcontext()),
+            patch.object(tgdep_instances, "docker_inventory", return_value=set()),
+            patch.object(tgdep_instances, "discover", return_value=self.instance),
+            patch.object(manager, "_native_tool", return_value=ROOT / "tgcloud-host"),
+            patch.object(manager, "read_state", return_value=manager._entry_state),
+            patch.object(manager, "probe", return_value=environment),
+            patch.object(manager, "status", return_value=report()),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "--configure-https"):
+                tgdep_install.execute_plan(plan, RELEASE, ROOT, ROOT, session, self.log, Mock())
+            tgdep_install.execute_plan(plan, RELEASE, ROOT, ROOT, session, self.log, Mock())
+        installer_commands = [shlex.split(command) for command in commands if command.startswith("exec ")]
+        self.assertEqual([command[2:4] for command in installer_commands], [["https-entry", "configure"]] * 2)
+        session.hold_lock.assert_not_called()
+        self.assertEqual((self.directory / ".env").read_bytes(), self.raw)
+        self.assertEqual(database.read_bytes(), original_db)
+
     def test_failed_https_resume_never_prompts_for_credentials(self):
         manager, ui = Mock(), Mock()
         manager.configure.side_effect = RuntimeError("fixture HTTPS failure")
@@ -1059,7 +1106,7 @@ class InstanceTests(unittest.TestCase):
     def test_resource_gate_uses_existing_assessment(self):
         session = Mock()
         session.run.return_value = (0, "probe fixture")
-        with patch.object(tgdep_preflight, "build_probe_command", return_value="probe"), patch.object(tgdep_preflight, "parse_probe_output", return_value=Mock()), patch.object(tgdep_preflight, "assess_storage_choice", return_value=StorageAssessment(False, 100, "insufficient")), self.assertRaisesRegex(ValueError, "资源不足"):
+        with patch.object(tgdep_preflight, "build_probe_command", return_value="probe"), patch.object(tgdep_preflight, "parse_probe_output", return_value=Mock()), patch.object(tgdep_preflight, "storage_assessment", return_value=StorageAssessment(False, 100, "insufficient")), self.assertRaisesRegex(ValueError, "资源不足"):
             tgdep_preflight.resource_check(self.instance, self.instance.config, session, self.log)
 
     def test_fresh_config_requires_safe_dns_ports(self):

@@ -232,18 +232,23 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(result["commands"], {"version": "ok", "listen": "ok"})
         self.assertEqual(runtime.installed_status("8.8.8", root=self.root, command=self.command)["state"], "failed")
 
-    def test_current_project_without_version_flag_cannot_report_success(self):
+    def test_unusable_candidate_keeps_previous_manager_available(self):
         from tgcloud.deployment import local_source
+
+        self.install()
+        original = self.command.read_bytes()
         with local_source.snapshot(ROOT) as snapshot:
             source = snapshot.root
             command = source / "src/tgcloud/cli/commands.py"
             text = command.read_text(encoding="utf-8")
             text = text.replace('    parser.add_argument("--version", action="version", version="TGCloud CLI v" + VERSION)\n', '')
             command.write_text(text, encoding="utf-8")
-            runtime.install(source=source, root=self.root, command=self.command)
+            with self.assertRaisesRegex(RuntimeError, "未开始升级 Bot"):
+                runtime.install(source=source, root=self.root, command=self.command, target_version=VERSION)
+        self.assertEqual(self.command.read_bytes(), original)
         result = runtime.installed_status(VERSION, root=self.root, command=self.command)
-        self.assertEqual(result["state"], "failed")
-        self.assertEqual(result["commands"]["version"], "failed")
+        self.assertEqual(result["state"], "ok")
+        self.assertEqual(result["commands"]["version"], "ok")
 
     def test_release_source_mismatch_does_not_replace_existing_command(self):
         self.install()
@@ -442,6 +447,27 @@ class ManagementTests(unittest.TestCase):
         command = self.session.run.call_args.args[0]
         self.assertEqual(command, "docker restart " + self.product.bot_container)
         self.assertNotIn("compose down", command)
+
+    def test_confirmed_control_falls_back_only_if_go_was_not_dispatched(self):
+        self.manager.use_host_cli = True
+        self.ui.confirm.return_value = True
+        for result in ((2, "synthetic container failure"), None):
+            with self.subTest(dispatched=result is not None), ExitStack() as stack:
+                self.session.reset_mock()
+                self.ui.ask.side_effect = ["3"]
+                stack.enter_context(patch.object(self.manager, "show_containers"))
+                stack.enter_context(patch.object(self.manager, "recheck", return_value=self.instance))
+                stack.enter_context(patch.object(management, "edition_lock", return_value=nullcontext(5)))
+                dispatch = stack.enter_context(patch.object(management.host_cli, "invoke", return_value=result))
+                if result is None:
+                    self.assertTrue(self.manager.control(self.instance))
+                    self.session.run.assert_called_once_with("docker restart " + self.product.bot_container,
+                                                             stream=self.log, timeout=90)
+                else:
+                    with self.assertRaises(RuntimeError):
+                        self.manager.control(self.instance)
+                    self.session.run.assert_not_called()
+                dispatch.assert_called_once_with("restart", "bot", "--yes", lock_fd=5)
 
     def test_cancel_or_changed_instance_does_not_stop_any_container(self):
         for confirmed in (False, True):
@@ -701,27 +727,46 @@ class ManagerCleanupTests(unittest.TestCase):
 
 class FriendlyInstallTests(unittest.TestCase):
     def setUp(self):
-        enter_context(self, patch.object(vps.architecture, "check_docker"))
+        enter_context(self, patch.object(vps.preflight.architecture, "check_docker"))
         enter_context(self, patch.object(runtime, "lifecycle_lock", side_effect=lambda: nullcontext()))
 
-    def test_confirmed_installer_creates_offline_command_but_check_and_cancel_do_not(self):
+    def test_confirmed_installer_creates_offline_command_only_after_recheck(self):
         product = PRODUCTS["clouddrive2"]
         instance = instances.Instance(product, Path(product.install_dir), True, "1.3.1")
-        release = releases.Release("v1.3.1", "a" * 40)
-        plan = install.Plan(instance, "upgrade", Mock())
-        for mode in ("check", "cancel", "execute", "no-change", "removed"):
-            with self.subTest(mode=mode):
-                client, ui = Mock(), Mock()
-                client.resolve.return_value, client.download.return_value = release, ROOT
-                ui.confirm.return_value = mode not in {"cancel", "check"}
+        manager = Mock(status=Mock(return_value=SimpleNamespace(state="healthy", message="HTTPS ready")))
+        plan = install.Plan(instance, "upgrade", manager)
+        for mode in ("check", "cancel", "execute", "no-change", "removed", "config-changed"):
+            with self.subTest(mode=mode), ExitStack() as stack:
+                ui = Mock(confirm=Mock(return_value=mode not in {"cancel", "check"}))
                 plan.action = "current" if mode in {"no-change", "removed"} else "upgrade"
-                discovery = [instance, instances.Instance(product, instance.directory, False)] if mode == "removed" else None
-                with patch.object(vps.preflight, "validate_host"), patch.object(instances, "docker_inventory", return_value=set()), patch.object(instances, "discover", return_value=instance, side_effect=discovery), patch.object(releases, "ReleaseClient", return_value=client), patch.object(terminal, "Terminal", return_value=ui), patch.object(install, "make_plan", return_value=plan), patch.object(install, "execute_plan") as execute, patch.object(runtime, "check_destination") as check, patch.object(runtime, "install_release") as local, patch.object(vps, "SafeLog", return_value=SafeLog(lambda _: None)):
-                    args = ["--edition", product.key, "--source-dir", str(ROOT)] + (["--check"] if mode == "check" else [])
-                    self.assertEqual(vps.main(args, friendly=True), 1 if mode == "removed" else 0)
-                    self.assertEqual(local.call_count, int(mode in {"execute", "no-change"}))
-                    self.assertEqual(execute.call_count, int(mode == "execute"))
-                    self.assertEqual(check.call_count, int(mode != "check"))
+                changed = {
+                    "removed": replace(instance, present=False),
+                    "config-changed": replace(instance, raw_config=b"# changed during confirmation\n"),
+                }.get(mode)
+                discovery = [instance, changed] if changed is not None else None
+                for item in (
+                    patch.object(vps.preflight, "validate_host"),
+                    patch.object(vps.preflight, "resource_check"),
+                    patch.object(instances, "docker_inventory", return_value=set()),
+                    patch.object(instances, "discover", return_value=instance, side_effect=discovery),
+                    patch.object(instances, "check_foreign_gateway"),
+                    patch.object(install.upgrade, "assert_unmodified"),
+                    patch.object(terminal, "Terminal", return_value=ui),
+                    patch.object(install, "make_plan", return_value=plan),
+                    patch.object(install, "edition_lock", return_value=nullcontext()),
+                    patch.object(install.readiness, "inspect", return_value=None),
+                    patch.object(install.diagnostics, "inspect_container_logs", return_value={}),
+                    patch.object(vps, "SafeLog", return_value=SafeLog(lambda _: None)),
+                ):
+                    stack.enter_context(item)
+                apply = stack.enter_context(patch.object(install, "apply_base"))
+                check = stack.enter_context(patch.object(runtime, "check_destination"))
+                local = stack.enter_context(patch.object(runtime, "install_release", return_value={}))
+                args = ["--edition", product.key, "--source-dir", str(ROOT)] + (["--check"] if mode == "check" else [])
+                self.assertEqual(vps.main(args, friendly=True), int(changed is not None))
+                self.assertEqual(local.call_count, int(mode in {"execute", "no-change"}))
+                self.assertEqual(apply.call_count, int(mode == "execute"))
+                self.assertEqual(check.call_count, int(mode != "check"))
 
     def test_fresh_setup_render_occurs_only_after_https_success(self):
         product = PRODUCTS["clouddrive2"]

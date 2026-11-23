@@ -20,6 +20,7 @@
     "src/tgcloud/cli/__init__.py",
     "src/tgcloud/cli/__main__.py",
     "src/tgcloud/cli/commands.py",
+    "src/tgcloud/cli/host_cli.py",
     "src/tgcloud/cli/management.py",
     "src/tgcloud/cli/naming.py",
     "src/tgcloud/cli/presentation.py",

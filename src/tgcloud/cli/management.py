@@ -7,7 +7,7 @@ import shlex
 from datetime import datetime, timezone
 from pathlib import Path
 
-from tgcloud.cli import terminal
+from tgcloud.cli import host_cli, terminal
 from tgcloud.cli.presentation import (
     InstallerLog,
     numbered_menu,
@@ -43,6 +43,16 @@ MENU_ITEMS = (
 MENU = numbered_menu(MENU_ITEMS) + "\n"
 MENU_ACTIONS = tuple(str(number) for number, _ in MENU_ITEMS)
 SOURCE_ROOT = Path(__file__).resolve().parents[3]
+CONTAINER_STATES = {"running": "运行中", "exited": "已停止", "restarting": "重启中", "created": "尚未启动",
+                    "paused": "已暂停", "dead": "异常退出", "removing": "正在移除"}
+CONTAINER_HEALTH = {"healthy": "通过（容器检查）", "unhealthy": "未通过", "starting": "检查中",
+                    "none": "未配置容器检查"}
+
+
+def container_state(state, health):
+    if state not in CONTAINER_STATES or health not in CONTAINER_HEALTH:
+        return "未核实", "未核实"
+    return CONTAINER_STATES[state], CONTAINER_HEALTH[health] if state == "running" else "未检查（容器未运行）"
 
 
 def choose(ui, prompt: str, values: tuple[str, ...], default: str = "") -> str:
@@ -56,12 +66,23 @@ def choose(ui, prompt: str, values: tuple[str, ...], default: str = "") -> str:
 class Management:
     menu_items = MENU_ITEMS
 
-    def __init__(self, product, session, log, ui, install_dir=None, *, mode_hint=None, source_dir=None):
+    def __init__(self, product, session, log, ui, install_dir=None, *, mode_hint=None, source_dir=None, use_host_cli=False):
         self.product, self.session, self.log, self.ui = product, session, log, ui
         self.install_dir = install_dir
         self.mode_hint = mode_hint
         self.source_dir = source_dir
+        self.use_host_cli = use_host_cli
         self.additional_handlers = {}
+
+    def run_host_cli(self, instance, *args, lock_fd=None):
+        if not self.use_host_cli or not instance.present or instance.directory != Path(self.product.install_dir):
+            return None
+        try:
+            return host_cli.invoke(*args, lock_fd=lock_fd)
+        except (OSError, TimeoutError):
+            if lock_fd is not None:
+                raise
+            return None
 
     def external_webdav(self, instance):
         from tgcloud.addons.external_webdav.entry import open_menu
@@ -76,6 +97,8 @@ class Management:
         code, _ = self.session.run("command -v docker >/dev/null 2>&1", timeout=10)
         if code == 0:
             uninstall.validate_environment(self.session)
+        if self.mode_hint:
+            return instances.discover_for_install(self.product, self.session, self.log, install_dir=self.install_dir)
         inventory = instances.docker_inventory(self.session)
         return instances.discover(self.product, inventory, self.session, self.log, install_dir=self.install_dir)
 
@@ -133,9 +156,6 @@ class Management:
                 return
 
     def container_states(self):
-        states = {"running": "运行中", "exited": "已停止", "restarting": "重启中", "created": "尚未启动",
-                  "paused": "已暂停", "dead": "异常退出", "removing": "正在移除"}
-        health = {"healthy": "通过（容器检查）", "unhealthy": "未通过", "starting": "检查中", "none": "未配置容器检查"}
         result = {}
         for key, name in (("bot", self.product.bot_container), ("gateway", self.product.storage_container)):
             try:
@@ -143,15 +163,25 @@ class Management:
                     '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
                     + " " + shlex.quote(name), timeout=15)
                 fields = output.strip().split()
-                valid = not code and len(fields) == 2 and fields[0] in states and fields[1] in health
-                result[key] = (states[fields[0]], health[fields[1]] if fields[0] == "running"
-                               else "未检查（容器未运行）") if valid else ("未核实", "未核实")
+                result[key] = container_state(*fields) if not code and len(fields) == 2 else ("未核实", "未核实")
             except (OSError, RuntimeError, TimeoutError):
                 result[key] = ("未核实", "未核实")
         return result
 
-    def show_containers(self):
-        states = self.container_states()
+    def show_containers(self, instance=None):
+        states = None
+        if instance is not None:
+            result = self.run_host_cli(instance, "status", "--json")
+            if result is not None and result[0] == 0:
+                try:
+                    report = json.loads(result[1])
+                    if report["version"] == instance.version:
+                        states = {key: container_state(report[key]["state"], report[key]["health"] or "none")
+                                  for key in ("bot", "gateway")}
+                except (ValueError, TypeError, KeyError):
+                    pass
+        if states is None:
+            states = self.container_states()
         self.log("Bot 状态：" + states["bot"][0] + "\nBot 健康：" + states["bot"][1]
                  + "\n网关状态：" + states["gateway"][0])
 
@@ -185,7 +215,7 @@ class Management:
     def status(self, instance, *, title="查看运行状态"):
         self.heading(title, instance)
         self.log("正在检查容器与管理入口，请稍候……")
-        self.show_containers()
+        self.show_containers(instance)
         saved = self.mode(instance)
         if saved:
             inventory = instances.docker_inventory(self.session)
@@ -200,6 +230,10 @@ class Management:
 
     def logs(self, instance):
         self.heading("查看运行日志", instance)
+        result = self.run_host_cli(instance, "logs")
+        if result is not None and result[0] == 0:
+            self.log(result[1].rstrip())
+            return
         self.log("最近 30 分钟，每个服务最多 100 行；以下为脱敏日志快照，不持续刷新。")
         for label, name in (("Bot", self.product.bot_container), (self.product.display_name, self.product.storage_container)):
             self.log("\n── " + label + " 日志 ──\n")
@@ -213,14 +247,20 @@ class Management:
                 self.log(label + " 日志读取失败；其他服务日志继续显示。")
 
     def readiness(self, instance):
-        from tgcloud.deployment.readiness import check
+        from tgcloud.deployment.readiness import check, parse_report, show_report
         self.heading("业务就绪检查", instance)
         self.log("正在读取最近观察，不追加 Telegram／WebDAV 请求……")
+        result = self.run_host_cli(instance, "check", "--json")
+        if result is not None and result[0] in {0, 1}:
+            report = parse_report(result[1], instance)
+            if report is not None:
+                show_report(report, self.log)
+                return
         check(instance, self.session, self.log)
 
     def control(self, instance):
         self.heading("服务启停管理", instance)
-        self.show_containers()
+        self.show_containers(instance)
         self.log("\n存储网关停止或重启会中断存储访问。\n" + numbered_menu((
             (1, "启动 Bot"), (2, "停止 Bot"), (3, "重启 Bot"),
             (4, "启动存储网关"), (5, "停止存储网关"), (6, "重启存储网关"), (0, "返回主菜单"),
@@ -233,9 +273,16 @@ class Management:
         verb, label = (("start", "启动"), ("stop", "停止"), ("restart", "重启"))[number % 3]
         if not self.ui.confirm(f"确认{label} {name}？进行中的任务或外部访问可能中断"):
             return False
-        with edition_lock(Path("/opt/tgcloud-cli-locks") / (self.product.key + ".lock")):
-            self.recheck(instance)
-            self.checked_run("docker " + verb + " " + shlex.quote(name), timeout=90)
+        with edition_lock(Path("/opt/tgcloud-cli-locks") / (self.product.key + ".lock")) as lock_fd:
+            current = self.recheck(instance)
+            target = "bot" if number < 3 else "gateway"
+            result = self.run_host_cli(current, verb, target, "--yes", lock_fd=lock_fd)
+            if result is None:
+                self.checked_run("docker " + verb + " " + shlex.quote(name), timeout=90)
+            elif result[0] != 0:
+                if result[1].strip():
+                    self.log(result[1].strip())
+                raise RuntimeError("Go 容器操作未完成，请检查实际运行状态")
         self.log("容器操作已完成；健康状态请另选“查看运行状态”。")
         return True
 
@@ -512,7 +559,7 @@ def main(argv=None, *, mode_hint=None) -> int:
         ui.friendly = True
         key = args.edition
         manager = Management(PRODUCTS[key], LocalSession(log), log, ui, args.install_dir,
-                             mode_hint=mode_hint, source_dir=args.source_dir)
+                             mode_hint=mode_hint, source_dir=args.source_dir, use_host_cli=True)
         started = True
         return manager.run()
     except (KeyboardInterrupt, EOFError):

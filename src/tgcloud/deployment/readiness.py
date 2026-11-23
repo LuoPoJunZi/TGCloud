@@ -187,12 +187,9 @@ def waiting_lines(value):
     return ["排队任务分类：" + ("；".join(WAIT_LABELS[key] + " " + str(value[key]) for key in WAIT_LABELS if value.get(key)) or "无排队任务")]
 
 
-def inspect(instance, session, *, details=False) -> dict | None:
-    """Read one bounded local observation; never trigger a network probe or retry."""
-    command = "docker exec " + shlex.quote(instance.product.bot_container) + " python -B -m tgcloud.monitoring.readiness"
+def parse_report(output, instance) -> dict | None:
     try:
-        code, output = session.run(command, timeout=20)
-        if code or len(output) > 16384:
+        if len(output) > 16384:
             raise ValueError
         report = json.loads(output)
         checks = report["checks"]
@@ -203,13 +200,30 @@ def inspect(instance, session, *, details=False) -> dict | None:
             raise ValueError
         if report.get("edition") not in {None, instance.product.key}:
             raise ValueError
+    except (ValueError, KeyError, TypeError):
+        return None
+    return report
+
+
+def inspect(instance, session, *, details=False) -> dict | None:
+    """Read one bounded local observation; never trigger a network probe or retry."""
+    command = "docker exec " + shlex.quote(instance.product.bot_container) + " python -B -m tgcloud.monitoring.readiness"
+    try:
+        code, output = session.run(command, timeout=20)
     except (ValueError, KeyError, TypeError, OSError, RuntimeError, TimeoutError):
         return None
+    report = None if code else parse_report(output, instance)
+    if report is None:
+        return None
+    checks = report["checks"]
     return report if details else {key: checks[key] for key in LABELS}
 
 
 def check(instance, session, log) -> bool:
-    report = inspect(instance, session, details=True)
+    return show_report(inspect(instance, session, details=True), log)
+
+
+def show_report(report, log) -> bool:
     if report is None:
         log("业务就绪未核实：运行中的 Bot 可能未支持本协议，或返回不完整；请核对版本与运行日志，不重启／重装。")
         return False

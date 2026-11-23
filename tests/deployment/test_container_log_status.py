@@ -97,7 +97,7 @@ class ContainerLogTests(unittest.TestCase):
         plan = SimpleNamespace(instance=instance, action="upgrade")
         release = SimpleNamespace(version="1.5.6")
         logs = Mock()
-        with patch.object(install.readiness, "inspect", return_value={}), \
+        with patch.object(install.readiness, "inspect", return_value=None), \
                 patch.object(install.diagnostics, "inspect_container_logs", return_value={"Bot": "pending"}) as inspect:
             with install.execution_feedback(plan, release, session, logs, mode="https") as report:
                 report.checks["entry"] = "ok"
