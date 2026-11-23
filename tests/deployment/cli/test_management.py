@@ -57,12 +57,12 @@ class InputUI:
 
 class InstallationUITests(unittest.TestCase):
     def test_number_and_label_columns_are_both_left_aligned(self):
-        labels = ("安装外部 WebDAV", "查看运行状态", "检查连接与配置", "启用访问", "停用访问",
-                  "修改域名或账号配置", "卸载外部 WebDAV", "升级附加功能", "查看手机连接配置", "用户管理")
+        labels = ("安装外部服务", "查看运行状态", "检查连接配置", "启用外部访问", "停用外部访问",
+                  "修改域名账号", "卸载外部服务", "升级维护工具", "查看连接信息", "管理外部账号")
         menu = numbered_menu((*enumerate(labels, 1), (0, "退出")))
         lines = menu.splitlines()
-        self.assertEqual(lines[0], "1.  安装外部 WebDAV")
-        self.assertEqual(lines[9], "10. 用户管理")
+        self.assertEqual(lines[0], "1.  安装外部服务")
+        self.assertEqual(lines[9], "10. 管理外部账号")
         self.assertEqual(lines[-1], "0.  退出")
         for line, label in zip(lines, (*labels, "退出")):
             self.assertFalse(line.startswith(" "))
@@ -77,9 +77,9 @@ class InstallationUITests(unittest.TestCase):
         self.assertEqual(lines[-1], "100. 用户")
         self.assertEqual({line.index("用户") for line in lines}, {5})
         main = management.MENU.splitlines()
-        self.assertEqual(main[0], "1.  安装与升级")
-        self.assertEqual(main[9], "10. 业务就绪检查")
-        self.assertEqual(main[-1], "0.  退出")
+        self.assertEqual(main[0], "1. 服务运行管理")
+        self.assertEqual(main[4], "5. 实例维护备份")
+        self.assertEqual(main[-1], "0. 退出")
 
     def test_new_config_default_password_eight_chars_no_timezone_prompt_both_editions(self):
         for product in PRODUCTS.values():
@@ -353,20 +353,23 @@ class ManagementTests(unittest.TestCase):
         enter_context(self, patch.object(management, "edition_lock", side_effect=lambda _: nullcontext()))
 
     def test_confirmed_menu_labels_order_and_alignment_without_naming_preview(self):
-        labels = ("安装与升级", "查看运行状态", "查看运行日志", "服务启停管理", "Bot 用户管理",
-                  "WebDAV 凭据", "HTTPS 与管理", "文件分类设置", "异常通知设置", "业务就绪检查",
-                  "WebDAV 验收", "故障诊断报告", "数据备份管理", "卸载当前实例", "外部 WebDAV", "监听转存管理", "退出")
-        expected = [str(number) for number in (*range(1, 17), 0)]
+        from tgcloud.cli.presentation import display_width
+        labels = ("服务运行管理", "访问入口管理", "业务功能设置", "健康检查诊断", "实例维护备份", "退出")
+        expected = [str(number) for number in (*range(1, 6), 0)]
         self.assertEqual(list(management.MENU_ACTIONS), expected)
         self.assertEqual(management.MENU, numbered_menu(zip(expected, labels)) + "\n")
-        self.assertTrue(all(line.index(label) == 4 for line, label in zip(management.MENU.splitlines(), labels)))
+        self.assertTrue(all(line.index(label) == 3 for line, label in zip(management.MENU.splitlines(), labels)))
+        self.assertEqual({display_width(label) for label in labels[:-1]}, {12})
+        for group, (_, entries) in management.SUBMENU_GROUPS.items():
+            with self.subTest(group=group):
+                self.assertEqual(len({display_width(label) for _, label, _ in entries}), 1)
         self.assertNotIn("命名预览", management.MENU)
         self.assertNotIn(" / ", management.MENU)
 
     def test_unknown_number_is_rejected_before_any_operation(self):
         def ask(prompt, *, default, validate):
             self.assertEqual(default, "0")
-            return validate("17")
+            return validate("6")
 
         self.ui.ask.side_effect = ask
         with patch.object(self.manager, "discover", return_value=self.instance), patch(
@@ -377,44 +380,51 @@ class ManagementTests(unittest.TestCase):
         self.session.run.assert_not_called()
 
     def test_every_number_dispatches_only_its_labelled_operation_both_editions(self):
-        methods = {"1": "upgrade", "2": "status", "3": "logs", "4": "control",
-                   "7": "entry", "11": "verify", "13": "backups", "14": "remove"}
-        external = {"5": "tgcloud.deployment.users.manage", "6": "tgcloud.cli.terminal.show_credentials",
-                    "8": "tgcloud.deployment.feature_settings.manage_classification",
-                    "9": "tgcloud.deployment.feature_settings.manage_notifications",
-                    "10": "tgcloud.deployment.readiness.check", "12": "tgcloud.deployment.diagnostics.collect",
-                    "15": "tgcloud.addons.external_webdav.entry.open_menu",
-                    "16": "tgcloud.deployment.listening.manage"}
+        methods = {"upgrade": "upgrade", "status": "status", "logs": "logs", "control": "control",
+                   "entry": "entry", "verify": "verify", "backups": "backups", "remove": "remove"}
+        external = {"users": "tgcloud.deployment.ops.users.manage", "credentials": "tgcloud.cli.terminal.show_credentials",
+                    "classification": "tgcloud.deployment.ops.feature_settings.manage_classification",
+                    "notifications": "tgcloud.deployment.ops.feature_settings.manage_notifications",
+                    "readiness": "tgcloud.deployment.ops.readiness.check", "diagnostics": "tgcloud.deployment.ops.diagnostics.collect",
+                    "external_webdav": "tgcloud.addons.external_webdav.entry.open_menu",
+                    "listening": "tgcloud.deployment.ops.listening.manage"}
+        pauses = {"upgrade", "status", "logs", "control", "credentials", "entry", "readiness", "verify", "diagnostics", "backups"}
         for product in PRODUCTS.values():
             instance = replace(self.instance, product=product, directory=Path(product.install_dir))
             manager = management.Management(product, self.session, self.log, self.ui)
-            for number in management.MENU_ACTIONS:
-                with self.subTest(edition=product.key, number=number), ExitStack() as stack:
-                    stack.enter_context(patch.object(manager, "discover", return_value=instance))
-                    operations = {key: stack.enter_context(patch.object(manager, name, return_value=True))
-                                  for key, name in methods.items()}
-                    operations.update({key: stack.enter_context(patch(target, return_value="synthetic report"))
-                                       for key, target in external.items()})
-                    preview = stack.enter_context(patch("tgcloud.cli.naming.interactive"))
-                    self.ui.ask.side_effect = [number, "0", "0"] if number in {"1", "2", "3", "4", "6", "7", "10", "11", "12", "13"} else [number, "0"]
-                    self.ui.confirm.return_value = False
-                    self.assertEqual(manager.run(), 0)
-                    for key, operation in operations.items():
-                        if key != number:
-                            operation.assert_not_called()
-                        elif key in methods:
-                            operation.assert_called_once_with(instance)
-                        elif key == "6":
-                            operation.assert_called_once_with(self.ui, product, instance.config, self.log)
-                        elif key == "10":
-                            operation.assert_called_once_with(instance, self.session, self.log)
-                        elif key == "12":
-                            operation.assert_called_once_with(instance, self.session)
-                        elif key == "15":
-                            operation.assert_called_once_with(instance, self.ui, self.log)
+            for group, (_, entries) in management.SUBMENU_GROUPS.items():
+                for number, _, action_key in entries:
+                    with self.subTest(edition=product.key, group=group, action=action_key), ExitStack() as stack:
+                        stack.enter_context(patch.object(manager, "discover", return_value=instance))
+                        operations = {key: stack.enter_context(patch.object(manager, name, return_value=True))
+                                      for key, name in methods.items()}
+                        operations.update({key: stack.enter_context(patch(target, return_value="synthetic report"))
+                                           for key, target in external.items()})
+                        preview = stack.enter_context(patch("tgcloud.cli.naming.interactive"))
+                        if action_key == "remove":
+                            self.ui.ask.side_effect = [group, str(number)]
+                        elif action_key in pauses:
+                            self.ui.ask.side_effect = [group, str(number), "0", "0", "0"]
                         else:
-                            operation.assert_called_once_with(manager, instance)
-                    preview.assert_not_called()
+                            self.ui.ask.side_effect = [group, str(number), "0", "0"]
+                        self.ui.confirm.return_value = False
+                        self.assertEqual(manager.run(), 0)
+                        for key, operation in operations.items():
+                            if key != action_key:
+                                operation.assert_not_called()
+                            elif key in methods:
+                                operation.assert_called_once_with(instance)
+                            elif key == "credentials":
+                                operation.assert_called_once_with(self.ui, product, instance.config, self.log)
+                            elif key == "readiness":
+                                operation.assert_called_once_with(instance, self.session, self.log)
+                            elif key == "diagnostics":
+                                operation.assert_called_once_with(instance, self.session)
+                            elif key == "external_webdav":
+                                operation.assert_called_once_with(instance, self.ui, self.log)
+                            else:
+                                operation.assert_called_once_with(manager, instance)
+                        preview.assert_not_called()
         self.session.run.assert_not_called()
 
     def test_main_title_precedes_actual_instance_summary_and_menu(self):
@@ -425,7 +435,7 @@ class ManagementTests(unittest.TestCase):
         text = "\n".join(self.messages)
         self.assertEqual(text.count("── TGCloud 本地管理 ──"), 1)
         self.assertLess(text.index("── TGCloud 本地管理 ──"), text.index("Bot 状态：运行中"))
-        self.assertLess(text.index("安装目录："), text.index("1.  安装与升级"))
+        self.assertLess(text.index("安装目录："), text.index("1. 服务运行管理"))
         expected = ("\n── TGCloud 本地管理 ──\n\n安装状态：已安装\nBot 状态：运行中\n"
                     + f"安装目录：{self.instance.directory}\n管理工具（当前进程）：v{VERSION}\n\n" + management.MENU)
         self.assertEqual(text, expected)
@@ -468,6 +478,30 @@ class ManagementTests(unittest.TestCase):
                         self.manager.control(self.instance)
                     self.session.run.assert_not_called()
                 dispatch.assert_called_once_with("restart", "bot", "--yes", lock_fd=5)
+
+    def test_confirmed_control_falls_back_on_legacy_go_usage_error(self):
+        self.manager.use_host_cli = True
+        self.ui.confirm.return_value = True
+        self.ui.ask.side_effect = ["3"]
+        with (patch.object(self.manager, "show_containers"),
+              patch.object(self.manager, "recheck", return_value=self.instance),
+              patch.object(management, "edition_lock", return_value=nullcontext(5)),
+              patch.object(management.host_cli, "invoke", return_value=(2, "用法：tgcloud-host ..."))):
+            self.assertTrue(self.manager.control(self.instance))
+        self.session.run.assert_called_once_with("docker restart " + self.product.bot_container,
+                                                 stream=self.log, timeout=90)
+
+    def test_packaged_host_cli_warns_and_falls_back_on_corrupt_elf(self):
+        with tempfile.TemporaryDirectory() as private:
+            source = Path(private)
+            binary = source / "hostcli/bin/linux-amd64/tgcloud-host"
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"not-an-elf-binary")
+            with (patch.object(runtime.sys, "platform", "linux"),
+                  patch.object(runtime.platform, "machine", return_value="x86_64"),
+                  self.assertLogs("tgcloud.deployment.runtime", level="WARNING") as logs):
+                self.assertIsNone(runtime.packaged_host_cli(source))
+        self.assertTrue(any("ELF" in line for line in logs.output))
 
     def test_cancel_or_changed_instance_does_not_stop_any_container(self):
         for confirmed in (False, True):
@@ -549,7 +583,7 @@ class ManagementTests(unittest.TestCase):
     def test_lan_entry_does_not_issue_certificate(self):
         with patch.object(self.manager, "mode", return_value={"bind_ip": "192.168.1.9"}), patch.object(self.manager, "status") as status, patch.object(self.manager, "proxy") as proxy:
             self.manager.entry(self.instance)
-        status.assert_called_once_with(self.instance, title="HTTPS 与管理")
+        status.assert_called_once_with(self.instance, title="HTTPS 代理与证书")
         proxy.assert_not_called()
 
     def test_https_repair_never_queries_release_or_upgrades_bot_and_keeps_domain(self):
@@ -630,14 +664,14 @@ class ManagementTests(unittest.TestCase):
         public.assert_not_called()
 
     def test_successful_removal_exits_menu_without_reading_deleted_runtime_again(self):
-        self.ui.ask.return_value = "14"
+        self.ui.ask.side_effect = ["5", "3"]
         with patch.object(self.manager, "discover", return_value=self.instance) as discover, patch.object(self.manager, "remove", return_value=True):
             self.assertEqual(self.manager.run(), 0)
         discover.assert_called_once()
-        self.assertIn("14. 卸载当前实例", "\n".join(self.messages))
+        self.assertIn("3. 卸载当前实例", "\n".join(self.messages))
 
     def test_failed_or_partial_removal_exits_without_offering_reinstallation(self):
-        self.ui.ask.return_value = "14"
+        self.ui.ask.side_effect = ["5", "3"]
         with patch.object(self.manager, "discover", return_value=self.instance) as discover, patch.object(self.manager, "remove", side_effect=RuntimeError("partial")), patch.object(self.manager, "upgrade") as installer:
             self.assertEqual(self.manager.run(), 1)
         discover.assert_called_once()

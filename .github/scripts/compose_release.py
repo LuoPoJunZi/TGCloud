@@ -78,8 +78,8 @@ def main(argv=None) -> int:
         info = build(ROOT, args.directory, args.tag) if args.action == "bundle" else verify(args.directory, args.tag)
         print(f"COMPOSE_RELEASE_{args.action.upper()}=OK version={info['version']} source={info['source_sha256']}")
         return 0
-    except (ValueError, OSError, RuntimeError):
-        print("Compose release validation failed; check the tag, public source and new output directory.", file=sys.stderr)
+    except (ValueError, OSError, RuntimeError) as exc:
+        print(f"Compose release validation failed: {exc}", file=sys.stderr)
         return 1
 
 

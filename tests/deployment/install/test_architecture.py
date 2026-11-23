@@ -329,3 +329,22 @@ class CandidateTests(unittest.TestCase):
                 call("deploy-bot", "--supported"),
                 call("deploy-bot", "/opt/tgcloud", inherit_output=True),
             ])
+
+    def test_host_cli_invoke_keeps_stderr_out_of_json_stdout(self):
+        from tgcloud.cli import host_cli
+
+        fake_proc = Mock()
+        fake_proc.__enter__ = Mock(return_value=fake_proc)
+        fake_proc.__exit__ = Mock(return_value=False)
+        fake_proc.returncode = 0
+        fake_proc.communicate.return_value = ('{"ok": true}\n', "warning: noisy stderr\n")
+        with patch("tgcloud.cli.host_cli.subprocess.Popen", return_value=fake_proc) as popen:
+            result = host_cli.invoke("status", "--json", executable=Path("/opt/tgcloud-cli/tgcloud-host"))
+        self.assertEqual(result, (0, '{"ok": true}\n'))
+        self.assertEqual(popen.call_args.kwargs["stderr"], host_cli.subprocess.PIPE)
+
+        fake_proc.returncode = 1
+        fake_proc.communicate.return_value = ("", "fatal error\n")
+        with patch("tgcloud.cli.host_cli.subprocess.Popen", return_value=fake_proc):
+            failed = host_cli.invoke("status", "--json", executable=Path("/opt/tgcloud-cli/tgcloud-host"))
+        self.assertEqual(failed, (1, "fatal error\n"))

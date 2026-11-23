@@ -285,7 +285,7 @@ def request_status(product: ProductProfile, address: str, path: str, method: str
     request = urllib.request.Request(url, method=method)
     try:
         # URL scheme and literal RFC1918 address are validated above.
-        response = opener.open(request, timeout=5)  # nosec B310
+        response = opener.open(request, timeout=5)
     except urllib.error.HTTPError as exc:
         response = exc
     with response:

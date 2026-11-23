@@ -639,6 +639,8 @@ class RepositoryGuardrailTests(unittest.TestCase):
 
     def test_real_repository_manifest_and_document_index(self):
         self.assertEqual(repository.validate_repository(ROOT, repository.public_files(ROOT)), [])
+        self.assertIsNotNone(repository.forbidden_reason("hostcli/bin/linux-amd64/tgcloud-host"))
+        self.assertIsNotNone(repository.forbidden_reason("hostcli/bin/linux-arm64/tgcloud-host"))
 
 
 if __name__ == "__main__":

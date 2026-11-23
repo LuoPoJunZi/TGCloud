@@ -20,7 +20,7 @@ TGCloud 是面向 CloudDrive2 的自托管 Telegram 文件自动化工具。把�
 Telegram → TGCloud → rclone → CloudDrive2 WebDAV → 云存储
 ```
 
-当前稳定版为 **[v0.0.7](https://github.com/LuoPoJunZi/TGCloud/releases/tag/v0.0.7)**。源码包、Compose 部署包和校验文件由 GitHub Actions 验证后自动生成；Bot 镜像在部署主机本地构建。
+当前稳定版为 **[v0.0.7](https://github.com/LuoPoJunZi/TGCloud/releases/tag/v0.0.7)**。源码包（含原生 AMD64／ARM64 的 `tgcloud-host` 宿主管理工具）、Compose 部署包和校验文件由 GitHub Actions 验证后自动生成；Bot 镜像在部署主机本地构建。
 
 ## 主要能力
 

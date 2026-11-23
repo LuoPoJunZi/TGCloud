@@ -40,8 +40,14 @@ class Plan:
     feedback: OperationReport | None = field(default=None, repr=False)
 
 
-def native_entry(operation: str, product, *args: str) -> dict | None:
-    output = host_cli.read_install_check("lan-entry", operation, product.install_dir, lan.NGINX_IMAGE, *args)
+def native_entry(operation: str, product, *args: str, source: Path | None = None) -> dict | None:
+    if source is not None:
+        executable = host_cli.deployment_tool("lan-entry", source)
+        if executable is None:
+            return None
+        output = host_cli.checked_output("lan-entry", operation, product.install_dir, lan.NGINX_IMAGE, *args, executable=executable)
+    else:
+        output = host_cli.read_install_check("lan-entry", operation, product.install_dir, lan.NGINX_IMAGE, *args)
     if output is None:
         return None
     result = json.loads(output)
@@ -153,9 +159,10 @@ def execute(plan: Plan, release, source, baseline, session, log, ui, *, verify=F
             instances.check_foreign_gateway(product, session)
         if install_manager:
             log.cli = runtime.install_release(source, release, log)
+            feedback.acceptance_tool = host_cli.deployment_tool("install-acceptance", source)
         # Persist the explicit intent before base installation. If base succeeds
         # but Nginx fails, rerunning resumes the LAN entry, not a fresh reinstall.
-        if native_entry("save", product, plan.address) is None:
+        if native_entry("save", product, plan.address, source=source) is None:
             lan.save_state(product, plan.address)
         feedback.stage = "基础安装与升级"
         install.apply_base(plan, release, source, session, log)
@@ -164,7 +171,7 @@ def execute(plan: Plan, release, source, baseline, session, log, ui, *, verify=F
         feedback.stage = "管理入口检查"
         validate_environment(session)  # also validate a newly installed daemon
         current = instances.discover_for_install(product, session, log, install_dir=product.install_dir)
-        if native_entry("activate", product, plan.address) is None:
+        if native_entry("activate", product, plan.address, source=source) is None:
             activate_python_entry(current, plan.address, running, session, log)
         feedback.checks["entry"] = "ok"
         feedback.stage = "安装后检查"

@@ -9,7 +9,13 @@ from pathlib import Path
 from tgcloud.cli.presentation import numbered_menu, page_heading
 from tgcloud.deployment.host import edition_lock
 
-MODES = {"off": "不分类", "type": "按文件类型", "year": "按年份", "month": "按年月", "type_month": "按文件类型和年月"}
+MODES = {
+    "off": "不作自动分类",
+    "type": "仅按类型分类",
+    "year": "仅按年份分类",
+    "month": "仅按年月分类",
+    "type_month": "按类型和年月",
+}
 
 
 def request(manager, instance, action, **values):
@@ -67,7 +73,7 @@ def manage_classification(manager, instance):
         log(page_heading("文件分类设置", manager.product, getattr(instance, "version", ""))
             + "\n当前规则：" + MODES[current["classification"]]
             + "\n分类目录位于现有 Bot 保存目录下；只影响新任务，不移动历史文件。\n\n"
-            + numbered_menu((*enumerate(MODES.values(), 1), (0, "返回主菜单"))))
+            + numbered_menu((*enumerate(MODES.values(), 1), (0, "返回上级"))))
         action = choose(ui, "选择规则", ("0", "1", "2", "3", "4", "5"), "0")
         if action == "0":
             return
@@ -90,7 +96,7 @@ def manage_notifications(manager, instance):
             + "\n\n" + numbered_menu((
                 (1, "关闭异常通知" if current["notifications"] else "开启异常通知"),
                 (2, "关闭恢复通知" if current["recovery_notifications"] else "开启恢复通知"),
-                (3, "修改磁盘提醒阈值"), (0, "返回主菜单"),
+                (3, "修改磁盘阈值"), (0, "返回上级"),
             )))
         action = choose(ui, "选择操作", ("0", "1", "2", "3"), "0")
         if action == "0":

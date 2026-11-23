@@ -66,14 +66,14 @@ def replace_private(path: Path, content: bytes, *, expected: bytes):
 
 
 def resources(manager, instance):
-    manager.heading("资源与安全", instance)
-    from tgcloud.deployment.diagnostics import (
+    manager.heading("资源安全配置", instance)
+    from tgcloud.deployment.ops.diagnostics import (
         inspect_container_logs,
         log_rotation_lines,
     )
     manager.log("\n".join(log_rotation_lines(inspect_container_logs(instance, manager.session))))
     manager.log("内存保护会参考容器 cgroup；暂存预算不限制网关全部缓存。")
-    manager.log(numbered_menu(((1, "查看业务放行条件"), (2, "设置 Bot 资源限额"), (3, "检查 Docker 与端口"), (0, "返回主菜单"))))
+    manager.log(numbered_menu(((1, "查看放行条件"), (2, "设置资源限额"), (3, "检查容器端口"), (0, "返回上级"))))
     action = choose(manager.ui, "选择操作", ("0", "1", "2", "3"), "0")
     if action == "0":
         return False
@@ -156,13 +156,14 @@ def encrypt_archive(source: Path, destination: Path, password: str):
                 destination.unlink(missing_ok=True)
                 raise
         finally:
+            # Terminate only the gpg-agent started for this temporary homedir.
             subprocess.run([gpgconf, "--homedir", str(private), "--kill", "gpg-agent"], stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL, timeout=15, check=False)  # nosec B603 - only this temporary homedir
+                           stderr=subprocess.DEVNULL, timeout=15, check=False)  # nosec B603
 
 
 def backups(manager, instance):
     manager.heading("数据备份管理", instance)
-    manager.log(numbered_menu(((1, "创建实例备份"), (2, "隔离恢复预检"), (3, "加密现有备份"), (4, "备份共享代理"), (0, "返回主菜单"))))
+    manager.log(numbered_menu(((1, "创建实例备份"), (2, "隔离恢复预检"), (3, "加密现有备份"), (4, "备份共享代理"), (0, "返回上级"))))
     action = choose(manager.ui, "选择操作", ("0", "1", "2", "3", "4"), "0")
     if action == "0":
         return False

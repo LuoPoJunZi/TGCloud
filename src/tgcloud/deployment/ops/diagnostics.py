@@ -10,8 +10,9 @@ import shlex
 from datetime import datetime, timezone
 from pathlib import Path
 
-from tgcloud.deployment import readiness, runtime
-from tgcloud.deployment.readiness import (
+from tgcloud.deployment import runtime
+from tgcloud.deployment.ops import readiness
+from tgcloud.deployment.ops.readiness import (
     EVENT_LABELS,
     listener_line,
     validate_events,

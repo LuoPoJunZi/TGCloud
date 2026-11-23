@@ -100,15 +100,15 @@ def password_hash(value: str, *, existing: str = "", executable: str = "openssl"
 
 
 def canonical(path: Path) -> None:
-    if not path.is_absolute() or path.resolve() != path or path.is_symlink():
-        raise ValueError("附加功能路径经过链接或不规范。")
-    for parent in (*path.parents, path):
-        if parent.exists() and parent.is_symlink():
-            raise ValueError("附加功能父目录经过链接。")
-        # /tmp is a parent of isolated test/source trees, not persistent state.
-        if (parent.exists() and os.name == "posix" and parent != Path("/tmp")  # nosec B108
-                and (parent.stat().st_uid not in {0, os.geteuid()} or parent.stat().st_mode & 0o022)):
-            raise ValueError("持久路径必须由 root 持有且不可由组／其他用户写入。")
+    from tgcloud.deployment.path_guard import ensure_safe_managed_path
+    ensure_safe_managed_path(
+        path,
+        allowed_uids=(0, os.geteuid()) if os.name == "posix" else (0,),
+        sticky_paths=(Path("/tmp"),),  # nosec B108
+        link_error="附加功能路径经过链接或不规范。",
+        parent_link_error="附加功能父目录经过链接。",
+        owner_error="持久路径必须由 root 持有且不可由组／其他用户写入。",
+    )
 
 
 def atomic(path: Path, content: bytes, *, mode: int = 0o600, gid: int | None = None) -> None:

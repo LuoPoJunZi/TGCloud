@@ -96,14 +96,13 @@ jobs:
       contents: read
     env:
       PYTHONPATH: src
-      QT_QPA_PLATFORM: offscreen
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
       RELEASE_ARTIFACT: ${{ needs.prepare.outputs.release_artifact }}
     steps:
       - name: Checkout the same immutable release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
       - name: Set up runtime Python
@@ -116,6 +115,26 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck rclone fuse3 kmod
           python -m pip install -r requirements/dev.lock.txt
+
+      - name: Set up Go for host CLI tests and standalone packaging
+        if: hashFiles('hostcli/go.mod') != ''
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.4'
+          cache: false
+
+      - name: Test and smoke-check host CLI on native Linux
+        if: hashFiles('hostcli/go.mod') != ''
+        working-directory: hostcli
+        run: |
+          go vet ./...
+          go test ./...
+          out="/tmp/tgcloud-host-${{ matrix.arch }}"
+          GOOS=linux GOARCH="${{ matrix.arch }}" CGO_ENABLED=0 GOTOOLCHAIN=local GOPROXY=off \
+            go build -trimpath -ldflags='-s -w -buildid=' -o "$out" ./cmd/tgcloud-host
+          test "$(stat -c %s "$out")" -le 8388608
+          "$out" --help >/dev/null
+          rm -f "$out"
 
       - name: ShellCheck
         run: |
@@ -169,20 +188,13 @@ jobs:
         if: hashFiles('packaging/external-webdav.json') != ''
         env:
           TGCLOUD_TEST_EXTERNAL_WEBDAV_DOCKER: "1"
-        run: python -B -m unittest discover -s tests -p test_docker.py -v
+        run: python -B -m unittest tests.addons.external_webdav.test_docker -v
 
       - name: Isolated existing Nginx single-hop, reload and original-site preservation
         if: hashFiles('tests/integration/test_external_nginx_docker.py', 'tests/test_external_nginx_docker.py') != ''
         env:
           TGCLOUD_TEST_EXTERNAL_NGINX_DOCKER: "1"
         run: python -B -m unittest discover -s tests -p test_external_nginx_docker.py -v
-
-      - name: Set up Go for standalone source packaging
-        if: matrix.arch == 'amd64' && hashFiles('hostcli/go.mod') != ''
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.4'
-          cache: false
 
       - name: Package immutable source once and verify bootstrap pins and SHA256
         if: matrix.arch == 'amd64'
@@ -235,7 +247,7 @@ jobs:
       - name: Checkout release notes from the immutable tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - name: Download the validated Linux source artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

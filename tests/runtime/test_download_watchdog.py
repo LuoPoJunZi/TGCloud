@@ -350,7 +350,7 @@ class ProgressReadinessTests(unittest.TestCase):
             self.assertNotIn("PRIVATE_CONTENT", str(report))
 
     def test_diagnostic_waiting_summary_reuses_observed_slot_and_preserves_other_causes(self):
-        from tgcloud.deployment import readiness as host
+        from tgcloud.deployment.ops import readiness as host
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             db = TaskDB(root / "tgcloud.db")

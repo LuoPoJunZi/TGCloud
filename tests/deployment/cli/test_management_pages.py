@@ -89,7 +89,7 @@ class ManagementPagesTests(unittest.TestCase):
         operation = Mock(side_effect=ValueError("synthetic check failure"))
         self.manager.read_page(self.instance, operation, "重新检查")
         self.assertIn("检查未完成", self.text())
-        self.assertIn("0. 返回主菜单", self.text())
+        self.assertIn("0. 返回上级", self.text())
         self.assertNotIn("检查通过", self.text())
         self.manager.discover.assert_not_called()
 
@@ -136,34 +136,34 @@ class ManagementPagesTests(unittest.TestCase):
             self.assertEqual(self.session.run.call_count, 2)
 
     def test_page_return_is_one_action_and_no_extra_pause_on_submenu_cancel(self):
-        for number in ("4", "7", "13"):
-            with self.subTest(number=number):
+        for group, number in (("1", "3"), ("2", "1"), ("5", "2")):
+            with self.subTest(group=group, number=number):
                 self.ui.ask.reset_mock()
-                self.ui.ask.side_effect = [number, "0", "0"]
+                self.ui.ask.side_effect = [group, number, "0", "0", "0"]
                 self.assertEqual(self.manager.run(), 0)
-                self.assertEqual(self.ui.ask.call_count, 3)
+                self.assertEqual(self.ui.ask.call_count, 5)
         self.ui.confirm.assert_not_called()
 
     def test_upgrade_result_waits_for_explicit_return_before_showing_main_again(self):
-        self.ui.ask.side_effect = ["1", "0", "0"]
+        self.ui.ask.side_effect = ["5", "1", "0", "0", "0"]
         with patch.object(self.manager, "upgrade") as upgrade:
             self.assertEqual(self.manager.run(), 0)
         upgrade.assert_called_once_with(self.instance)
-        self.assertEqual(self.ui.ask.call_count, 3)
+        self.assertEqual(self.ui.ask.call_count, 5)
         first = self.text().index("── TGCloud 本地管理 ──")
         second = self.text().index("── TGCloud 本地管理 ──", first + 1)
-        self.assertLess(self.text().index("0. 返回主菜单"), second)
+        self.assertLess(self.text().index("0. 返回上级"), second)
 
     def test_external_webdav_returns_directly_and_uses_rechecked_custom_instance(self):
         custom = replace(self.instance, directory=Path("/srv/family-clouddrive2"))
         self.manager.recheck.side_effect = lambda _: custom
-        self.ui.ask.side_effect = ["15", "0"]
+        self.ui.ask.side_effect = ["2", "3", "0", "0"]
         with patch("tgcloud.addons.external_webdav.entry.open_menu",
                    side_effect=lambda *_: self.log("\n── 外部 WebDAV 管理 ──\n")) as webdav:
             self.assertEqual(self.manager.run(), 0)
         webdav.assert_called_once_with(custom, self.ui, self.log)
         self.manager.recheck.assert_called_once_with(self.instance)
-        self.assertEqual(self.ui.ask.call_count, 2)
+        self.assertEqual(self.ui.ask.call_count, 4)
         self.assertEqual(self.text().count("── TGCloud 本地管理 ──"), 2)
         self.assertNotIn("── 外部 WebDAV ──", self.text())
         self.assertEqual(self.text().count("── 外部 WebDAV 管理 ──"), 1)
@@ -171,16 +171,16 @@ class ManagementPagesTests(unittest.TestCase):
 
     def test_external_webdav_changed_instance_does_not_start_child(self):
         self.manager.recheck.side_effect = ValueError("确认之后实例发生变化")
-        self.ui.ask.side_effect = ["15", "0", "0"]
+        self.ui.ask.side_effect = ["2", "3", "0", "0", "0"]
         with patch("tgcloud.addons.external_webdav.entry.open_menu") as webdav:
             self.assertEqual(self.manager.run(), 0)
         webdav.assert_not_called()
         self.assertIn("操作未完成", self.text())
 
     def test_diagnostic_terminal_is_plain_but_export_keeps_original_markdown(self):
-        from tgcloud.deployment import diagnostics
+        from tgcloud.deployment.ops import diagnostics
         original = "# TGCloud 故障诊断报告\n\n## 建议处理顺序\n1. synthetic advice\n"
-        self.ui.ask.side_effect = ["12", "/private/reports", "0", "0"]
+        self.ui.ask.side_effect = ["4", "3", "/private/reports", "0", "0", "0"]
         self.ui.confirm.return_value = True
         with patch.object(diagnostics, "collect", return_value=original), patch.object(diagnostics, "save", return_value=Path("report.md")) as save:
             self.assertEqual(self.manager.run(), 0)

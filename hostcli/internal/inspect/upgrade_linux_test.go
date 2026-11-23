@@ -64,3 +64,51 @@ func TestRollbackDoesNotStopAnUnrelatedBotContainer(t *testing.T) {
 		t.Fatalf("expected container ownership error, got %v", err)
 	}
 }
+
+func TestRestoreUpgradeDBRemovesSidecarsBeforeRename(t *testing.T) {
+	directory := t.TempDir()
+	dataDir := filepath.Join(directory, "data")
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dataDir, "tgcloud.db")
+	staged := filepath.Join(dataDir, ".tgcloud-rollback-test.db")
+	if err := os.WriteFile(target, []byte("new-broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(staged, []byte("old-good"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		if err := os.WriteFile(target+suffix, []byte("stale"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := restoreUpgradeDB(directory, staged); err != nil {
+		t.Fatalf("restoreUpgradeDB failed: %v", err)
+	}
+	restored, err := os.ReadFile(target)
+	if err != nil || string(restored) != "old-good" {
+		t.Fatalf("unexpected restored database: %q, err=%v", string(restored), err)
+	}
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		if _, err := os.Lstat(target + suffix); !os.IsNotExist(err) {
+			t.Fatalf("sidecar %s still exists after restore: %v", suffix, err)
+		}
+	}
+
+	// A symlink sidecar must abort before replacing the live database.
+	if err := os.WriteFile(staged, []byte("other"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, target+"-wal"); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreUpgradeDB(directory, staged); err == nil {
+		t.Fatal("expected symlink sidecar to fail restore")
+	}
+	stillGood, err := os.ReadFile(target)
+	if err != nil || string(stillGood) != "old-good" {
+		t.Fatalf("database was modified despite symlink sidecar: %q, err=%v", string(stillGood), err)
+	}
+}

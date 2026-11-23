@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from tests.fixtures import ROOT
-from tgcloud.deployment import users as host
+from tgcloud.deployment.ops import users as host
 from tgcloud.deployment.profiles import PRODUCTS
 from tgcloud.persistence import users
 
@@ -33,7 +33,7 @@ class ManagementTests(unittest.TestCase):
         with patch.object(host, "request", return_value=record):
             host.manage(manager, SimpleNamespace(running=True, version="1.4.4", config={"ALLOWED_USER_ID": "123"}))
         text = "\n".join(call.args[0] for call in manager.log.call_args_list)
-        for label in ("Bot 版本：v1.4.4", "成员列表", "管理操作", "0. 返回主菜单"):
+        for label in ("Bot 版本：v1.4.4", "成员列表", "管理操作", "0. 返回上级"):
             self.assertIn(label, text)
         manager.ui.private.assert_any_call("成员 1", "合成成员 · 456 · 启用")
         self.assertNotIn("456", text)
@@ -114,7 +114,7 @@ class ManagementTests(unittest.TestCase):
                 manager.ui.ask.side_effect = [selected, "1", "0"]
                 instance = SimpleNamespace(running=True, config={"ALLOWED_USER_ID": "123"})
                 with patch.object(host, "request", return_value=record) as request, patch(
-                    "tgcloud.deployment.feature_settings.member_quota"
+                    "tgcloud.deployment.ops.feature_settings.member_quota"
                 ) as quota:
                     host.manage(manager, instance)
                 quota.assert_called_once_with(manager, instance, record, 456, action=action)

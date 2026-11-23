@@ -6,8 +6,9 @@ import os
 import shlex
 import subprocess  # nosec B404
 from pathlib import Path
+from types import MappingProxyType
 
-from tgcloud.cli.management import MENU_ITEMS, Management, choose
+from tgcloud.cli.management import MENU_ITEMS, SUBMENU_GROUPS, Management, choose
 from tgcloud.cli.presentation import InstallerLog, numbered_menu
 from tgcloud.compose import access, runtime
 from tgcloud.compose.https import (
@@ -21,9 +22,20 @@ from tgcloud.deployment import architecture, instances, preflight
 from tgcloud.deployment.host import LocalSession, SafeLog, edition_lock
 from tgcloud.deployment.releases import source_version
 
+COMPOSE_SUBMENU_GROUPS = MappingProxyType({
+    **SUBMENU_GROUPS,
+    "5": ("实例维护备份", (
+        (1, "实例安装升级", "upgrade"),
+        (2, "数据备份管理", "backups"),
+        (3, "资源安全配置", "resources"),
+        (4, "卸载当前实例", "remove"),
+    )),
+})
+
 
 class ComposeManagement(Management):
-    menu_items = (*MENU_ITEMS[:-1], (17, "资源与安全"), MENU_ITEMS[-1])
+    menu_items = MENU_ITEMS
+    submenu_groups = COMPOSE_SUBMENU_GROUPS
 
     def __init__(self, root, session, log, ui, *, source=None):
         self.root = root
@@ -32,7 +44,7 @@ class ComposeManagement(Management):
         from tgcloud.deployment.profiles import PRODUCTS
         super().__init__(PRODUCTS[info["edition"]], session, log, ui, str(root))
         self.core = ComposeInstance(root, session, log, source=self.source)
-        self.additional_handlers = {"17": self.resources}
+        self.additional_handlers = {"resources": self.resources}
         self.exit_after_upgrade = True
 
     def discover(self):
@@ -77,11 +89,11 @@ class ComposeManagement(Management):
             self.show_proxy_report(self.proxy().inspect_status())
 
     def entry(self, instance):
-        self.heading("HTTPS 与管理", instance)
+        self.heading("HTTPS 代理与证书", instance)
         actions = {"1": "configure", "2": "status", "3": "renewal-dry-run", "4": "remove",
                    "5": "export-existing", "6": "proxy-backup"}
-        self.log(numbered_menu(((1, "配置 HTTPS"), (2, "检查 HTTPS"), (3, "证书续期演练"),
-                                 (4, "移除管理域名"), (5, "导出代理配置"), (6, "备份共享代理"), (0, "返回主菜单"))))
+        self.log(numbered_menu(((1, "配置管理域名"), (2, "检查入口状态"), (3, "证书续期演练"),
+                                 (4, "移除管理域名"), (5, "导出代理配置"), (6, "备份共享代理"), (0, "返回上级"))))
         selected = choose(self.ui, "选择操作", ("0", *actions), "0")
         if selected != "0":
             self.recheck(instance)
@@ -89,7 +101,7 @@ class ComposeManagement(Management):
         return selected != "0"
 
     def listen_action(self, instance, action):
-        from tgcloud.deployment.listening import account_command
+        from tgcloud.deployment.ops.listening import account_command
         with edition_lock(Path("/opt/tgcloud-cli-locks") / (self.product.key + ".lock")):
             current = self.recheck(instance)
             if not current.running:
@@ -101,11 +113,11 @@ class ComposeManagement(Management):
         open_menu(self, self.recheck(instance))
 
     def control(self, instance):
-        from tgcloud.deployment.feature_settings import request
+        from tgcloud.deployment.ops.feature_settings import request
         self.heading("服务启停管理", instance)
         self.log(numbered_menu(((1, "启动 Bot"), (2, "停止 Bot"), (3, "重启 Bot"),
-            (4, "启动存储网关"), (5, "停止存储网关"), (6, "重启存储网关"),
-            (7, "暂停新任务调度"), (8, "恢复任务调度"), (0, "返回主菜单"))))
+            (4, "启动网关"), (5, "停止网关"), (6, "重启网关"),
+            (7, "暂停调度"), (8, "恢复调度"), (0, "返回上级"))))
         action = choose(self.ui, "选择操作", tuple(str(n) for n in range(9)), "0")
         if action == "0":
             return False
@@ -207,7 +219,7 @@ def main(argv=None, *, session=None, ui=None, log=None):
             return manager.run()
         instance = manager.discover()
         if args.action == "check":
-            from tgcloud.deployment.readiness import check
+            from tgcloud.deployment.ops.readiness import check
             return 0 if check(instance, session, log) else 1
         else:
             getattr(manager, {"status": "status", "upgrade": "upgrade", "uninstall": "remove"}[args.action])(instance)

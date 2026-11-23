@@ -12,7 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tgcloud.deployment import feature_settings as host
+from tgcloud.deployment.ops import feature_settings as host
 from tgcloud.deployment.profiles import PRODUCTS
 from tgcloud.persistence import features
 from tgcloud.persistence.sqlite import TaskDB

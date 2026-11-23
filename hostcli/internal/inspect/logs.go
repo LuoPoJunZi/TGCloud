@@ -13,7 +13,6 @@ import (
 const logConfigLimit = 128 * 1024
 
 var (
-	configKey  = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 	ansiCSI    = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
 	botToken   = regexp.MustCompile(`[0-9]{6,12}:[A-Za-z0-9_-]{20,}`)
 	urlLogin   = regexp.MustCompile(`(?i)(https?://)[^\s/:@]+:[^\s/@]+@`)
@@ -31,21 +30,15 @@ func LogRedactor(directory string) (func(string) string, error) {
 }
 
 func newLogRedactor(config []byte) (func(string) string, error) {
-	if len(config) > logConfigLimit || !utf8.Valid(config) {
+	if len(config) > logConfigLimit {
+		return nil, errLogConfig
+	}
+	values, err := parseEnvLines(config, errLogConfig)
+	if err != nil {
 		return nil, errLogConfig
 	}
 	var secrets []string
-	keys := make(map[string]bool)
-	for _, line := range strings.Split(string(config), "\n") {
-		line = strings.TrimSuffix(line, "\r")
-		if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		key, value, found := strings.Cut(line, "=")
-		if !found || !configKey.MatchString(key) || keys[key] {
-			return nil, errLogConfig
-		}
-		keys[key] = true
+	for key, value := range values {
 		if value == "" || !isSecretKey(key) {
 			continue
 		}
@@ -57,7 +50,12 @@ func newLogRedactor(config []byte) (func(string) string, error) {
 			}
 		}
 	}
-	sort.Slice(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
+	sort.Slice(secrets, func(i, j int) bool {
+		if len(secrets[i]) != len(secrets[j]) {
+			return len(secrets[i]) > len(secrets[j])
+		}
+		return secrets[i] < secrets[j]
+	})
 	var pairs []string
 	for _, secret := range secrets {
 		pairs = append(pairs, secret, "[REDACTED]")

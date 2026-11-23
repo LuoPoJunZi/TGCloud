@@ -93,10 +93,16 @@ async def tick(service, *, now: float | None = None) -> None:
             continue
         if active:
             with service.db._lock:
-                row = service.db._conn.execute("SELECT value FROM service_meta WHERE key=?", (KEY,)).fetchone()
-                records = json.loads(row[0])
-                records[key]["delivered"] = True
-                service.db._conn.execute("UPDATE service_meta SET value=? WHERE key=?", (json.dumps(records), KEY))
+                service.db._conn.execute("BEGIN IMMEDIATE")
+                try:
+                    row = service.db._conn.execute("SELECT value FROM service_meta WHERE key=?", (KEY,)).fetchone()
+                    records = json.loads(row[0])
+                    records[key]["delivered"] = True
+                    service.db._conn.execute("UPDATE service_meta SET value=? WHERE key=?", (json.dumps(records), KEY))
+                    service.db._conn.execute("COMMIT")
+                except BaseException:
+                    service.db._conn.execute("ROLLBACK")
+                    raise
 
 
 async def run(service) -> None:
@@ -107,5 +113,5 @@ async def run(service) -> None:
             service.log.warning("主动通知暂不可用；不影响任务和原有状态查询")
         try:
             await asyncio.wait_for(service._stop.wait(), timeout=15)
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             pass

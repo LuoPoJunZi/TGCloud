@@ -137,7 +137,7 @@ func checkLanInterface(ip netip.Addr, data []byte) error {
 		}
 		for _, address := range iface.Addresses {
 			if address.Family != "inet" || address.Local != ip.String() || address.PrefixLen == nil ||
-				*address.PrefixLen < 0 || *address.PrefixLen > 32 {
+				*address.PrefixLen < 1 || *address.PrefixLen > 32 {
 				continue
 			}
 			octets := ip.As4()
@@ -271,7 +271,7 @@ func (entry lanEntry) observe(ctx context.Context, address string, existing, act
 	docker := func(args ...string) ([]byte, error) {
 		timeout := 20 * time.Second
 		var environment []string
-		if args[0] == "compose" && args[2] == entry.configDir() {
+		if len(args) > 2 && args[0] == "compose" && args[2] == entry.configDir() {
 			timeout = 180 * time.Second
 			environment = []string{"DOCKER_DEFAULT_PLATFORM=" + native.Platform}
 		}

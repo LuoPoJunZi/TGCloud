@@ -9,9 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
-	"syscall"
 	"unicode/utf8"
 )
 
@@ -60,16 +58,9 @@ func installerHost(lan bool) (map[string]string, error) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		return nil, errors.New("缺少 Bash")
 	}
-	var host syscall.Utsname
-	if syscall.Uname(&host) != nil {
-		return nil, errors.New("无法核实宿主 CPU 架构")
-	}
-	var machine strings.Builder
-	for _, character := range host.Machine {
-		if character == 0 {
-			break
-		}
-		machine.WriteByte(byte(character))
+	machine, err := hostUnameMachine()
+	if err != nil {
+		return nil, err
 	}
 	release, err := os.ReadFile("/etc/os-release")
 	if err != nil {
@@ -86,7 +77,7 @@ func installerHost(lan bool) (map[string]string, error) {
 	if dpkg != "amd64" && dpkg != "arm64" {
 		return nil, errors.New("需要 Debian/Ubuntu 的 amd64 或 arm64 用户态")
 	}
-	if nativeArchitecture(machine.String()) != dpkg || runtime.GOARCH != dpkg {
+	if nativeArchitecture(machine) != dpkg || runtime.GOARCH != dpkg {
 		return nil, errors.New("内核与用户态架构不一致；不自动使用 QEMU 或跨架构部署")
 	}
 	if lan {
@@ -94,38 +85,15 @@ func installerHost(lan bool) (map[string]string, error) {
 			return nil, errors.New("缺少 iproute2；请先人工安装，不在信息收集前安装软件")
 		}
 	}
-	return map[string]string{"architecture": dpkg, "machine": machine.String(), "name": name}, nil
+	return map[string]string{"architecture": dpkg, "machine": machine, "name": name}, nil
 }
 
 func installerOSName(release string) (string, error) {
-	id, pretty := "", ""
-	for _, line := range strings.Split(release, "\n") {
-		key, raw, present := strings.Cut(line, "=")
-		if !present || (key != "ID" && key != "PRETTY_NAME") {
-			continue
-		}
-		value := strings.TrimSpace(raw)
-		switch {
-		case len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"':
-			var err error
-			value, err = strconv.Unquote(value)
-			if err != nil {
-				return "", errors.New("Linux 系统信息格式异常")
-			}
-		case len(value) >= 2 && value[0] == '\'' && value[len(value)-1] == '\'':
-			value = value[1 : len(value)-1]
-		case !shellWord.MatchString(value):
-			return "", errors.New("Linux 系统信息格式异常")
-		}
-		if strings.ContainsFunc(value, func(r rune) bool { return r < 32 }) {
-			return "", errors.New("Linux 系统信息格式异常")
-		}
-		if key == "ID" {
-			id = value
-		} else {
-			pretty = value
-		}
+	values, ok := parseOSRelease(release, shellWord.MatchString, "ID", "PRETTY_NAME")
+	if !ok {
+		return "", errors.New("Linux 系统信息格式异常")
 	}
+	id, pretty := values["ID"], values["PRETTY_NAME"]
 	if id != "debian" && id != "ubuntu" {
 		return "", errors.New("仅支持 Debian/Ubuntu；不猜测其他发行版的安装方式")
 	}

@@ -142,11 +142,13 @@ class LocalSession:
             **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
         )
         lines: queue.Queue[str | None] = queue.Queue()
+        overflowed = threading.Event()
 
         def read_output() -> None:
             try:
                 for line in process.stdout:
-                    lines.put(line)
+                    if not overflowed.is_set():
+                        lines.put(line)
             finally:
                 lines.put(None)
 
@@ -167,6 +169,7 @@ class LocalSession:
                     break
                 size += len(line)
                 if size > 8 * 1024 * 1024:
+                    overflowed.set()
                     raise RuntimeError("命令输出异常过大；停止并核对状态")
                 # Raw data (e.g. Compose JSON) is only returned to its parser.
                 captured.append(line)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import secrets
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -16,8 +17,10 @@ def backup_database(source: Path, destination: Path) -> None:
     if source == destination:
         raise ValueError("备份目标不能与源数据库相同")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_name(f".{destination.name}.tmp-{os.getpid()}")
-    temporary.unlink(missing_ok=True)
+    temporary = destination.with_name(f".{destination.name}.tmp-{os.getpid()}-{secrets.token_hex(6)}")
+    flags = os.O_CREAT | os.O_EXCL | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(temporary, flags, 0o600)
+    os.close(descriptor)
     try:
         with (
             closing(sqlite3.connect(source)) as original,

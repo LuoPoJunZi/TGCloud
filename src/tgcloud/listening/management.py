@@ -146,10 +146,11 @@ def recovery_reason(task):
 def failed_page(owner, actor, source_id, before=0):
     repo = repository(owner, actor)
     repo.source(actor, source_id)
-    return [dict(row) for row in repo.c.execute(
-        "SELECT * FROM tasks WHERE sender_id=? AND source_id=? AND read_identity!='bot' "
-        "AND state IN ('download_failed','upload_failed_retained','verification_failed_retained') "
-        "AND (?=0 OR id<?) ORDER BY id DESC LIMIT 6", (actor, source_id, before, before))]
+    with owner.db._lock:
+        return [dict(row) for row in repo.c.execute(
+            "SELECT * FROM tasks WHERE sender_id=? AND source_id=? AND read_identity!='bot' "
+            "AND state IN ('download_failed','upload_failed_retained','verification_failed_retained') "
+            "AND (?=0 OR id<?) ORDER BY id DESC LIMIT 6", (actor, source_id, before, before))]
 
 
 async def retry_confirmed(owner, actor, source_id, revision, snapshots):
@@ -185,13 +186,14 @@ async def retry_confirmed(owner, actor, source_id, revision, snapshots):
 
 
 def duplicate(owner, source, item):
-    c = owner.db._conn
-    if item["media_key"] and c.execute("SELECT 1 FROM tasks WHERE sender_id=? AND media_key=?",
-                                      (owner.settings.allowed_user_id, item["media_key"])).fetchone():
-        return "重复文件（沿用原有去重规则）"
-    if c.execute("SELECT 1 FROM listener_events WHERE account=? AND chat=? AND message=?",
-                 (source["account"], source["chat"], item["message_id"])).fetchone():
-        return "已处理的消息（不自动重处理）"
+    with owner.db._lock:
+        c = owner.db._conn
+        if item["media_key"] and c.execute("SELECT 1 FROM tasks WHERE sender_id=? AND media_key=?",
+                                          (owner.settings.allowed_user_id, item["media_key"])).fetchone():
+            return "重复文件（沿用原有去重规则）"
+        if c.execute("SELECT 1 FROM listener_events WHERE account=? AND chat=? AND message=?",
+                     (source["account"], source["chat"], item["message_id"])).fetchone():
+            return "已处理的消息（不自动重处理）"
     return ""
 
 

@@ -18,7 +18,7 @@ from pathlib import Path
 from tests.fixtures import ROOT
 
 SCRIPT = (ROOT / "install.sh").read_text(encoding="utf-8")
-VALIDATOR = SCRIPT.split("python3 -c '\n", 1)[1].split("\n' \"$tgcloud_work\"", 1)[0]
+VALIDATOR = SCRIPT.split("python3 -I -B -c '\n", 1)[1].split("\n' \"$tgcloud_work\"", 1)[0]
 # The standalone bootstrap downloads the pinned stable release.
 TAG, = re.findall(r"^tgcloud_tag=(v[0-9]+\.[0-9]+\.[0-9]+)$", SCRIPT, re.MULTILINE)
 STABLE_VERSION = TAG[1:]

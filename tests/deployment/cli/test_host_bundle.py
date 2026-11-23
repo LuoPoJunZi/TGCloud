@@ -53,7 +53,7 @@ class HostBundleTests(unittest.TestCase):
                                     cwd=directory, capture_output=True, text=True, timeout=15, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)["source"], "caption")
-            code = "import sys;sys.path.insert(0," + repr(str(target / "src")) + ");import tgcloud.deployment.lifecycle.backup,tgcloud.deployment.readiness;assert 'telethon' not in sys.modules;assert 'psutil' not in sys.modules"
+            code = "import sys;sys.path.insert(0," + repr(str(target / "src")) + ");import tgcloud.deployment.lifecycle.backup,tgcloud.deployment.ops.readiness;assert 'telethon' not in sys.modules;assert 'psutil' not in sys.modules"
             result = subprocess.run([sys.executable, "-S", "-B", "-c", code], cwd=directory,
                                     capture_output=True, text=True, timeout=15, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)

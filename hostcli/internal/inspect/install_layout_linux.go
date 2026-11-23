@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"syscall"
 )
@@ -16,7 +15,7 @@ import (
 const installConfigLimit = 128 * 1024
 
 var (
-	installPathPattern = regexp.MustCompile(`^/opt/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$`)
+	installPathPattern = optPathRegex
 	botDataDirs        = []string{"data", "downloads", "logs", "config"}
 	gatewayDataDirs    = []string{"clouddrive", "clouddrive/config", "clouddrive/mounts"}
 )
@@ -160,7 +159,7 @@ func ensureInstallDirectory(path string) error {
 
 func readInstallConfig(path string) ([]byte, error) {
 	invalid := errors.New("无法读取私有安装配置")
-	file, err := openPrivate(path, syscall.O_RDONLY, 0)
+	file, err := openPrivate(path, syscall.O_RDONLY, managedOwnerUID)
 	if err != nil {
 		return nil, invalid
 	}
@@ -182,8 +181,9 @@ func writePrivateConfigFile(path string, data []byte) error {
 		return errors.New("无法新建私有安装配置，现有配置保留")
 	}
 	_, writeErr := file.Write(data)
+	syncErr := file.Sync()
 	closeErr := file.Close()
-	if writeErr != nil || closeErr != nil {
+	if writeErr != nil || syncErr != nil || closeErr != nil {
 		_ = os.Remove(path)
 		return errors.New("无法写入私有安装配置")
 	}

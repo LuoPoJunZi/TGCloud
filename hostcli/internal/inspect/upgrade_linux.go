@@ -273,13 +273,25 @@ func checkRollbackDB(directory, database string) error {
 
 func restoreUpgradeDB(directory, database string) error {
 	target := filepath.Join(directory, "data", "tgcloud.db")
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		sidecar := target + suffix
+		info, err := os.Lstat(sidecar)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return errors.New("SQLite 旁文件类型不安全，已停止数据库恢复")
+		}
+		if err := os.Remove(sidecar); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return errors.New("无法移除升级失败后残留的 SQLite 旁文件")
+		}
+	}
 	if err := os.Rename(database, target); err != nil {
 		return errors.New("无法恢复升级前的 SQLite 数据库")
 	}
-	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
-		if err := os.Remove(target + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return errors.New("无法移除升级失败后残留的 SQLite 旁文件")
-		}
+	if dir, err := os.Open(filepath.Dir(target)); err == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
 	}
 	return nil
 }

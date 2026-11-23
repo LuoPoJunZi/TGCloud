@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import shlex
 from pathlib import Path, PurePosixPath
@@ -318,19 +317,14 @@ def _directives(text):
 
 
 def safe_host_path(path: Path, *, directory: bool = True) -> None:
-    if not path.is_absolute() or path.resolve() != path or path.is_symlink():
-        raise ValueError("外部路径经过符号链接或不是规范绝对位置。")
-    for parent in (*reversed(path.parents), path):
-        if parent.exists() and parent.is_symlink():
-            raise ValueError("外部路径父目录经过符号链接。")
-        if os.name == "posix" and parent.exists():
-            info = parent.stat()
-            # A root-owned sticky ancestor cannot replace our root-owned child;
-            # the actual selected directory must never be world writable.
-            sticky_ancestor = parent != path and info.st_uid == 0 and info.st_mode & 0o1000
-            if info.st_mode & 0o022 and not sticky_ancestor:
-                raise ValueError("外部路径允许非所有者写入，拒绝自动接入。")
-        if os.name == "posix" and parent.exists() and parent.stat().st_uid != 0:
-            raise ValueError("外部路径不是 root 所有；不以 root 覆盖用户管理目录。")
+    from tgcloud.deployment.path_guard import ensure_safe_managed_path
+    ensure_safe_managed_path(
+        path,
+        allowed_uids=(0,),
+        link_error="外部路径经过符号链接或不是规范绝对位置。",
+        parent_link_error="外部路径父目录经过符号链接。",
+        owner_error="外部路径不是 root 所有；不以 root 覆盖用户管理目录。",
+        writable_error="外部路径允许非所有者写入，拒绝自动接入。",
+    )
     if not (path.is_dir() if directory else path.is_file()):
         raise ValueError("外部持久化目录／Compose 文件缺失。")

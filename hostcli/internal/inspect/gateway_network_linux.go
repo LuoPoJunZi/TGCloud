@@ -136,7 +136,8 @@ func writeGatewayChange(journal string, change gatewayNetworkChange) error {
 		return errors.New("无法记录 CloudDrive2 网络变更")
 	}
 	err = json.NewEncoder(file).Encode(change)
-	if closeErr := file.Close(); err != nil || closeErr != nil {
+	syncErr := file.Sync()
+	if closeErr := file.Close(); err != nil || syncErr != nil || closeErr != nil {
 		// No Docker call has been issued yet.
 		_ = os.Remove(journal)
 		return errors.New("无法保存 CloudDrive2 网络变更记录")

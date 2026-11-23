@@ -12,7 +12,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from tgcloud.deployment.readiness import validated_admission, validated_transfers
+from tgcloud.deployment.ops.readiness import validated_admission, validated_transfers
 from tgcloud.monitoring import observations
 from tgcloud.version import VERSION
 

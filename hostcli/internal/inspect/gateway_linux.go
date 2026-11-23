@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -153,21 +152,8 @@ func checkGatewayPort(gateway *gatewayContainer, docker DockerRunner) (bool, err
 func publishesGatewayPort(ports string) bool {
 	const target = 19798
 	for _, port := range strings.Split(ports, ",") {
-		host, _, published := strings.Cut(port, "->")
-		colon := strings.LastIndexByte(host, ':')
-		if !published || colon < 0 {
-			continue
-		}
-		start, end, isRange := strings.Cut(host[colon+1:], "-")
-		first, err := strconv.Atoi(start)
-		if err != nil || first > target {
-			continue
-		}
-		if !isRange {
-			end = start
-		}
-		last, err := strconv.Atoi(end)
-		if err == nil && last >= target {
+		first, last, ok := parseHostPortRange(port, false)
+		if ok && first <= target && target <= last {
 			return true
 		}
 	}

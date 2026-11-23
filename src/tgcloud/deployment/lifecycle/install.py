@@ -14,17 +14,16 @@ from tgcloud.cli.presentation import InstallerLog, OperationReport
 from tgcloud.deployment import (
     architecture,
     configuration,
-    diagnostics,
     instances,
     local_source,
     payload,
     preflight,
-    readiness,
     releases,
     runtime,
 )
 from tgcloud.deployment.host import LocalSession, SafeLog, edition_lock
 from tgcloud.deployment.lifecycle import upgrade
+from tgcloud.deployment.ops import diagnostics, readiness
 from tgcloud.deployment.proxy.manager import (
     DomainProxyManager,
     validate_domain,
@@ -220,6 +219,10 @@ def apply_base(plan: Plan | LanPlan, release: releases.Release, source: Path, se
         if code or "TGCLOUD_RESULT=SUCCESS" not in output.splitlines() or "TGCLOUD_BOT_HEALTH=healthy" not in output.splitlines():
             raise RuntimeError("基础安装/升级失败；请核对现有安装器的回退结果和备份，不假定已恢复")
     if use_go:
+        if instance.present and configuration.regular_private(instance.directory / ".env") != instance.raw_config:
+            if plan.feedback is not None:
+                plan.feedback.checks["config"] = "failed"
+            raise RuntimeError("升级后 .env 字节发生变化，停止后续操作；请核对备份")
         if instance.present and plan.feedback is not None:
             plan.feedback.checks["config"] = "ok"
         return
@@ -268,6 +271,7 @@ def execute_plan(
             preflight.resource_check(instance, plan.config, session, log)
         if install_manager:
             log.cli = runtime.install_release(source, release, log)
+            feedback.acceptance_tool = host_cli.deployment_tool("install-acceptance", source)
         feedback.stage = "基础安装与升级"
         apply_base(plan, release, source, session, log)
         if plan.action in {"install", "upgrade"}:

@@ -10,6 +10,8 @@ import (
 
 var errLinuxRequired = errors.New("此操作需要 Linux 宿主机")
 
+func LinuxSupported() bool { return false }
+
 func LockInstance() (io.Closer, error) {
 	return nil, errLinuxRequired
 }

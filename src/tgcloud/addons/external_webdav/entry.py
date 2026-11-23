@@ -10,7 +10,6 @@ import json
 import os
 import re
 import shlex
-import stat
 import subprocess  # nosec B404
 import sys
 from pathlib import Path
@@ -21,22 +20,26 @@ COMMAND = Path("/usr/local/bin/tgcloud-webdav")
 HEADER = '#!/bin/sh\n# tgcloud external_webdav managed\n'
 
 
-def _check_ownership(info, *, private: bool = False, sticky_parent: bool = False) -> None:
-    if os.name == "posix":
-        forbidden = 0o077 if private else 0o022
-        if info.st_uid != 0 or (info.st_mode & forbidden and not sticky_parent):
-            raise ValueError("外部 WebDAV 维护代码必须归 root 所有，且权限不可由其他用户修改。")
+def _check_ownership(info, *, private: bool = False) -> None:
+    if os.name != "posix":
+        return
+    if info.st_uid != 0 or info.st_mode & (0o077 if private else 0o022):
+        raise ValueError("外部 WebDAV 维护代码必须归 root 所有，且权限不可由其他用户修改。")
 
 
 def _safe_path(path: Path, *, private: bool = False) -> None:
-    if not path.is_absolute() or path.resolve() != path:
-        raise ValueError("外部 WebDAV 维护路径经过链接或不是绝对路径。")
+    from tgcloud.deployment.path_guard import ensure_canonical_path
+    ensure_canonical_path(
+        path,
+        link_error="外部 WebDAV 维护路径经过链接或不是绝对路径。",
+        parent_error="外部 WebDAV 维护路径经过链接。",
+    )
+    if os.name != "posix":
+        return
     for item in (path, *path.parents):
-        if item.is_symlink():
-            raise ValueError("外部 WebDAV 维护路径经过链接。")
-        info = item.stat()
-        _check_ownership(info, private=private and item == path,
-                         sticky_parent=item == Path("/tmp") and bool(info.st_mode & stat.S_ISVTX))  # nosec B108
+        if not item.exists() or (item != path and item == Path("/tmp")):  # nosec B108
+            continue
+        _check_ownership(item.stat(), private=private and item == path)
 
 
 def installed(*, launcher: Path = COMMAND, root: Path = config.ROOT) -> Path | None:
@@ -166,7 +169,7 @@ def open_menu(instance, ui, log) -> None:
     service = Service(instance.product, LocalSession(log), log, ui)
     with service.locked():
         if installed() != previous:
-            raise ValueError("确认期间外部 WebDAVDAV 管理代码已变化；停止，请刷新。")
+            raise ValueError("确认期间外部 WebDAV 管理代码已变化；停止，请刷新。")
         current = service.record()
         if current is not None and current["instance_dir"] != str(instance.directory):
             raise ValueError("外部 WebDAV 记录与当前实例目录不一致；停止，不迁移。")

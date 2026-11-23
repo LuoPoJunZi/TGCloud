@@ -250,6 +250,5 @@ def render_route(route, entry: dict, *, bootstrap: bool = False) -> str:
         text = text.replace("proxy_pass http://127.0.0.1:" + str(port), "proxy_pass http://" + token)
         # A variable URI must explicitly preserve the request URI.
         text = text.replace("proxy_pass http://" + token + ";", "proxy_pass http://" + token + "$request_uri;")
-        text = text.replace("proxy_pass http://" + token + "/dav/;", "proxy_pass http://" + token + "/dav/;")
         text = text.replace("    server_name " + domain + ";", "    server_name " + domain + ";\n    resolver 127.0.0.11 valid=10s ipv6=off;\n    set " + token + " " + backend + ":" + str(port) + ";")
     return "# " + OWNER + "\n" + text

@@ -726,6 +726,8 @@ class CommandHandlers:
 
 
     async def _refresh_destination_for_dashboard(self) -> None:
+        if float(getattr(self, "_destination_next_probe_at", 0.0) or 0.0) > time.monotonic():
+            return  # Respect active rate-limit/auth cooldown; dashboard refresh never bypasses it.
         last = getattr(self, "destination_last_checked", 0)
         interval = self.settings.remote_health_interval
         if last > 0 and 0 <= time.time() - last <= interval:

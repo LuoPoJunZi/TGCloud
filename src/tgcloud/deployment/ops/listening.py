@@ -31,7 +31,7 @@ def main(argv=None):
         from tgcloud.deployment.architecture import check_environment
 
         check_environment()
-        root = Path(__file__).resolve().parents[3]
+        root = Path(__file__).resolve().parents[4]
         stage = "本地管理工具完整性检查"
         if (root / "installation.json").exists():
             runtime.verify(root)
@@ -92,7 +92,7 @@ def manage(manager, instance):
         manager.heading("监听转存管理", instance)
         manager.log("登录只保存个人账号授权；在 Bot 监听管理中启用。停用保留来源、任务和 Session。")
         manager.log(numbered_menu(((1, "登录监听账号"), (2, "查看监听状态"),
-                                   (3, "停用监听功能"), (0, "返回主菜单"))))
+                                   (3, "停用监听功能"), (0, "返回上级"))))
         selected = choose(manager.ui, "选择操作", ("0", *actions), "0")
         if selected == "0":
             return
@@ -102,7 +102,7 @@ def manage(manager, instance):
                         "--install-dir", str(instance.directory)]))
         if result:
             manager.log("监听操作未完成，请核对上方结果。")
-        manager.log(numbered_menu(((0, "返回监听转存管理"),)))
+        manager.log(numbered_menu(((0, "返回上级"),)))
         choose(manager.ui, "选择操作", ("0",), "0")
 
 

@@ -264,7 +264,7 @@ def uninstall(manager, instance):
     state = manager.proxy().read_state()
     if record or manager.product.key in state.get("external_webdav", {}):
         raise ValueError("外部 WebDAV 仍依赖当前网关；请先在外部 WebDAV 菜单单独卸载")
-    manager.log(numbered_menu(((1, "移除服务，保留全部数据"), (2, "移除服务及当前实例数据"), (0, "返回主菜单"))))
+    manager.log(numbered_menu(((1, "移除服务，保留全部数据"), (2, "移除服务，删除实例数据"), (0, "返回上级"))))
     action = choose(manager.ui, "卸载方式", ("0", "1", "2"), "0")
     if action == "0":
         return False

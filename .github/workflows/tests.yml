@@ -51,7 +51,19 @@ jobs:
 
       - name: Test host CLI on native Linux
         working-directory: hostcli
-        run: go test ./...
+        run: |
+          go vet ./...
+          go test ./...
+          GOOS=windows GOARCH=amd64 go build ./...
+          for arch in amd64 arm64; do
+            out="/tmp/tgcloud-host-$arch"
+            GOOS=linux GOARCH="$arch" CGO_ENABLED=0 GOTOOLCHAIN=local GOPROXY=off \
+              go build -trimpath -ldflags='-s -w -buildid=' -o "$out" ./cmd/tgcloud-host
+            size="$(stat -c %s "$out")"
+            test "$size" -le 8388608
+          done
+          "/tmp/tgcloud-host-${{ matrix.arch }}" --help >/dev/null
+          rm -f /tmp/tgcloud-host-amd64 /tmp/tgcloud-host-arm64
 
       - name: Linux runtime regression and real WebDAV integration
         run: |

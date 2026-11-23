@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from tgcloud.deployment import diagnostics as host
+from tgcloud.deployment.ops import diagnostics as host
 from tgcloud.deployment.profiles import PRODUCTS
 from tgcloud.monitoring.diagnostics import collect
 from tgcloud.persistence.sqlite import TaskDB

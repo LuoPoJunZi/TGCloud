@@ -216,13 +216,14 @@ async def _stream_one(self, task_id: int) -> None:
             "大文件不会占用本地任务额度，可使用 /retry 重新开始。"
         )
     except asyncio.CancelledError:
+        from tgcloud.domain.states import FAILED_STATES
         if stream is not None:
             await stream.abort()
         current = self.db.get(task_id)
         recorded_remote = (
             str(current.get("remote_path") or "") if current else ""
         )
-        if current and current["state"] not in {"cancelled", "cleanup_pending", "completed", "confirmed"}:
+        if current and current["state"] not in {"cancelled", "cleanup_pending", "completed", "confirmed", *FAILED_STATES}:
             self.db.transition(
                 task_id,
                 "queued",
@@ -234,6 +235,8 @@ async def _stream_one(self, task_id: int) -> None:
             )
         raise
     except Exception as exc:
+        if stream is not None:
+            await stream.abort()
         self.log.exception("任务 #%s 流式传输发生未处理异常", task_id)
         self.db.transition(
             task_id,

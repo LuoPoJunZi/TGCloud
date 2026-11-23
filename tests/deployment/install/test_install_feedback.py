@@ -21,9 +21,10 @@ from tgcloud.cli.presentation import (
     OperationReport,
     classify_install_line,
 )
-from tgcloud.deployment import configuration, instances, readiness, releases
+from tgcloud.deployment import configuration, instances, releases
 from tgcloud.deployment.host import SafeLog
 from tgcloud.deployment.lifecycle import install, lan
+from tgcloud.deployment.ops import readiness
 from tgcloud.deployment.profiles import PRODUCTS
 from tgcloud.version import VERSION
 
@@ -463,6 +464,11 @@ class ExecutionSummaryTests(unittest.TestCase):
                 self.assertEqual(ui.confirm.call_count, 2 if verify else 1)
                 writes = [call for call in session.run.call_args_list if "manage.sh verify" in call.args[0]]
                 self.assertEqual(len(writes), int(verify and confirmation is True))
+
+    def test_friendly_marker_recognizes_https_ok_marker(self):
+        from tgcloud.cli.presentation import friendly_marker
+        self.assertEqual(friendly_marker("TGCLOUD_HTTPS=OK"), "HTTPS 入口配置：通过")
+        self.assertNotIn("未识别", friendly_marker("TGCLOUD_HTTPS=OK"))
 
 
 if __name__ == "__main__":

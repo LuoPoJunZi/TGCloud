@@ -57,8 +57,9 @@ def select_entry(manager, ui, domain: str, options: dict | None = None):
         valid = [item for item in candidates if item["kind"] == "external_docker"]
         if not valid:
             raise ValueError("没有可安全复用的 Docker Nginx；请用 tgcloud proxy export 查看人工接入说明。")
-        manager.log(numbered_menu(((1, "复用已有 Docker Nginx（推荐）"), (2, "使用独立 Nginx（端口占用时不可用）"),
-                                   (3, "查看详细检测结果"), (0, "返回"))))
+        manager.log("推荐复用已有 Docker Nginx；端口被占用时独立代理不可用。")
+        manager.log(numbered_menu(((1, "复用已有代理"), (2, "启用独立代理"),
+                                   (3, "查看检测详情"), (0, "返回上级"))))
         while True:
             choice = ui.ask("请选择", default="1")
             if choice == "3":

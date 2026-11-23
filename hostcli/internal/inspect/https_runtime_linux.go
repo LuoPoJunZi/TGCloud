@@ -27,7 +27,7 @@ func (entry httpsEntry) certFile(domain, path string) string {
 		if (directory != "renewal" && strings.HasPrefix(resolved, filepath.Join(root, directory, domain)+"/")) ||
 			(directory == "renewal" && resolved == filepath.Join(root, directory, domain+".conf")) {
 			info, err := os.Lstat(resolved)
-			if err == nil && info.Mode().IsRegular() && info.Sys().(*syscall.Stat_t).Uid == 0 &&
+			if err == nil && info.Mode().IsRegular() && info.Sys().(*syscall.Stat_t).Uid == managedOwnerUID &&
 				info.Size() > 0 && info.Size() <= 256*1024 {
 				return resolved
 			}
@@ -256,10 +256,23 @@ func (entry httpsEntry) activate(state httpsState, candidate, architecture strin
 	if _, err := docker("exec", item.ID, "nginx", "-t"); err != nil {
 		return errors.New("共享 Nginx 配置检查失败")
 	}
-	if _, err := docker("exec", item.ID, "nginx", "-s", "reload"); err != nil {
+	if err := reloadHTTPSNginx(docker, item.ID); err != nil {
 		return errors.New("共享 Nginx 平滑重载失败")
 	}
 	return nil
+}
+
+func reloadHTTPSNginx(docker DockerRunner, containerID string) error {
+	var err error
+	for attempt := range 10 {
+		if _, err = docker("exec", containerID, "nginx", "-s", "reload"); err == nil {
+			return nil
+		}
+		if attempt < 9 {
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+	return err
 }
 
 func (entry httpsEntry) startRenewal(architecture string, docker DockerRunner) error {

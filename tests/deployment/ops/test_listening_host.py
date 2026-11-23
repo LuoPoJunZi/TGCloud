@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import mock_open, patch
 
 from tests.fixtures import ROOT
-from tgcloud.deployment.listening import main
+from tgcloud.deployment.ops.listening import main
 
 
 class HostListeningTests(unittest.TestCase):
@@ -46,12 +46,12 @@ class HostListeningTests(unittest.TestCase):
                 )
                 stack.enter_context(
                     patch(
-                        "tgcloud.deployment.listening.shutil.which",
+                        "tgcloud.deployment.ops.listening.shutil.which",
                         return_value="/usr/bin/docker",
                     )
                 )
                 stack.enter_context(
-                    patch("tgcloud.deployment.listening.os.isatty", side_effect=lambda fd, redirected=redirected: not redirected or fd == 77)
+                    patch("tgcloud.deployment.ops.listening.os.isatty", side_effect=lambda fd, redirected=redirected: not redirected or fd == 77)
                 )
                 opened = mock_open()
                 opened.return_value.fileno.return_value = 77
@@ -78,7 +78,7 @@ class HostListeningTests(unittest.TestCase):
                 )
                 runner = stack.enter_context(
                     patch(
-                        "tgcloud.deployment.listening.subprocess.run",
+                        "tgcloud.deployment.ops.listening.subprocess.run",
                         return_value=SimpleNamespace(returncode=0),
                     )
                 )
@@ -128,7 +128,7 @@ class HostListeningTests(unittest.TestCase):
                 "tgcloud.deployment.preflight.validate_host",
                 side_effect=ValueError("unsupported"),
             ),
-            patch("tgcloud.deployment.listening.subprocess.run") as run,
+            patch("tgcloud.deployment.ops.listening.subprocess.run") as run,
             contextlib.redirect_stdout(io.StringIO()),
         ):
             self.assertEqual(main(["login", "--edition", "clouddrive2"]), 1)

@@ -113,7 +113,7 @@ ssh -N -L 19798:127.0.0.1:19798 root@SERVER_HOST
 
 Bot 使用容器内部地址 `http://tgcloud-clouddrive2:19798/dav`，不要将它改成电脑的 `127.0.0.1`。保存子目录相对于该 WebDAV 用户可见根目录，不是服务器 `/opt/` 下的文件夹。
 
-选择可信内网地址时，在同一内网访问 `http://主机内网IPv4:19798`。HTTPS 配置使用 `sudo bash manage.sh` 的“7. HTTPS 与管理”，或随包 `https.sh`；具体步骤见[网络指南](network-guide.md)。
+选择可信内网地址时，在同一内网访问 `http://主机内网IPv4:19798`。HTTPS 配置使用 `sudo bash manage.sh` 的“2. 访问入口管理 → 1. HTTPS 代理与证书”，或随包 `https.sh`；具体步骤见[网络指南](network-guide.md)。
 
 ## 5. 启动 Bot 并测试转存
 
@@ -123,7 +123,7 @@ CloudDrive2 挂载和 WebDAV 用户准备完成后，再执行：
 sudo docker compose up -d --no-build --pull never tgcloud-clouddrive2-bot
 ```
 
-然后运行 `sudo bash manage.sh`，执行“10. 业务就绪检查”和“11. WebDAV 验收”。在自己的 Bot 私聊中发送一个小文件，用 `/queue` 或 `/tasks` 查看任务，再到云盘官方客户端核对。通过后再提交大文件或启用监听。
+然后运行 `sudo bash manage.sh`，在“4. 健康检查诊断”中执行“1. 业务就绪检查”和“2. 远端写入验收”。在自己的 Bot 私聊中发送一个小文件，用 `/queue` 或 `/tasks` 查看任务，再到云盘官方客户端核对。通过后再提交大文件或启用监听。
 
 `setup` 是运行后退出的配置工具，不挂载 Docker socket，也不启动 Bot；不需要让它一直运行。同一个 Bot Token 只运行一个 Bot 实例。
 
@@ -145,7 +145,7 @@ sudo docker compose up -d --no-build --pull never tgcloud-clouddrive2-bot
 
 持久化目录包括 `data/`、`config/`、`downloads/`、`logs/` 和 `clouddrive/config/`。`clouddrive/mounts/` 是云挂载区域，不能当成本地快照内容递归归档。
 
-备份优先使用 `sudo bash manage.sh` →“13. 数据备份管理”，按提示创建和校验快照；代理证书与配置单独备份。备份含 Session 和凭据，应另存至卸载范围以外的私有位置。覆盖范围和恢复限制见[备份与恢复](backup-and-recovery.md)。
+备份优先使用 `sudo bash manage.sh` →“5. 实例维护备份 → 2. 数据备份管理”，按提示创建和校验快照；代理证书与配置单独备份。备份含 Session 和凭据，应另存至卸载范围以外的私有位置。覆盖范围和恢复限制见[备份与恢复](backup-and-recovery.md)。
 
 继续使用本目录的 `sudo bash manage.sh`，或从完整源码运行 `python3 -B scripts/run_source.py compose --root /absolute/deployment`。脚本部署与独立 Compose 分别管理各自实例。
 
@@ -161,6 +161,6 @@ sudo python3 -B /absolute/TGCloud-v0.0.7/scripts/run_source.py compose upgrade -
 
 卸载前审阅菜单给出的数据删除范围，保留独立备份。
 
-卸载入口为管理菜单“14. 卸载当前实例”。`docker compose stop` 只是停止服务；不要直接删除部署目录、数据库或云挂载目录来代替卸载。
+卸载入口为管理菜单“5. 实例维护备份 → 4. 卸载当前实例”。`docker compose stop` 只是停止服务；不要直接删除部署目录、数据库或云挂载目录来代替卸载。
 
 HTTPS 与只读访问见[网络指南](network-guide.md)，备份范围见[备份与恢复](backup-and-recovery.md)。

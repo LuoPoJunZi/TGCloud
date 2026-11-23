@@ -533,16 +533,17 @@ class Listener:
             naming["filter_matched"], naming["filter_reason"] = rules.explain(
                 source["config"]["rules"], item, source_allowed=True)
             naming["admission_reason"] = "未发现重复，实际入队仍须通过权限、额度与资源检查"
-            if self.db._conn.execute(
-                "SELECT 1 FROM tasks WHERE sender_id=? AND media_key=?",
-                (actor, rules.facts(m)["media_key"]),
-            ).fetchone():
-                matched, reason = False, "重复文件（沿用原有去重规则）"
-            if self.db._conn.execute(
-                "SELECT 1 FROM listener_events WHERE account=? AND chat=? AND message=?",
-                (source["account"], source["chat"], m.id),
-            ).fetchone():
-                matched, reason = False, "重复事件（编辑不自动重处理）"
+            with self.db._lock:
+                if self.db._conn.execute(
+                    "SELECT 1 FROM tasks WHERE sender_id=? AND media_key=?",
+                    (actor, rules.facts(m)["media_key"]),
+                ).fetchone():
+                    matched, reason = False, "重复文件（沿用原有去重规则）"
+                if self.db._conn.execute(
+                    "SELECT 1 FROM listener_events WHERE account=? AND chat=? AND message=?",
+                    (source["account"], source["chat"], m.id),
+                ).fetchone():
+                    matched, reason = False, "重复事件（编辑不自动重处理）"
             if reason.startswith("重复"):
                 naming["admission_reason"] = reason
             result.append((m.id, matched, reason, naming))
@@ -581,14 +582,15 @@ class Listener:
             raise PermissionError("监听账号身份发生变化")
         if not source["enabled"] or source["deleted"] or message.id <= source["cursor"]:
             return
-        c = self.db._conn
-        if c.execute(
-            "SELECT 1 FROM listener_events WHERE account=? AND chat=? AND message=?",
-            (source["account"], source["chat"], message.id),
-        ).fetchone():
-            return
-        if c.execute("SELECT count(*) FROM listener_events").fetchone()[0] >= 20000:
-            raise ReceiveLimited("接收记录达到上限，暂停推进；请处理待确认记录")
+        with self.db._lock:
+            c = self.db._conn
+            if c.execute(
+                "SELECT 1 FROM listener_events WHERE account=? AND chat=? AND message=?",
+                (source["account"], source["chat"], message.id),
+            ).fetchone():
+                return
+            if c.execute("SELECT count(*) FROM listener_events").fetchone()[0] >= 20000:
+                raise ReceiveLimited("接收记录达到上限，暂停推进；请处理待确认记录")
         item, matched, reason, naming = self.preview(source, message, caption)
         if not matched:
             self.journal(source, message.id, reason, attachment=item["attachment"])
@@ -612,10 +614,11 @@ class Listener:
                 self.plans.submit(self.admin, plan["id"], plan["revision"])
             except (ValueError, RuntimeError):
                 # Persist the exact admission boundary: registered is not the same as queued.
-                self.db._conn.execute(
-                    "UPDATE listener_events SET result='等待额度或配置核对（待确认保留）' WHERE plan=?",
-                    (plan["id"],),
-                )
+                with self.plans.transaction(self.admin, admin=True):
+                    self.db._conn.execute(
+                        "UPDATE listener_events SET result='等待额度或配置核对（待确认保留）' WHERE plan=?",
+                        (plan["id"],),
+                    )
         if created and (self._last_notice is None or time.monotonic() - self._last_notice > 60):
             self._last_notice = time.monotonic()
             await self.owner._notify(
@@ -642,10 +645,11 @@ class Listener:
             source.get("polled_at") and time.time() - source["polled_at"] > LOOKBACK
         )
         if gap:
-            self.db._conn.execute(
-                "UPDATE listener_sources SET gap=1,status='超出补拉窗口，可能存在缺口；请核对历史' WHERE id=?",
-                (source["id"],),
-            )
+            with self.plans.transaction(self.admin, admin=True):
+                self.db._conn.execute(
+                    "UPDATE listener_sources SET gap=1,status='超出补拉窗口，可能存在缺口；请核对历史' WHERE id=?",
+                    (source["id"],),
+                )
         # Ascending pages, never a live-event maximum watermark. A batch is bounded.
         messages = [
             m

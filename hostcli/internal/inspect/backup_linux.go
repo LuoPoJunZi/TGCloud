@@ -119,6 +119,7 @@ func archiveUpgradeConfig(directory, destination string, target *os.File) error 
 	defer cancel()
 	archive := exec.CommandContext(ctx, "tar", "-czf", "-", "-C", directory,
 		"--exclude=./data", "--exclude=./downloads", "--exclude=./logs", "--exclude=./clouddrive", ".")
+	isolateInstallCommand(archive, true)
 	archive.Stdout = target
 	if err := archive.Run(); err != nil {
 		return errors.New("配置备份写入失败，请检查磁盘空间和权限")
@@ -126,7 +127,9 @@ func archiveUpgradeConfig(directory, destination string, target *os.File) error 
 	if err := target.Sync(); err != nil {
 		return errors.New("配置备份无法保存到磁盘")
 	}
-	if err := exec.CommandContext(ctx, "tar", "-tzf", destination).Run(); err != nil {
+	verify := exec.CommandContext(ctx, "tar", "-tzf", destination)
+	isolateInstallCommand(verify, true)
+	if err := verify.Run(); err != nil {
 		return errors.New("配置备份无法读取")
 	}
 	return nil

@@ -7,7 +7,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   printf '需要 Python 3.10+。Debian/Ubuntu 可先手动执行：apt-get update && apt-get install -y python3 ca-certificates\n' >&2
   exit 2
 fi
-python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 2)' || {
+python3 -I -B -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 2)' || {
   printf '需要 Python 3.10 或更高版本；未安装任何依赖。\n' >&2
   exit 2
 }
@@ -50,6 +50,9 @@ fi
 tgcloud_work="$(mktemp -d "${TMPDIR:-/tmp}/tgcloud-online.XXXXXXXX")"
 tgcloud_cleanup() { rm -rf -- "$tgcloud_work"; }
 trap tgcloud_cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 tgcloud_asset="TGCloud-${tgcloud_tag}-source.tar.gz"
 tgcloud_base="https://github.com/LuoPoJunZi/TGCloud/releases/download/${tgcloud_tag}"
 printf 'TGCloud %s\n正在下载正式源码并验证 SHA256，随后进入安装／管理向导。\n' "$tgcloud_tag"
@@ -59,7 +62,7 @@ curl -fL --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time
   --max-filesize 4096 -o "$tgcloud_work/SHA256SUMS.txt" "$tgcloud_base/SHA256SUMS.txt"
 
 # Keep the terminal stdin available to the child wizard (no curl | bash).
-python3 -c '
+python3 -I -B -c '
 import ast
 import hashlib
 import re

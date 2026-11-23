@@ -9,8 +9,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from tgcloud.cli.presentation import OperationReport
-from tgcloud.deployment import diagnostics, instances
+from tgcloud.deployment import instances
 from tgcloud.deployment.lifecycle import install
+from tgcloud.deployment.ops import diagnostics
 from tgcloud.deployment.profiles import PRODUCTS
 
 

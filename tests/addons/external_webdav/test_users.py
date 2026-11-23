@@ -48,6 +48,7 @@ class FamilyWebDAVTests(unittest.TestCase):
         self.service.preflight = Mock(side_effect=lambda *a, **k: (self.instance, copy.deepcopy(self.state)))
         self.service.backup = Mock()
         self.service.manager = Mock()
+        self.service.manager.external_entry.return_value = None
         self.service.verify_mounted_hash = Mock()
         self.service.auth_write = lambda content: config.atomic(self.service.auth, content, mode=0o640)
         self.service.save(copy.deepcopy(self.item))
@@ -239,3 +240,14 @@ class FamilyWebDAVTests(unittest.TestCase):
         item = self.service.record()
         self.assertEqual(users.entries(self.service, item), {"phone-reader": HASH})
         self.assertEqual(item["members"][0]["phase"], "needs_repair")
+
+    def test_external_docker_nginx_syncs_and_reloads_external_auth(self):
+        external = Mock()
+        external.context.return_value = {"id": "ext-nginx"}
+        self.service.manager.external_entry.return_value = external
+        self.service.session.run.reset_mock()
+        users.write(self.service, {"phone-reader": HASH})
+        external.sync_auth.assert_called_once_with(self.service.product.key)
+        users.reload_auth(self.service)
+        external.docker.reload.assert_called_once_with({"id": "ext-nginx"})
+        self.service.session.run.assert_not_called()

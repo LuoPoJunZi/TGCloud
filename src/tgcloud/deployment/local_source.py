@@ -35,7 +35,7 @@ def regular_bytes(path: Path, *, limit: int = MAX_FILE) -> bytes:
         def identity(value):
             # Windows stat/fstat expose different legacy ctime semantics; birthtime
             # identifies creation there. Linux keeps ctime to detect metadata races.
-            changed = value.st_birthtime_ns if os.name == "nt" else value.st_ctime_ns
+            changed = getattr(value, "st_birthtime_ns", value.st_ctime_ns) if os.name == "nt" else value.st_ctime_ns
             return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, changed
         if identity(opened) != identity(before):
             raise ValueError("读取期间文件发生变化")

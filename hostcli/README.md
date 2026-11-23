@@ -2,7 +2,7 @@
 
 TGCloud 的 Linux 宿主管理工具，支持通过一键脚本部署在 `/opt/tgcloud` 的公网和内网实例。它在宿主机查询本机 Docker，并在核对容器归属后执行诊断或服务操作。
 
-在本目录用 Go 构建，运行时需要访问本机的 `/var/run/docker.sock`。
+在本目录用 Go 1.23+ 构建，运行时需要访问本机的 `/var/run/docker.sock`。
 
 ```bash
 mkdir -p "$HOME/.local/bin"
@@ -40,7 +40,7 @@ sudo "$HOME/.local/bin/tgcloud-host" restart bot --yes
 ```bash
 arch="$(go env GOARCH)"
 mkdir -p "bin/linux-$arch"
-CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "bin/linux-$arch/tgcloud-host" ./cmd/tgcloud-host
+CGO_ENABLED=0 go build -trimpath -ldflags='-s -w -buildid=' -o "bin/linux-$arch/tgcloud-host" ./cmd/tgcloud-host
 ```
 
 公网与内网安装、升级向导优先用已安装且通过校验的 Go 工具检查 Docker context、原生架构和 rootful 模式。首次安装或旧工具缺少预检命令时使用 Python 检查。`preflight --allow-missing` 在 Docker 未安装时输出 `null`，供现有首次安装流程继续准备依赖。
@@ -88,3 +88,5 @@ Bot 构建前用 `start-gateway` 启动或复用受管 CloudDrive2 容器。Bot 
 一键向导通过 `manager-runtime` 核对已有管理运行包并发布新运行包。Go 沿用现有安装清单和发布锁，在切换启动器前核对文件摘要、版本及监听帮助。切换使用同目录内的原子替换，候选校验或发布失败时原启动器可继续使用。管理菜单继续由 Python 提供，Go 不可用时使用 Python 发布流程。
 
 一键向导通过 `installer-preflight` 校验 Debian/Ubuntu 宿主、root 和原生架构，沿用本机 Docker 与内网 Docker Engine 28+ 的条件。Go 根据资源观测计算档位、预算和容量复核，沿用现有的内存、FUSE、inode 与磁盘门槛。首次安装的私有候选配置通过标准输入写入，升级只写入保留配置标记。Go 子命令不可用时继续使用原 Python 检查和写入流程。
+
+公网 HTTPS 与内网 HTTP 管理入口分别优先通过 `https-entry`（`probe`/`status`/`configure`）与 `lan-entry`（`state`/`check`/`save`/`activate`）执行预检、状态核对、配置与激活；安装后的 WebDAV 写入验收与运行摘要优先通过 `install-acceptance`（`summary`/`webdav`）执行。对应 Go 子命令不可用时继续使用原 Python 入口和验收流程。

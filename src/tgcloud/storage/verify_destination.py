@@ -103,14 +103,15 @@ async def verify_destination(
                 try:
                     await rclone.remove(remote_path)
                 except Exception as exc:  # noqa: BLE001 - best-effort cleanup
+                    from tgcloud.domain.errors import redact_text
                     print(
-                        f"TGCLOUD_CLEANUP_WARNING={remote_path}: {exc}",
+                        f"TGCLOUD_CLEANUP_WARNING={remote_path}: {redact_text(str(exc), settings)}",
                         file=sys.stderr,
                     )
 
 
-async def async_main() -> int:
-    settings = Settings.from_env()
+async def async_main(settings: Settings | None = None) -> int:
+    settings = settings or Settings.from_env()
     print(f"TGCLOUD_STORAGE_GATEWAY={settings.storage_backend}")
     remote_path = await verify_destination(settings, report=print)
     print("TGCLOUD_DESTINATION=OK")
@@ -119,8 +120,11 @@ async def async_main() -> int:
 
 
 def main() -> int:
+    from tgcloud.domain.errors import redact_text
+    settings = None
     try:
-        return asyncio.run(async_main())
+        settings = Settings.from_env()
+        return asyncio.run(async_main(settings))
     except DestinationVerificationError as exc:
         print(f"TGCLOUD_WEBDAV_{exc.stage}=FAILED", file=sys.stderr)
         aggregate = {
@@ -133,10 +137,10 @@ def main() -> int:
         }.get(exc.stage)
         if aggregate:
             print(f"TGCLOUD_{aggregate}=FAILED", file=sys.stderr)
-        print(f"TGCLOUD_DESTINATION=FAILED: {exc}", file=sys.stderr)
+        print(f"TGCLOUD_DESTINATION=FAILED: {redact_text(str(exc), settings)}", file=sys.stderr)
         return 1
     except Exception as exc:  # noqa: BLE001 - CLI error boundary
-        print(f"TGCLOUD_DESTINATION=FAILED: {exc}", file=sys.stderr)
+        print(f"TGCLOUD_DESTINATION=FAILED: {redact_text(str(exc), settings)}", file=sys.stderr)
         return 1
 
 

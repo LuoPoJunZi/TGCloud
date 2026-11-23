@@ -12,6 +12,7 @@
 | [监听管理](listening-guide.md) | 登录授权、来源、筛选与转存计划 |
 | [HTTPS 与 WebDAV](network-guide.md) | 网关访问、反向代理和外部只读访问 |
 | [日常维护](operations-guide.md) | 菜单、日志、服务控制、升级与卸载 |
+| [宿主管理工具](../hostcli/README.md) | Go 宿主 CLI（`tgcloud-host`）构建、命令与回退边界 |
 | [备份与恢复](backup-and-recovery.md) | 快照范围、隔离验证和恢复边界 |
 | [安全说明](security.md) | 权限、秘密、网关和网络边界 |
 | [开发与架构](development.md) | 模块职责、依赖、测试和构建 |

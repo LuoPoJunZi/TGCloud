@@ -339,6 +339,38 @@ class NatProxyTests(unittest.TestCase):
                 self.assertEqual(created[0].probe(self.DOMAIN).confirmed_public_ipv4, self.PUBLIC)
                 apply.assert_not_called()
 
+    def test_native_status_nonzero_returns_running_error_instead_of_raising(self):
+        manager, _ = self.manager()
+        manager.installer_source = Path("/opt/source")
+        state = {"version": 1, "project": "tgcloud", "domains": {"clouddrive2": {"domain": self.DOMAIN, "backend_port": 19798}}}
+        manager._entry_state = state
+        with (patch("tgcloud.cli.host_cli.supports", return_value=True),
+              patch("tgcloud.cli.host_cli.invoke", return_value=(1, "proxy down"))):
+            report = manager.status(state)
+        self.assertEqual(report.state, "running_error")
+        self.assertEqual(report.domain, self.DOMAIN)
+
+    def test_recheck_install_entry_runs_python_fallback_when_go_unavailable(self):
+        manager, _ = self.manager()
+        manager._entry_state = proxy.empty_state()
+        manager.detect(self.DOMAIN)
+        with (patch("tgcloud.cli.host_cli.supports", return_value=False),
+              patch.object(manager, "read_state", return_value=proxy.empty_state()) as read_state,
+              patch.object(manager, "_validate_environment") as validate):
+            manager.recheck_install_entry(self.DOMAIN, present=True, configure=True)
+        read_state.assert_called_once()
+        validate.assert_called_once()
+
+    def test_path_guard_rejects_relative_and_non_canonical_paths(self):
+        from tgcloud.deployment import path_guard
+        with self.assertRaises(ValueError):
+            path_guard.ensure_canonical_path(Path("relative/path"))
+        with tempfile.TemporaryDirectory() as private:
+            root = Path(private).resolve()
+            target = root / "config.json"
+            path_guard.atomic_write_bytes(target, b"{}\n", mode=0o600)
+            self.assertEqual(target.read_bytes(), b"{}\n")
+
 
 if __name__ == "__main__":
     unittest.main()

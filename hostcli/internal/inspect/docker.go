@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 )
@@ -34,18 +35,20 @@ func RunDocker(args ...string) ([]byte, error) {
 
 func runDocker(forceLocal bool, progress io.Writer, args ...string) ([]byte, error) {
 	timeout := 20 * time.Second
-	switch args[0] {
-	case "logs":
-		timeout = 30 * time.Second
-	case "start", "stop", "restart":
-		// The installed Bot allows up to 45 seconds for graceful shutdown.
-		timeout = 90 * time.Second
-	case "pull":
-		timeout = 600 * time.Second
-	case "build":
-		timeout = 2400 * time.Second
-	case "run":
-		timeout = 120 * time.Second
+	if len(args) > 0 {
+		switch args[0] {
+		case "logs":
+			timeout = 30 * time.Second
+		case "start", "stop", "restart":
+			// The installed Bot allows up to 45 seconds for graceful shutdown.
+			timeout = 90 * time.Second
+		case "pull":
+			timeout = 600 * time.Second
+		case "build":
+			timeout = 2400 * time.Second
+		case "run":
+			timeout = 120 * time.Second
+		}
 	}
 	return runDockerWithTimeout(forceLocal, progress, timeout, args...)
 }
@@ -71,11 +74,10 @@ func runDockerCommandContext(parent context.Context, forceLocal bool, progress i
 		isolateInstallCommand(cmd, true)
 	}
 	if forceLocal {
-		// Match host paths to the local daemon even if the shell selects a remote context.
+		// Match host paths to the local daemon even if the shell selects a remote context or Compose override.
 		for _, entry := range os.Environ() {
 			name, _, _ := strings.Cut(entry, "=")
-			switch name {
-			case "DOCKER_CONTEXT", "DOCKER_HOST", "DOCKER_TLS", "DOCKER_TLS_VERIFY", "TGCLOUD_HOST_LOCK_FD":
+			if name == "DOCKER_TLS" || name == "TGCLOUD_HOST_LOCK_FD" || slices.Contains(forbiddenDockerEnv[:], name) {
 				continue
 			}
 			cmd.Env = append(cmd.Env, entry)
@@ -86,7 +88,7 @@ func runDockerCommandContext(parent context.Context, forceLocal bool, progress i
 	}
 	var output dockerOutput
 	cmd.Stdout = &output
-	if args[0] == "logs" {
+	if len(args) > 0 && args[0] == "logs" {
 		cmd.Stderr = &output
 	}
 	if progress != nil {

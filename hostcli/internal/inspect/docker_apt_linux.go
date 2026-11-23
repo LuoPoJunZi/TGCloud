@@ -9,9 +9,10 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"syscall"
 )
 
-const (
+var (
 	dockerKeyPath    = "/etc/apt/keyrings/tgcloud-docker.asc"
 	dockerSourcePath = "/etc/apt/sources.list.d/tgcloud-docker.sources"
 )
@@ -48,8 +49,8 @@ func ensureDockerRepository(run dependencyRunner) error {
 	if err != nil || len(key) > 65536 || !bytes.HasPrefix(key, []byte("-----BEGIN PGP PUBLIC KEY BLOCK-----")) {
 		return errors.New("无法获取 Docker 官方软件源签名公钥")
 	}
-	if err := os.MkdirAll(filepath.Dir(dockerKeyPath), 0755); err != nil {
-		return errors.New("无法准备 APT 签名公钥目录")
+	if err := ensureAPTKeyringDir(filepath.Dir(dockerKeyPath)); err != nil {
+		return err
 	}
 	if _, err := publishAPTFile(dockerKeyPath, key); err != nil {
 		return err
@@ -70,17 +71,7 @@ func ensureDockerRepository(run dependencyRunner) error {
 }
 
 func dockerRepositoryRelease(release string) (uri, suite string, err error) {
-	values := make(map[string]string)
-	for _, line := range strings.Split(release, "\n") {
-		key, value, present := strings.Cut(line, "=")
-		if present && (key == "ID" || key == "VERSION_CODENAME" || key == "UBUNTU_CODENAME") {
-			value = strings.TrimSpace(value)
-			if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') && value[0] == value[len(value)-1] {
-				value = value[1 : len(value)-1]
-			}
-			values[key] = value
-		}
-	}
+	values, _ := parseOSRelease(release, nil, "ID", "VERSION_CODENAME", "UBUNTU_CODENAME")
 	id := values["ID"]
 	suite = values["VERSION_CODENAME"]
 	if id == "ubuntu" && values["UBUNTU_CODENAME"] != "" {
@@ -90,6 +81,25 @@ func dockerRepositoryRelease(release string) (uri, suite string, err error) {
 		return "", "", errors.New("无法核实受支持的 Debian/Ubuntu 软件源代号")
 	}
 	return "https://download.docker.com/linux/" + id, suite, nil
+}
+
+func ensureAPTKeyringDir(directory string) error {
+	invalid := errors.New("无法准备 APT 签名公钥目录")
+	if err := os.MkdirAll(directory, 0755); err != nil {
+		return invalid
+	}
+	info, err := os.Lstat(directory)
+	if err != nil || !info.IsDir() || info.Sys().(*syscall.Stat_t).Uid != managedOwnerUID {
+		return invalid
+	}
+	// os.MkdirAll is subject to the installer's umask (0077), which would hide
+	// the keyring from the unprivileged _apt sandbox user during apt-get update.
+	if info.Mode().Perm()&0755 != 0755 {
+		if err := os.Chmod(directory, 0755); err != nil {
+			return invalid
+		}
+	}
+	return nil
 }
 
 // A private file is published atomically and exclusively to keep an existing
@@ -110,8 +120,9 @@ func publishAPTFile(path string, content []byte) (bool, error) {
 	defer os.Remove(temp.Name())
 	_, writeErr := temp.Write(content)
 	modeErr := temp.Chmod(0644)
+	syncErr := temp.Sync()
 	closeErr := temp.Close()
-	if writeErr != nil || modeErr != nil || closeErr != nil || os.Link(temp.Name(), path) != nil {
+	if writeErr != nil || modeErr != nil || syncErr != nil || closeErr != nil || os.Link(temp.Name(), path) != nil {
 		return false, errors.New("无法保存 Docker APT 配置，已保留现有文件")
 	}
 	return true, nil

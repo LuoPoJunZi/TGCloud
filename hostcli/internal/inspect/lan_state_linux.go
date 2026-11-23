@@ -82,7 +82,7 @@ func lanDirectory(path string) (bool, error) {
 		}
 		return false, nil
 	}
-	if err != nil || !info.IsDir() || !privateOwner(info, 0) || !managerSafePath(path, true) {
+	if err != nil || !info.IsDir() || !privateOwner(info, managedOwnerUID) || !managerSafePath(path, true) {
 		return false, errors.New("内网状态目录必须归 root 所有且权限为 700，不能经过链接")
 	}
 	return true, nil
@@ -111,7 +111,7 @@ func (entry lanEntry) load() (*lanState, error) {
 	for name, expected := range entry.files(state.BindIP) {
 		path := filepath.Join(directory, name)
 		info, err := os.Lstat(path)
-		if err != nil || !info.Mode().IsRegular() || info.Sys().(*syscall.Stat_t).Uid != 0 || info.Mode().Perm()&0022 != 0 {
+		if err != nil || !info.Mode().IsRegular() || info.Sys().(*syscall.Stat_t).Uid != managedOwnerUID || info.Mode().Perm()&0022 != 0 {
 			return nil, errors.New("内网入口文件归属、权限或类型不安全")
 		}
 		body, err := readSourceFile(path, installConfigLimit)

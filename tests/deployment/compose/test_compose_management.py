@@ -100,7 +100,7 @@ class ManagementTests(unittest.TestCase):
         manager.ui.ask.return_value = "7"
         manager.ui.confirm.return_value = True
         with patch.object(manager, "recheck", return_value=found), patch.object(management, "edition_lock", return_value=nullcontext()), patch(
-            "tgcloud.deployment.feature_settings.request", return_value={"queue": {"paused": True, "active": 1}}
+            "tgcloud.deployment.ops.feature_settings.request", return_value={"queue": {"paused": True, "active": 1}}
         ) as request:
             self.assertTrue(manager.control(found))
         self.assertEqual(request.call_args.args[2], "queue-pause")

@@ -252,7 +252,7 @@ class SharedStateTests(unittest.TestCase):
     def test_core_uninstall_guides_to_selected_addon_menu(self):
         with (patch.object(uninstall, "docker_snapshot", return_value=({}, {})),
               patch.object(uninstall, "read_state", return_value=shared()),
-              self.assertRaisesRegex(uninstall.UninstallError, "15. 外部 WebDAV → 7. 卸载外部 WebDAV") as caught):
+              self.assertRaisesRegex(uninstall.UninstallError, "2. 访问入口管理 → 3. 外部 WebDAV 管理 → 7. 卸载外部服务") as caught):
             uninstall.build_plan(("clouddrive2",), Mock())
         self.assertNotIn("tgcloud-webdav uninstall", str(caught.exception))
 
@@ -661,10 +661,10 @@ class EntryAndReleaseTests(unittest.TestCase):
         for check in (False, True):
             with patch.dict(os.environ, {"TGCLOUD_MANAGER_MENU": "1"}):
                 Service.management_hint(service, check=check)
-            self.assertIn("\ntgcloud\n选择 15. 外部 WebDAV", messages[-1])
+            self.assertIn("\ntgcloud\n选择 2. 访问入口管理 → 3. 外部 WebDAV 管理", messages[-1])
             self.assertNotIn("tgcloud-webdav", messages[-1])
             if check:
-                self.assertIn("3. 检查连接与配置", messages[-1])
+                self.assertIn("3. 检查连接配置", messages[-1])
         with patch.dict(os.environ, {"TGCLOUD_MANAGER_MENU": ""}):
             Service.management_hint(service)
             self.assertIn("tgcloud-webdav", messages[-1])
@@ -684,7 +684,7 @@ class EntryAndReleaseTests(unittest.TestCase):
             self.assertEqual(cli.main(["--edition", "clouddrive2", "--install-dir", "/srv/family-clouddrive2"]), 0)
         self.assertEqual(factory.call_args.args[0].key, "clouddrive2")
         self.assertEqual(ui.ask.call_count, 1)
-        self.assertIn("0.  返回主菜单", "\n".join(messages))
+        self.assertIn("0.  返回上级", "\n".join(messages))
         self.assertNotIn("请选择存储网关", "\n".join(messages))
         self.assertNotIn("TGCloud 外部 WebDAV v", "\n".join(messages))
         self.assertNotIn("当前网关：", "\n".join(messages))
@@ -720,8 +720,8 @@ class EntryAndReleaseTests(unittest.TestCase):
                                      {"install_dir": None, "install": True, "sample_file": ""})
                     self.assertTrue(callable(options["prepare_runtime"]))
                 service.install_runtime.assert_not_called()
-                menu = next(text for text in messages if "10. 用户管理" in text)
-                self.assertTrue(menu.startswith("1.  安装外部 WebDAV\n"))
+                menu = next(text for text in messages if "10. 管理外部账号" in text)
+                self.assertTrue(menu.startswith("1.  安装外部服务\n"))
                 self.assertTrue(menu.endswith("0.  退出"))
 
     def test_real_terminal_enter_uses_default_once_and_label_columns_are_aligned(self):

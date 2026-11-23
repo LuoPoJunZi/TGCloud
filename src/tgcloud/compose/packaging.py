@@ -124,7 +124,7 @@ def bundle_files(root: Path, edition: str = EDITION, image: str | None = None,
                  commit: str = "", *, source_digest: str, version: str = VERSION) -> dict[str, bytes]:
     """Only an already verified local snapshot may supply these build inputs."""
     if commit or edition != EDITION or image not in {None, image_name(source_digest)}:
-        raise ValueError("official images, commits and other实例s are not supported")
+        raise ValueError("official images, commits and other instances are not supported")
     image = image_name(source_digest)
     source = local_source.content(root)
     context_files = {

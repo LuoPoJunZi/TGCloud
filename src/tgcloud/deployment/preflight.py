@@ -55,7 +55,10 @@ def validate_install_host(*, log=None, lan: bool = False) -> bool:
         return False
     if struct.calcsize("P") != 8:
         raise ValueError("需要 64 位 Linux 用户态与 Python；不支持 32 位用户态")
-    host = architecture.NativeHost(**result)
+    try:
+        host = architecture.NativeHost(**result)
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("Go 返回的宿主预检结果无法核实") from None
     if log:
         host.describe(log)
     return True
@@ -118,8 +121,11 @@ def storage_advice(resources, product: ProductProfile) -> StorageAdvice:
                               input_data={"resources": asdict(resources), "requires_fuse": product.requires_fuse})
     if result is None:
         return recommend_storage(resources, **storage_options(product))
-    return StorageAdvice(result["performance_profile"], result["preferred_key"],
-                         StoragePlan(**result["balanced"]), StoragePlan(**result["stream_first"]))
+    try:
+        return StorageAdvice(result["performance_profile"], result["preferred_key"],
+                             StoragePlan(**result["balanced"]), StoragePlan(**result["stream_first"]))
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("Go 返回的存储推荐结果无法核实") from None
 
 
 def storage_assessment(resources, product: ProductProfile, budget: float, reserve: float) -> StorageAssessment:
@@ -129,7 +135,10 @@ def storage_assessment(resources, product: ProductProfile, budget: float, reserv
     })
     if result is None:
         return assess_storage_choice(resources, budget_gb=budget, reserve_gb=reserve, **storage_options(product))
-    return StorageAssessment(**result)
+    try:
+        return StorageAssessment(**result)
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("Go 返回的存储校验结果无法核实") from None
 
 
 def choose_storage(instance: instances.Instance, session: LocalSession, log: SafeLog, ui: terminal.Terminal) -> tuple[str, str]:

@@ -62,8 +62,8 @@ def manage(manager, instance) -> None:
             ui.private("成员 " + str(index), f"{member['name']} · {member['id']} · {'启用' if member['enabled'] else '停用'}")
         if not record["users"]:
             log("暂无家庭成员。")
-        log("\n管理操作\n" + numbered_menu(((1, "添加家人"), (2, "启用家人"), (3, "停用家人"), (4, "移除授权"),
-                           (5, "查看成员配额"), (6, "设置成员配额"), (7, "取消成员限额"), (0, "返回主菜单"))))
+        log("\n管理操作\n" + numbered_menu(((1, "添加成员"), (2, "启用成员"), (3, "停用成员"), (4, "移除授权"),
+                           (5, "查看配额"), (6, "设置配额"), (7, "取消限额"), (0, "返回上级"))))
         selected = choose(ui, "选择操作", ("0", "1", "2", "3", "4", "5", "6", "7"), "0")
         if selected == "0":
             return
@@ -88,7 +88,7 @@ def manage(manager, instance) -> None:
         if member_id == admin:
             raise ValueError("不能通过家庭成员管理修改管理员。")
         if action.startswith("quota-"):
-            from tgcloud.deployment.feature_settings import member_quota
+            from tgcloud.deployment.ops.feature_settings import member_quota
             ui.private("操作对象", f"{name} · {member_id}")
             member_quota(manager, instance, record, member_id, action=action.removeprefix("quota-"))
             continue

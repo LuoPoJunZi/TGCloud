@@ -6,47 +6,26 @@ import json
 import os
 import re
 import stat
-import tempfile
 from pathlib import Path
 
 from .external_config import OWNER, checksum
 
 
 def canonical(path: Path) -> None:
-    if not path.is_absolute() or path.resolve() != path or path.is_symlink():
-        raise ValueError("受管文件路径经过链接。")
-    for parent in path.parents:
-        if parent.is_symlink():
-            raise ValueError("受管文件父目录经过链接。")
-    if path.exists() and not (path.is_file() or path.is_dir()):
-        raise ValueError("受管文件类型不安全。")
+    from tgcloud.deployment.path_guard import ensure_canonical_path
+    ensure_canonical_path(
+        path,
+        link_error="受管文件路径经过链接。",
+        parent_error="受管文件父目录经过链接。",
+        require_regular_or_dir=True,
+        type_error="受管文件类型不安全。",
+    )
 
 
 def atomic(path: Path, data: bytes, *, mode: int = 0o600, gid: int | None = None) -> None:
+    from tgcloud.deployment.path_guard import atomic_write_bytes
     canonical(path)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".tgcloud-", delete=False) as handle:
-        temporary = Path(handle.name)
-        try:
-            os.chmod(temporary, mode)
-            if gid is not None and os.name == "posix":
-                os.chown(temporary, 0, gid)
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        except BaseException:
-            temporary.unlink(missing_ok=True)
-            raise
-    try:
-        os.replace(temporary, path)
-        if os.name == "posix":
-            fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-    finally:
-        temporary.unlink(missing_ok=True)
+    atomic_write_bytes(path, data, mode=mode, gid=gid, chown=getattr(os, "chown", None))
 
 
 def read(path: Path) -> bytes | None:

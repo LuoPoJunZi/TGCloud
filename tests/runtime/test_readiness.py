@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from tests.fixtures.readiness import ReadinessFixture
-from tgcloud.deployment import readiness as host
+from tgcloud.deployment.ops import readiness as host
 from tgcloud.deployment.profiles import PRODUCTS
 from tgcloud.monitoring import readiness
 from tgcloud.transfer.scheduler import _resource_loop

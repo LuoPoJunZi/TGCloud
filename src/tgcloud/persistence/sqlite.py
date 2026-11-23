@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 from tgcloud.domain.errors import needs_review
-from tgcloud.domain.naming import safe_file_name
 from tgcloud.domain.states import (
     FAILED_STATES,
     GROWING_STATES,
@@ -137,6 +136,10 @@ class TaskDB:
                 self._conn.execute("ROLLBACK")
                 raise
 
+    def release_quota_slot(self, task_id: int) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM quota_slots WHERE task_id=?", (task_id,))
+
     def change_family_user(self, admin_id: int, request: dict) -> dict:
         from tgcloud.persistence.users import change
         with self._lock:
@@ -236,7 +239,7 @@ class TaskDB:
                 )
                 self._conn.execute("COMMIT")
                 return True
-            except Exception:
+            except BaseException:
                 self._conn.execute("ROLLBACK")
                 raise
 
@@ -650,7 +653,7 @@ class TaskDB:
                 )
                 self._conn.execute("COMMIT")
                 return True, ""
-            except Exception:
+            except BaseException:
                 self._conn.execute("ROLLBACK")
                 raise
 
@@ -729,7 +732,7 @@ class TaskDB:
                 if cursor.rowcount != 1:
                     raise RuntimeError("任务状态在迁移期间发生变化")
                 self._conn.execute("COMMIT")
-            except Exception:
+            except BaseException:
                 self._conn.execute("ROLLBACK")
                 raise
 
@@ -769,7 +772,7 @@ class TaskDB:
                 ).fetchone()
                 self._conn.execute("COMMIT")
                 return "updated", dict(updated)
-            except Exception:
+            except BaseException:
                 self._conn.execute("ROLLBACK")
                 raise
 
@@ -810,7 +813,7 @@ class TaskDB:
                 ).fetchone()
                 self._conn.execute("COMMIT")
                 return "confirmed", dict(updated)
-            except Exception:
+            except BaseException:
                 self._conn.execute("ROLLBACK")
                 raise
 
@@ -836,127 +839,11 @@ class TaskDB:
                     )
                 self._conn.execute("COMMIT")
                 return task_ids
-            except Exception:
+            except BaseException:
                 self._conn.execute("ROLLBACK")
                 raise
 
     def recover(self, download_dir: Path, *, task_id: int | None = None) -> dict[str, int]:
-        recovered = {"queued": 0, "waiting_upload": 0, "failed": 0}
+        from tgcloud.persistence.recovery import recover_tasks
         with self._lock:
-            rows = self._conn.execute(
-                """
-                SELECT * FROM tasks
-                WHERE state IN (
-                    'reserved', 'downloading', 'downloaded', 'waiting_upload',
-                    'uploading', 'verifying', 'finalizing', 'streaming',
-                    'upload_failed_retained', 'verification_failed_retained'
-                )
-                AND (? IS NULL OR id=?)
-                """, (task_id, task_id),
-            ).fetchall()
-            for row in rows:
-                if row["cancel_requested"]:
-                    continue
-                if needs_review(dict(row)) or row["failure_kind"] in {"authentication", "permission", "rate_limited"}:
-                    # A restart must not retry a MOVE whose result is unknown.
-                    recovered["failed"] += 1
-                    continue
-                task_id = int(row["id"])
-                local_path = Path(row["local_path"]) if row["local_path"] else None
-                if row["transfer_mode"] == "stream":
-                    self._conn.execute(
-                        """
-                        UPDATE tasks SET state='queued', local_path=NULL,
-                            downloaded_bytes=0, upload_retries=0,
-                            wait_reason='流式任务在服务重启后自动重新排队',
-                            next_retry_at=0, updated_at=?
-                        WHERE id=?
-                        """,
-                        (time.time(), task_id),
-                    )
-                    recovered["queued"] += 1
-                    continue
-                if (
-                    local_path
-                    and local_path.is_file()
-                    and not str(local_path).endswith(".part")
-                    and local_path.stat().st_size == int(row["file_size"])
-                ):
-                    self._conn.execute(
-                        """
-                        UPDATE tasks SET state='waiting_upload', error=NULL,
-                            upload_retries=0, next_retry_at=0,
-                            wait_reason='服务重启后恢复上传', updated_at=?
-                        WHERE id=?
-                        """,
-                        (time.time(), task_id),
-                    )
-                    recovered["waiting_upload"] += 1
-                    continue
-                expected_final = download_dir / (
-                    f"{task_id}-"
-                    f"{safe_file_name(row['file_name'], str(task_id))}"
-                )
-                if (
-                    expected_final.is_file()
-                    and expected_final.stat().st_size == int(row["file_size"])
-                ):
-                    self._conn.execute(
-                        """
-                        UPDATE tasks SET state='waiting_upload',
-                            local_path=?, downloaded_bytes=file_size,
-                            error=NULL, upload_retries=0, next_retry_at=0,
-                            wait_reason='已恢复下载完成但未登记的本地文件',
-                            updated_at=?
-                        WHERE id=?
-                        """,
-                        (str(expected_final), time.time(), task_id),
-                    )
-                    recovered["waiting_upload"] += 1
-                    continue
-                if row["state"] in {
-                    "upload_failed_retained",
-                    "verification_failed_retained",
-                }:
-                    self._conn.execute(
-                        """
-                        UPDATE tasks SET state='queued', local_path=NULL,
-                            downloaded_bytes=0, download_retries=0,
-                            upload_retries=0,
-                            wait_reason='保留记录对应的本地文件已不存在，自动重新排队',
-                            next_retry_at=0, updated_at=?
-                        WHERE id=?
-                        """,
-                        (time.time(), task_id),
-                    )
-                    recovered["queued"] += 1
-                    continue
-                part_path = download_dir / f"{task_id}.part"
-                if part_path.exists():
-                    try:
-                        part_path.unlink()
-                    except OSError:
-                        self._conn.execute(
-                            """
-                            UPDATE tasks SET state='download_failed',
-                                error='重启后无法清理不完整文件', updated_at=?
-                            WHERE id=?
-                            """,
-                            (time.time(), task_id),
-                        )
-                        recovered["failed"] += 1
-                        continue
-                self._conn.execute(
-                    """
-                    UPDATE tasks SET state='queued', local_path=NULL,
-                        downloaded_bytes=0, download_retries=CASE WHEN read_identity LIKE 'listener:%'
-                            THEN download_retries ELSE 0 END,
-                        upload_retries=0,
-                        wait_reason='本地文件不完整或不存在，服务重启后重新排队',
-                        updated_at=?
-                    WHERE id=?
-                    """,
-                    (time.time(), task_id),
-                )
-                recovered["queued"] += 1
-        return recovered
+            return recover_tasks(self._conn, download_dir, task_id=task_id)

@@ -631,7 +631,7 @@ class FreshLanInstallFlowTests(unittest.TestCase):
         token = "123456789:FAKE_LAN_INSTALL_TEST_TOKEN_123"
         password = "FAKE_LAN_INSTALL_PASSWORD"
         answers = iter(("y", IP, "", "12345678", "a" * 32, token, "123456789", "", password,
-                        "Telegram/Downloads", "y", "y", "7", "0", "0"))
+                        "Telegram/Downloads", "y", "y", "2", "1", "0", "0", "0"))
         ui = Mock(spec=tgdep_terminal.Terminal)
         resources = VpsResources(
             "amd64", 2, 4 * GIB, 3 * GIB, 0, "ext4", 200 * GIB, 180 * GIB, 100000, 90000,
@@ -796,7 +796,7 @@ class FreshLanInstallFlowTests(unittest.TestCase):
             "本机内网入口：通过",
             "WebDAV 写入与大小复验：通过",
             "安装状态：已安装\nBot 状态：运行中",
-            "16. 监听转存管理",
+            "3. 业务功能设置",
             "Bot 健康：通过（容器检查）",
             "入口检查：本机通过",
         ):
@@ -927,7 +927,7 @@ class MainBootstrapTests(unittest.TestCase):
                 tools = directory / "bin"
                 tools.mkdir()
                 python = tools / "python3"
-                python.write_text('#!/usr/bin/env bash\nif [[ "$1" == -c ]]; then exit 0; fi\nprintf "%s\\n" "$@" > "$FIXTURE_ARGS"\nexit "$FIXTURE_EXIT"\n',
+                python.write_text('#!/usr/bin/env bash\nfor arg in "$@"; do if [[ "$arg" == -c ]]; then exit 0; fi; done\nprintf "%s\\n" "$@" > "$FIXTURE_ARGS"\nexit "$FIXTURE_EXIT"\n',
                                   encoding="utf-8", newline="\n")
                 python.chmod(0o700)
                 arguments = ["--edition", "clouddrive2", "--lan-ip", IP, "--check"]

@@ -421,7 +421,8 @@ class ExternalEntry:
             raise ValueError("同名续期调度文件归属或内容不符，拒绝覆盖。")
         if active:
             from tgcloud.deployment import runtime
-            runtime.install()
+            with runtime.lifecycle_lock():
+                runtime.install()
             if not any(self.docker.command(["systemctl", "is-active", service], optional=True).strip() == "active"
                        for service in ("cron", "crond")):
                 raise ValueError("未确认活动 cron/crond 服务，未建立自动续期闭环；请先启用系统调度再重试。")

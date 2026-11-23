@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -17,7 +16,7 @@ import (
 	"time"
 )
 
-var resourceDirectory = regexp.MustCompile(`^/opt/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$`)
+var resourceDirectory = optPathRegex
 
 const minimumInstallFreeKiB = 8_000_000
 
@@ -58,16 +57,9 @@ func ResourceProbe(install, backup string) (string, error) {
 			return "", errors.New("安装与备份目录必须是 /opt 下的绝对路径")
 		}
 	}
-	var utsname syscall.Utsname
-	if err := syscall.Uname(&utsname); err != nil {
-		return "", errors.New("无法核实宿主 CPU 架构")
-	}
-	var architecture strings.Builder
-	for _, character := range utsname.Machine {
-		if character == 0 {
-			break
-		}
-		architecture.WriteByte(byte(character))
+	architecture, err := hostUnameMachine()
+	if err != nil {
+		return "", err
 	}
 	memory, err := hostMemory()
 	if err != nil {
@@ -109,7 +101,7 @@ func ResourceProbe(install, backup string) (string, error) {
 	hasFuse := err == nil && fuse.Mode()&os.ModeCharDevice != 0
 	var result strings.Builder
 	fmt.Fprintln(&result, "TGCLOUD_VPS_PROBE_BEGIN\nPROBE_VERSION=2")
-	fmt.Fprintf(&result, "ARCHITECTURE=%s\nCPU_CORES=%d\n", architecture.String(), onlineCPU())
+	fmt.Fprintf(&result, "ARCHITECTURE=%s\nCPU_CORES=%d\n", architecture, onlineCPU())
 	fmt.Fprintf(&result, "MEMORY_TOTAL_KIB=%d\nMEMORY_AVAILABLE_KIB=%d\nSWAP_TOTAL_KIB=%d\n", memory.total, memory.available, memory.swap)
 	fmt.Fprintf(&result, "FILESYSTEM_TYPE=%s\nSTORAGE_TOTAL_BYTES=%d\nSTORAGE_AVAILABLE_BYTES=%d\n", fsType, installDisk.total, installDisk.available)
 	fmt.Fprintf(&result, "INODES_TOTAL=%d\nINODES_AVAILABLE=%d\n", installDisk.inodes, installDisk.freeInodes)

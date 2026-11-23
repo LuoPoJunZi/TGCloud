@@ -247,7 +247,7 @@ class ProjectPresentationTests(unittest.TestCase):
         self.assertNotIn("CloudDrive2 · 版本", text)
         ui.confirm.assert_called_once_with("TGCloud 尚未安装，是否进入安装向导？")
         execute.assert_not_called()
-        label = dict(management.MENU_ITEMS)[16]
+        label = {number: text for number, text, _ in management.SUBMENU_GROUPS["3"][1]}[2]
         self.assertEqual(label, "监听转存管理")
         self.assertEqual(len(label), 6)
 
