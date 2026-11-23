@@ -227,7 +227,7 @@ func (a *App) Run() int {
 			fmt.Fprintln(a.Out, "TGCloud 尚未安装。请在完整源码目录运行 sudo bash install.sh（内网使用 sudo bash install.sh --lan）。")
 			return 0
 		}
-		fmt.Fprintln(a.Out, FormatNumberedMenu(MainMenuItems)+"\n")
+		fmt.Fprint(a.Out, FormatNumberedMenu(MainMenuItems)+"\n\n")
 		choice, err := a.choose("选择操作", []string{"0", "1", "2", "3", "4", "5"}, "0")
 		if err != nil {
 			if errors.Is(err, io.EOF) {
@@ -263,7 +263,7 @@ func (a *App) runGroup(groupKey string, instance *inspect.Instance) (int, bool) 
 	}
 	for {
 		fmt.Fprintln(a.Out, FormatPageHeading(group.Title, instance.Version))
-		fmt.Fprintln(a.Out, FormatNumberedMenu(items)+"\n")
+		fmt.Fprint(a.Out, FormatNumberedMenu(items)+"\n\n")
 		selected, err := a.choose("选择操作", valid, "0")
 		if err != nil {
 			return 130, true
@@ -644,7 +644,8 @@ func (a *App) handleClassification(instance *inspect.Instance) error {
 		}
 		fmt.Fprintln(a.Out, FormatPageHeading("文件分类设置", instance.Version))
 		fmt.Fprintln(a.Out, "当前规则："+currLabel)
-		fmt.Fprintln(a.Out, "分类目录位于现有 Bot 保存目录下；只影响新任务，不移动历史文件。\n")
+		fmt.Fprintln(a.Out, "分类目录位于现有 Bot 保存目录下；只影响新任务，不移动历史文件。")
+		fmt.Fprintln(a.Out)
 		items := make([]MenuItem, 0, len(modes)+1)
 		for i, m := range modes {
 			items = append(items, MenuItem{i + 1, m.label, m.key})
