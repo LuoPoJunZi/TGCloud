@@ -1,4 +1,4 @@
-package inspect
+package redact
 
 import (
 	"encoding/base64"
@@ -9,7 +9,7 @@ import (
 func TestLogRedactorMasksConfiguredValuesAndCredentials(t *testing.T) {
 	const password = "example-log-password"
 	encoded := base64.StdEncoding.EncodeToString([]byte(password))
-	clean, err := newLogRedactor([]byte("CD2_WEBDAV_PASSWORD_B64=" + encoded + "\nTELEGRAM_API_HASH=Author\n"))
+	clean, err := NewLogRedactor([]byte("CD2_WEBDAV_PASSWORD_B64=" + encoded + "\nTELEGRAM_API_HASH=Author\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 )
 
 var (
@@ -71,7 +73,7 @@ func ensureDockerRepository(run dependencyRunner) error {
 }
 
 func dockerRepositoryRelease(release string) (uri, suite string, err error) {
-	values, _ := parseOSRelease(release, nil, "ID", "VERSION_CODENAME", "UBUNTU_CODENAME")
+	values, _ := hostutil.ParseOSRelease(release, nil, "ID", "VERSION_CODENAME", "UBUNTU_CODENAME")
 	id := values["ID"]
 	suite = values["VERSION_CODENAME"]
 	if id == "ubuntu" && values["UBUNTU_CODENAME"] != "" {

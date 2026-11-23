@@ -1,4 +1,4 @@
-package inspect
+package storage
 
 import (
 	"errors"
@@ -7,13 +7,13 @@ import (
 )
 
 const (
-	storageGiB        = 1024 * 1024 * 1024
-	minimumInstallMiB = 1800
+	GiB               = 1024 * 1024 * 1024
+	MinimumInstallMiB = 1800
 	storageTolerance  = 1e-9
 )
 
-// Input is the existing resource observation, shared with the Python fallback.
-type storageResources struct {
+// Resources is the existing resource observation, shared with the Python fallback.
+type Resources struct {
 	Architecture     string `json:"architecture"`
 	CPU              int    `json:"cpu_cores"`
 	MemoryTotal      uint64 `json:"memory_total_bytes"`
@@ -32,35 +32,35 @@ type storageResources struct {
 	Fuse             bool   `json:"fuse_available"`
 }
 
-type storageRequest struct {
-	Resources    storageResources `json:"resources"`
-	RequiresFuse bool             `json:"requires_fuse"`
-	Budget       float64          `json:"budget_gb"`
-	Reserve      float64          `json:"reserve_gb"`
+type Request struct {
+	Resources    Resources `json:"resources"`
+	RequiresFuse bool      `json:"requires_fuse"`
+	Budget       float64   `json:"budget_gb"`
+	Reserve      float64   `json:"reserve_gb"`
 }
 
-type storageAssessment struct {
+type Assessment struct {
 	Safe     bool    `json:"safe"`
 	Required float64 `json:"required_available_gb"`
 	Reason   string  `json:"reason"`
 }
 
-type storagePlan struct {
+type Plan struct {
 	Key     string `json:"key"`
 	Label   string `json:"label"`
 	Budget  uint64 `json:"budget_gb"`
 	Reserve uint64 `json:"reserve_gb"`
-	storageAssessment
+	Assessment
 }
 
-type storageAdvice struct {
-	Profile     string      `json:"performance_profile"`
-	Preferred   *string     `json:"preferred_key"`
-	Balanced    storagePlan `json:"balanced"`
-	StreamFirst storagePlan `json:"stream_first"`
+type Advice struct {
+	Profile     string  `json:"performance_profile"`
+	Preferred   *string `json:"preferred_key"`
+	Balanced    Plan    `json:"balanced"`
+	StreamFirst Plan    `json:"stream_first"`
 }
 
-func decideStorage(operation string, request storageRequest) (any, error) {
+func Decide(operation string, request Request) (any, error) {
 	r := request.Resources
 	if r.CPU < 1 || r.CPU > 4096 || r.MemoryTotal == 0 || r.MemoryAvailable > r.MemoryTotal ||
 		r.Total == 0 || r.Available > r.Total || r.DockerTotal == 0 || r.DockerAvailable > r.DockerTotal {
@@ -70,7 +70,7 @@ func decideStorage(operation string, request storageRequest) (any, error) {
 	if r.Installed {
 		overhead = 3
 	}
-	available, occupied := float64(r.Available)/storageGiB, float64(r.Downloads)/storageGiB
+	available, occupied := float64(r.Available)/GiB, float64(r.Downloads)/GiB
 	blocker := storageBlocker(r, request.RequiresFuse, overhead)
 	switch operation {
 	case "recommend":
@@ -81,12 +81,12 @@ func decideStorage(operation string, request storageRequest) (any, error) {
 		}
 		required := max(8, request.Reserve+overhead+max(0, request.Budget-occupied))
 		if blocker != "" {
-			return storageAssessment{false, required, blocker}, nil
+			return Assessment{false, required, blocker}, nil
 		}
 		if available+storageTolerance < required {
-			return storageAssessment{false, required, fmt.Sprintf("当前配置至少需要 %.1fGB 可用空间，VPS 只有 %.1fGB", required, available)}, nil
+			return Assessment{false, required, fmt.Sprintf("当前配置至少需要 %.1fGB 可用空间，VPS 只有 %.1fGB", required, available)}, nil
 		}
-		return storageAssessment{true, required, "当前配置通过部署前容量校验"}, nil
+		return Assessment{true, required, "当前配置通过部署前容量校验"}, nil
 	default:
 		return nil, errors.New("未知的资源预算操作")
 	}
@@ -96,14 +96,14 @@ func validStorageGB(value float64) bool {
 	return value > 0 && value <= 100000
 }
 
-func storageBlocker(r storageResources, requiresFuse bool, dockerHeadroom float64) string {
+func storageBlocker(r Resources, requiresFuse bool, dockerHeadroom float64) string {
 	switch r.Architecture {
 	case "x86_64", "amd64", "aarch64", "arm64":
 	default:
 		return "当前 CPU 架构暂不支持：" + r.Architecture
 	}
-	if r.MemoryTotal < minimumInstallMiB*1024*1024 {
-		return fmt.Sprintf("VPS 总内存不足 %.1fGB 安装门槛", float64(minimumInstallMiB)/1024)
+	if r.MemoryTotal < MinimumInstallMiB*1024*1024 {
+		return fmt.Sprintf("VPS 总内存不足 %.1fGB 安装门槛", float64(MinimumInstallMiB)/1024)
 	}
 	if requiresFuse && !r.Fuse {
 		return "VPS 未提供 /dev/fuse，无法运行受管 CloudDrive2"
@@ -112,7 +112,7 @@ func storageBlocker(r storageResources, requiresFuse bool, dockerHeadroom float6
 		return "目标文件系统可用 inode 低于安全线"
 	}
 	if !r.DockerShared {
-		available := float64(r.DockerAvailable) / storageGiB
+		available := float64(r.DockerAvailable) / GiB
 		if available+storageTolerance < dockerHeadroom {
 			return fmt.Sprintf("Docker 数据文件系统至少需要 %.0fGB 可用空间，当前只有 %.1fGB", dockerHeadroom, available)
 		}
@@ -127,9 +127,9 @@ func lowInodes(total, available uint64) bool {
 	return total != 0 && float64(available) < max(1000, math.Ceil(float64(total)*0.01))
 }
 
-func storagePerformance(r storageResources) string {
-	memory := float64(r.MemoryTotal) / storageGiB
-	if float64(r.MemoryAvailable)/storageGiB < min(2, memory*0.25) {
+func storagePerformance(r Resources) string {
+	memory := float64(r.MemoryTotal) / GiB
+	if float64(r.MemoryAvailable)/GiB < min(2, memory*0.25) {
 		return "保守"
 	}
 	if r.CPU >= 4 && memory >= 7.5 {
@@ -141,15 +141,15 @@ func storagePerformance(r storageResources) string {
 	return "保守"
 }
 
-func recommendInstallStorage(r storageResources, overhead, available, occupied float64, blocker string) storageAdvice {
-	total := float64(r.Total) / storageGiB
+func recommendInstallStorage(r Resources, overhead, available, occupied float64, blocker string) Advice {
+	total := float64(r.Total) / GiB
 	reserve := max(8, math.Ceil(total*0.20))
 	pool := max(0, available-reserve-overhead)
-	makePlan := func(key, label string, portion float64) storagePlan {
+	makePlan := func(key, label string, portion float64) Plan {
 		budget := max(math.Ceil(occupied), math.Floor(pool*portion))
 		required := reserve + overhead + max(0, budget-occupied)
-		plan := storagePlan{Key: key, Label: label, Budget: uint64(budget), Reserve: uint64(reserve),
-			storageAssessment: storageAssessment{Required: required}}
+		plan := Plan{Key: key, Label: label, Budget: uint64(budget), Reserve: uint64(reserve),
+			Assessment: Assessment{Required: required}}
 		switch {
 		case blocker != "":
 			plan.Reason = blocker
@@ -162,7 +162,7 @@ func recommendInstallStorage(r storageResources, overhead, available, occupied f
 		}
 		return plan
 	}
-	result := storageAdvice{Profile: storagePerformance(r),
+	result := Advice{Profile: storagePerformance(r),
 		StreamFirst: makePlan("stream_first", "流式优先", .25), Balanced: makePlan("balanced", "均衡模式", .60)}
 	switch {
 	case result.StreamFirst.Safe && (result.Profile == "保守" || total < 50 || available < 40 || result.Balanced.Budget < 12):

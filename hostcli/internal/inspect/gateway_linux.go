@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 )
 
 const (
@@ -152,7 +154,7 @@ func checkGatewayPort(gateway *gatewayContainer, docker DockerRunner) (bool, err
 func publishesGatewayPort(ports string) bool {
 	const target = 19798
 	for _, port := range strings.Split(ports, ",") {
-		first, last, ok := parseHostPortRange(port, false)
+		first, last, ok := hostutil.ParseHostPortRange(port, false)
 		if ok && first <= target && target <= last {
 			return true
 		}

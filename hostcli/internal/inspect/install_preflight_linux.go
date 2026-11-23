@@ -11,10 +11,12 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 )
 
 var (
-	installConfigKey = envKeyPattern
+	installConfigKey = hostutil.EnvKeyPattern
 	dockerfileBase   = regexp.MustCompile(`(?m)^FROM ([^\s]+)\s*$`)
 )
 
@@ -98,7 +100,7 @@ func checkDeploymentConfig(directory string) (bool, error) {
 }
 
 func parseDeploymentConfig(data []byte) (map[string]string, error) {
-	values, err := parseEnvLines(data, errors.New("部署配置存在无效或重复项目"))
+	values, err := hostutil.ParseEnvLines(data, errors.New("部署配置存在无效或重复项目"))
 	if err != nil {
 		return nil, err
 	}

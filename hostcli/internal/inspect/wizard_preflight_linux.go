@@ -11,6 +11,9 @@ import (
 	"runtime"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/storage"
 )
 
 var dockerEngineVersion = regexp.MustCompile(`^([0-9]+)\.[0-9]+\.[0-9]+(?:[-+].*)?$`)
@@ -28,11 +31,11 @@ func InstallerPreflight(args []string, input io.Reader) (any, error) {
 		info, err := installerDocker(args[1])
 		return map[string]any{"docker": info}, err
 	case len(args) == 2 && args[0] == "storage":
-		var request storageRequest
+		var request storage.Request
 		if err := readPreflightInput(input, &request); err != nil {
 			return nil, err
 		}
-		return decideStorage(args[1], request)
+		return storage.Decide(args[1], request)
 	case len(args) == 3 && args[0] == "write-config":
 		return map[string]bool{"written": true}, writeWizardConfig(args[1], args[2], input)
 	default:
@@ -58,7 +61,7 @@ func installerHost(lan bool) (map[string]string, error) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		return nil, errors.New("缺少 Bash")
 	}
-	machine, err := hostUnameMachine()
+	machine, err := hostutil.HostUnameMachine()
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +92,7 @@ func installerHost(lan bool) (map[string]string, error) {
 }
 
 func installerOSName(release string) (string, error) {
-	values, ok := parseOSRelease(release, shellWord.MatchString, "ID", "PRETTY_NAME")
+	values, ok := hostutil.ParseOSRelease(release, shellWord.MatchString, "ID", "PRETTY_NAME")
 	if !ok {
 		return "", errors.New("Linux 系统信息格式异常")
 	}

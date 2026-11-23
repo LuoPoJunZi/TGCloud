@@ -1,4 +1,4 @@
-package inspect
+package hostutil
 
 import (
 	"regexp"
@@ -8,11 +8,11 @@ import (
 )
 
 var (
-	envKeyPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
-	optPathRegex  = regexp.MustCompile(`^/opt/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$`)
+	EnvKeyPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+	OptPathRegex  = regexp.MustCompile(`^/opt/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$`)
 )
 
-func parseEnvLines(data []byte, invalid error) (map[string]string, error) {
+func ParseEnvLines(data []byte, invalid error) (map[string]string, error) {
 	if !utf8.Valid(data) {
 		return nil, invalid
 	}
@@ -23,7 +23,7 @@ func parseEnvLines(data []byte, invalid error) (map[string]string, error) {
 			continue
 		}
 		key, value, found := strings.Cut(line, "=")
-		if _, duplicate := values[key]; !found || !envKeyPattern.MatchString(key) || duplicate {
+		if _, duplicate := values[key]; !found || !EnvKeyPattern.MatchString(key) || duplicate {
 			return nil, invalid
 		}
 		values[key] = value
@@ -31,7 +31,7 @@ func parseEnvLines(data []byte, invalid error) (map[string]string, error) {
 	return values, nil
 }
 
-func parseHostPortRange(mapping string, tcpOnly bool) (int, int, bool) {
+func ParseHostPortRange(mapping string, tcpOnly bool) (int, int, bool) {
 	host, container, published := strings.Cut(mapping, "->")
 	colon := strings.LastIndexByte(host, ':')
 	if !published || colon < 0 {
@@ -55,7 +55,7 @@ func parseHostPortRange(mapping string, tcpOnly bool) (int, int, bool) {
 	return first, last, true
 }
 
-func parseOSRelease(release string, unquotedOK func(string) bool, keys ...string) (map[string]string, bool) {
+func ParseOSRelease(release string, unquotedOK func(string) bool, keys ...string) (map[string]string, bool) {
 	wanted := make(map[string]bool, len(keys))
 	for _, key := range keys {
 		wanted[key] = true

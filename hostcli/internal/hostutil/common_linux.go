@@ -1,4 +1,4 @@
-package inspect
+package hostutil
 
 import (
 	"errors"
@@ -6,7 +6,7 @@ import (
 	"syscall"
 )
 
-func hostUnameMachine() (string, error) {
+func HostUnameMachine() (string, error) {
 	var utsname syscall.Utsname
 	if err := syscall.Uname(&utsname); err != nil {
 		return "", errors.New("无法核实宿主 CPU 架构")

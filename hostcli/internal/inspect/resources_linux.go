@@ -14,9 +14,12 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/storage"
 )
 
-var resourceDirectory = optPathRegex
+var resourceDirectory = hostutil.OptPathRegex
 
 const minimumInstallFreeKiB = 8_000_000
 
@@ -38,7 +41,7 @@ func CheckInstallResources(directory string, progress io.Writer) error {
 func checkInstallResourceLimits(cpu int, memoryKiB uint64, disk diskResources, progress io.Writer) error {
 	memoryMiB := memoryKiB / 1024
 	fmt.Fprintf(progress, "[TGCloud] 检测到 %d 核 CPU、约 %dMB 内存、安装文件系统可用约 %dMB\n", cpu, memoryMiB, disk.available/(1024*1024))
-	if memoryMiB < minimumInstallMiB {
+	if memoryMiB < storage.MinimumInstallMiB {
 		return fmt.Errorf("内存不足 2GB，当前约 %dMB", memoryMiB)
 	}
 	if disk.total/1024 < 45_000_000 {
@@ -57,7 +60,7 @@ func ResourceProbe(install, backup string) (string, error) {
 			return "", errors.New("安装与备份目录必须是 /opt 下的绝对路径")
 		}
 	}
-	architecture, err := hostUnameMachine()
+	architecture, err := hostutil.HostUnameMachine()
 	if err != nil {
 		return "", err
 	}

@@ -10,12 +10,14 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 )
 
 const installConfigLimit = 128 * 1024
 
 var (
-	installPathPattern = optPathRegex
+	installPathPattern = hostutil.OptPathRegex
 	botDataDirs        = []string{"data", "downloads", "logs", "config"}
 	gatewayDataDirs    = []string{"clouddrive", "clouddrive/config", "clouddrive/mounts"}
 )
