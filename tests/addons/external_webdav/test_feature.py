@@ -913,7 +913,7 @@ class EntryAndReleaseTests(unittest.TestCase):
 
     def test_offline_host_bundle_is_self_contained_and_detects_tampering(self):
         with tempfile.TemporaryDirectory() as directory, _fixture_runtime_owners():
-            root = Path(directory).resolve()
+            root = Path(directory).resolve() / "addon"
             service = Service(PRODUCTS["clouddrive2"], Mock(), Mock(), Mock(), root=root)
             launcher = root / "bin/tgcloud-webdav"
             service.install_runtime(ROOT, cli.source_identity(ROOT), launcher=launcher)
