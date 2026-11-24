@@ -29,6 +29,8 @@ func RenewDryRun(domain string, progress io.Writer) error {
 	return hostutil.ErrLinuxRequired
 }
 
+func ProxyStateVersion() int { return 0 }
+
 func ValidHTTPSDomain(domain string) bool {
 	if len(domain) > 253 || !strings.Contains(domain, ".") {
 		return false

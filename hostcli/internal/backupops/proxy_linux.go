@@ -239,29 +239,27 @@ elif act == "create":
 elif act == "verify":
     print(json.dumps(verify_archive(Path(sys.argv[2]))))
 elif act == "drill":
-    arch, broot = Path(sys.argv[2]), Path(sys.argv[3])
+    arch, broot, dst = Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4])
+    if dst.is_symlink() or not dst.is_dir() or dst.resolve().parent != broot.resolve() or any(dst.iterdir()):
+        raise ValueError("invalid drill directory")
     recs = verify_archive(arch)
-    dst = Path(tempfile.mkdtemp(prefix="recovery-drill-", dir=broot))
-    try:
-        with tarfile.open(arch, "r:gz") as tar:
-            for name, rec in recs.items():
-                t = dst.joinpath(*PurePosixPath(name).parts)
-                t.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-                if rec["kind"] == "directory":
-                    t.mkdir(mode=0o700, exist_ok=True)
-                elif rec["kind"] == "file":
-                    fd = os.open(t, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                    with tar.extractfile(name) as s, os.fdopen(fd, "wb") as w:
-                        shutil.copyfileobj(s, w)
-                    if sha256_path(t) != rec["sha256"]:
-                        raise ValueError("checksum mismatch")
-            for name, rec in recs.items():
-                if rec["kind"] == "symlink":
-                    dst.joinpath(*PurePosixPath(name).parts).symlink_to(rec["target"])
-        validate_auth(json.loads((dst / "proxy/state/domains.json").read_text(encoding="utf-8")), recs)
-        print(len(recs))
-    finally:
-        shutil.rmtree(dst)
+    with tarfile.open(arch, "r:gz") as tar:
+        for name, rec in recs.items():
+            t = dst.joinpath(*PurePosixPath(name).parts)
+            t.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if rec["kind"] == "directory":
+                t.mkdir(mode=0o700, exist_ok=True)
+            elif rec["kind"] == "file":
+                fd = os.open(t, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with tar.extractfile(name) as s, os.fdopen(fd, "wb") as w:
+                    shutil.copyfileobj(s, w)
+                if sha256_path(t) != rec["sha256"]:
+                    raise ValueError("checksum mismatch")
+        for name, rec in recs.items():
+            if rec["kind"] == "symlink":
+                dst.joinpath(*PurePosixPath(name).parts).symlink_to(rec["target"])
+    validate_auth(json.loads((dst / "proxy/state/domains.json").read_text(encoding="utf-8")), recs)
+    print(len(recs))
 elif act == "prune-preview":
     print(json.dumps(make_plan(Path(sys.argv[2]), int(sys.argv[3]))))
 elif act == "prune":
@@ -353,7 +351,12 @@ func RecoveryDrill(archivePath, backupRoot string) (int, error) {
 	if err := ensurePrivateDir(backupRoot); err != nil {
 		return 0, err
 	}
-	raw, err := runProxyHelper("drill", archivePath, backupRoot)
+	drillDir, err := createOwnedTempDir(backupRoot, "recovery-drill-")
+	if err != nil {
+		return 0, err
+	}
+	defer removeOwnedChild(backupRoot, drillDir)
+	raw, err := runProxyHelper("drill", archivePath, backupRoot, drillDir)
 	if err != nil {
 		return 0, errors.New("共享代理备份隔离恢复演练未通过")
 	}

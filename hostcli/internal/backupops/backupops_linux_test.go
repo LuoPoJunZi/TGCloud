@@ -283,12 +283,31 @@ func TestInstanceSnapshotCreatePreflightAndGuards(t *testing.T) {
 	}
 	_ = os.Remove(extraDB)
 
-	// Corrupt SQLite file (valid header, invalid B-tree) must be rejected by PRAGMA quick_check.
+	// Version mismatch against lock-time discovered inst.Version must be rejected.
+	if _, err := CreateInstanceSnapshot(installDir, destDir, "0.0.8", docker); err == nil {
+		t.Fatal("expected discovered version mismatch rejection")
+	}
+
+	// Corrupt SQLite file (valid header, invalid B-tree) must be rejected by PRAGMA quick_check,
+	// leave zero parent-owned staging dirs behind, and merge restore errors if restart also fails.
 	corrupt := append([]byte("SQLite format 3\x00"), make([]byte, 256)...)
 	if err := os.WriteFile(filepath.Join(installDir, "data/bot.session"), corrupt, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CreateInstanceSnapshot(installDir, destDir, "0.0.9", docker); err == nil {
-		t.Fatal("expected corrupt SQLite rejection via PRAGMA quick_check")
+	failStartDocker := func(args ...string) ([]byte, error) {
+		if args[0] == "start" {
+			return nil, errors.New("start failed fixture")
+		}
+		return docker(args...)
+	}
+	_, err = CreateInstanceSnapshot(installDir, destDir, "0.0.9", failStartDocker)
+	if err == nil || !strings.Contains(err.Error(), "实例快照一致性备份或校验失败") || !strings.Contains(err.Error(), "原服务恢复未确认") {
+		t.Fatalf("expected merged pack + restore error, got: %v", err)
+	}
+	entries, _ := os.ReadDir(destDir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "snapshot-") || strings.HasPrefix(e.Name(), "tgcloud-restore-check-") {
+			t.Fatalf("leftover temp dir after failed snapshot: %s", e.Name())
+		}
 	}
 }

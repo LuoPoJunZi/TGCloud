@@ -255,45 +255,92 @@ func TestRenewDryRunProtectionAndCleanup(t *testing.T) {
 		t.Fatal("expected mismatch domain rejection")
 	}
 
-	// Cleanup unconfirmed (docker info fails after container absent) must NOT return nil.
-	dockerFailCleanup := func(args ...string) ([]byte, error) {
+	// Exact-name container ls failure must report UNKNOWN and NOT return nil.
+	var unknownProg bytes.Buffer
+	lsCalls := 0
+	dockerUnknown := func(args ...string) ([]byte, error) {
 		switch args[0] {
 		case "container":
 			if args[1] == "ls" {
-				return nil, nil
+				lsCalls++
+				if lsCalls == 1 {
+					return nil, nil // ownedContainers check before run
+				}
+				return nil, errors.New("daemon unavailable")
 			}
-			return nil, errors.New("no such container")
+			return nil, nil
 		case "compose":
 			return nil, nil
-		case "info":
-			return nil, errors.New("docker unreachable")
 		default:
 			return nil, nil
 		}
 	}
-	if err := renewDryRunWith(proxyRoot, "files.example.test", dockerFailCleanup, nil); err == nil {
-		t.Fatal("expected error when cleanup verification cannot reach docker")
+	if err := renewDryRunWith(proxyRoot, "files.example.test", dockerUnknown, &unknownProg); err == nil || !strings.Contains(unknownProg.String(), "TGCLOUD_PROXY_TASK_CLEANUP=UNKNOWN") {
+		t.Fatalf("expected UNKNOWN cleanup error, err=%v out=%s", err, unknownProg.String())
 	}
 
-	// Confirmed cleanup returns nil and emits TGCLOUD_PROXY_TASK_CLEANUP=OK.
-	var progress bytes.Buffer
-	dockerOK := func(args ...string) ([]byte, error) {
+	// Present container with mismatched task label must be REFUSED and NEVER call rm.
+	var refusedProg bytes.Buffer
+	rmCalled := false
+	var seenName string
+	dockerRefused := func(args ...string) ([]byte, error) {
 		switch args[0] {
+		case "compose":
+			for i, a := range args {
+				if a == "--name" && i+1 < len(args) {
+					seenName = args[i+1]
+				}
+			}
+			return nil, nil
 		case "container":
 			if args[1] == "ls" {
+				if seenName != "" && slices.Contains(args, "name=^/"+seenName+"$") {
+					return []byte(seenName + "\n"), nil
+				}
 				return nil, nil
 			}
-			return nil, errors.New("no such container")
-		case "compose", "info":
+			return []byte("wrong-task|maintenance-dry-run\n"), nil
+		case "rm":
+			rmCalled = true
 			return nil, nil
 		default:
 			return nil, nil
 		}
 	}
-	if err := renewDryRunWith(proxyRoot, "files.example.test", dockerOK, &progress); err != nil {
-		t.Fatalf("expected renewDryRunWith success, got %v", err)
+	if err := renewDryRunWith(proxyRoot, "files.example.test", dockerRefused, &refusedProg); err == nil || rmCalled || !strings.Contains(refusedProg.String(), "TGCLOUD_PROXY_TASK_CLEANUP=REFUSED") {
+		t.Fatalf("expected REFUSED without rm, err=%v rm=%v out=%s", err, rmCalled, refusedProg.String())
 	}
-	if !strings.Contains(progress.String(), "TGCLOUD_PROXY_TASK_CLEANUP=OK") {
-		t.Fatalf("missing cleanup confirmation marker: %s", progress.String())
+
+	// Present container with matching label is removed and re-checked absent -> OK.
+	var removedProg bytes.Buffer
+	var matchName, matchTask string
+	removed := false
+	dockerRemoved := func(args ...string) ([]byte, error) {
+		switch args[0] {
+		case "compose":
+			for i, a := range args {
+				if a == "--name" && i+1 < len(args) {
+					matchName = args[i+1]
+					matchTask = strings.TrimPrefix(matchName, "tgcloud-proxy-dry-run-")
+				}
+			}
+			return nil, nil
+		case "container":
+			if args[1] == "ls" {
+				if matchName != "" && !removed && slices.Contains(args, "name=^/"+matchName+"$") {
+					return []byte(matchName + "\n"), nil
+				}
+				return nil, nil
+			}
+			return []byte(matchTask + "|maintenance-dry-run\n"), nil
+		case "rm":
+			removed = true
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	if err := renewDryRunWith(proxyRoot, "files.example.test", dockerRemoved, &removedProg); err != nil || !removed || !strings.Contains(removedProg.String(), "TGCLOUD_PROXY_TASK_CLEANUP=OK") {
+		t.Fatalf("expected label-verified removal + recheck OK, err=%v removed=%v out=%s", err, removed, removedProg.String())
 	}
 }

@@ -25,6 +25,31 @@ type renewStateDoc struct {
 	Domains map[string]httpsRoute `json:"domains"`
 }
 
+// ProxyStateVersion returns the schema version in /opt/tgcloud-proxy/state/domains.json
+// (0 when absent, 1/2/3 when present, -1 when unreadable or invalid).
+func ProxyStateVersion() int {
+	return proxyStateVersionAt(HTTPSRoot)
+}
+
+func proxyStateVersionAt(root string) int {
+	path := filepath.Join(root, "state/domains.json")
+	if !hostutil.SafePath(path, false) {
+		return -1
+	}
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return 0
+	}
+	raw, err := readHTTPSPrivate(path, inspect.InstallConfigLimit)
+	if err != nil {
+		return -1
+	}
+	var doc renewStateDoc
+	if json.Unmarshal(raw, &doc) != nil || doc.Project != "tgcloud" {
+		return -1
+	}
+	return doc.Version
+}
+
 func readRenewState(root string) (renewStateDoc, error) {
 	path := filepath.Join(root, "state/domains.json")
 	if !hostutil.SafePath(path, false) {
@@ -51,8 +76,8 @@ func readRenewState(root string) (renewStateDoc, error) {
 }
 
 // RenewDryRun executes a bounded, locked Certbot ACME renewal dry-run for the
-// managed proxy, verifying registered domain, proxy ownership, and confirmed
-// temporary container cleanup before reporting success.
+// managed proxy, verifying registered domain, proxy ownership, and positive
+// exact-name absence of the temporary container before reporting success.
 func RenewDryRun(domain string, progress io.Writer) error {
 	if _, err := inspect.DockerPreflight(false); err != nil {
 		return err
@@ -63,8 +88,6 @@ func RenewDryRun(domain string, progress io.Writer) error {
 		if len(args) > 0 && args[0] == "compose" {
 			return inspect.RunDockerContext(ctx, true, progress, 540*time.Second, nil, args...)
 		}
-		// Cleanup and ownership probes run on an uncancellable short context so
-		// SIGINT/SIGTERM never skips container verification or removal.
 		probeCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		return inspect.RunDockerContext(probeCtx, true, nil, 10*time.Second, nil, args...)
@@ -116,14 +139,35 @@ func renewDryRunWith(root, requestedDomain string, docker inspect.DockerRunner, 
 	taskID := hex.EncodeToString(rb[:])
 	containerName := "tgcloud-proxy-dry-run-" + taskID
 
+	// Positively verify whether the exact temporary container name exists.
+	exactContainerExists := func() (bool, error) {
+		out, err := docker("container", "ls", "--all", "--filter", "name=^/"+containerName+"$", "--format", "{{.Names}}")
+		if err != nil {
+			return false, err
+		}
+		for _, name := range strings.Fields(string(out)) {
+			if name == containerName {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+
 	cleanupConfirmed := false
 	cleanupErrMsg := errors.New("维护任务清理未确认，请检查本次一次性续期容器；不要重复演练")
 	verifyCleanup := func() error {
-		out, inspectErr := docker("container", "inspect", "--format",
-			`{{index .Config.Labels "com.tgcloud.task"}}|{{index .Config.Labels "com.tgcloud.role"}}`,
-			containerName)
-		if inspectErr == nil {
-			if strings.TrimSpace(string(out)) != taskID+"|maintenance-dry-run" {
+		exists, lsErr := exactContainerExists()
+		if lsErr != nil {
+			if progress != nil {
+				fmt.Fprintln(progress, "TGCLOUD_PROXY_TASK_CLEANUP=UNKNOWN")
+			}
+			return cleanupErrMsg
+		}
+		if exists {
+			out, inspectErr := docker("container", "inspect", "--format",
+				`{{index .Config.Labels "com.tgcloud.task"}}|{{index .Config.Labels "com.tgcloud.role"}}`,
+				containerName)
+			if inspectErr != nil || strings.TrimSpace(string(out)) != taskID+"|maintenance-dry-run" {
 				if progress != nil {
 					fmt.Fprintln(progress, "TGCLOUD_PROXY_TASK_CLEANUP=REFUSED")
 				}
@@ -135,10 +179,10 @@ func renewDryRunWith(root, requestedDomain string, docker inspect.DockerRunner, 
 				}
 				return cleanupErrMsg
 			}
-		} else {
-			if _, infoErr := docker("info"); infoErr != nil {
+			stillExists, recheckErr := exactContainerExists()
+			if recheckErr != nil || stillExists {
 				if progress != nil {
-					fmt.Fprintln(progress, "TGCLOUD_PROXY_TASK_CLEANUP=UNKNOWN")
+					fmt.Fprintln(progress, "TGCLOUD_PROXY_TASK_CLEANUP=FAILED")
 				}
 				return cleanupErrMsg
 			}
@@ -152,8 +196,12 @@ func renewDryRunWith(root, requestedDomain string, docker inspect.DockerRunner, 
 
 	defer func() {
 		if !cleanupConfirmed {
-			if cErr := verifyCleanup(); cErr != nil && retErr == nil {
-				retErr = cErr
+			if cErr := verifyCleanup(); cErr != nil {
+				if retErr == nil {
+					retErr = cErr
+				} else {
+					retErr = errors.Join(retErr, cErr)
+				}
 			}
 		}
 	}()
@@ -174,6 +222,9 @@ func renewDryRunWith(root, requestedDomain string, docker inspect.DockerRunner, 
 		"--non-interactive", "--no-random-sleep-on-renew", "--no-directory-hooks",
 	)
 	if cErr := verifyCleanup(); cErr != nil {
+		if runErr != nil {
+			return errors.Join(errors.New("续期 dry-run 未通过；请检查 ACME 公网连通与 Certbot 日志"), cErr)
+		}
 		return cErr
 	}
 	if runErr != nil {

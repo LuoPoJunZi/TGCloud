@@ -283,6 +283,16 @@ func (b *HostBackend) ShowEntryStatus(instance *inspect.Instance, out io.Writer)
 		fmt.Fprintln(out, "访问模式：HTTPS（未配置域名路由）")
 		return nil
 	}
+	if ver := entry.ProxyStateVersion(); ver == 2 || ver == 3 {
+		const cliCmd = "/usr/local/bin/tgcloud"
+		if !hostutil.SafePath(cliCmd, false) {
+			return errors.New("当前为 v2/v3 代理状态，请通过 tgcloud --py-menu 或 tgcloud proxy check 检查入口")
+		}
+		cmd := exec.Command(cliCmd, "proxy", "check")
+		cmd.Stdout = out
+		cmd.Stderr = out
+		return cmd.Run()
+	}
 	fmt.Fprintln(out, "访问模式：HTTPS\n管理地址：https://"+info.Domain)
 	res, err := entry.HTTPSEntry([]string{"status", b.Directory, entry.DefaultNginxImage, entry.DefaultCertbotImage, info.Domain}, out)
 	if err != nil {
@@ -311,6 +321,9 @@ func (b *HostBackend) ShowEntryStatus(instance *inspect.Instance, out io.Writer)
 }
 
 func (b *HostBackend) ConfigureHTTPS(_ *inspect.Instance, domain, email, confirmedNAT, expectedDomain string, out io.Writer) error {
+	if ver := entry.ProxyStateVersion(); ver == 2 || ver == 3 {
+		return errors.New("当前代理包含外部 WebDAV 或外部 Docker Nginx 路由（v2/v3），请运行 tgcloud --py-menu 或 tgcloud proxy 维护，避免覆盖扩展代理配置")
+	}
 	lock, err := inspect.LockInstance()
 	if err != nil {
 		return err
@@ -486,6 +499,13 @@ func (b *HostBackend) PreflightInstanceSnapshot(instance *inspect.Instance, arch
 }
 
 func (b *HostBackend) ProxyBackupAction(action string, keep int, planID string, out io.Writer) (string, error) {
+	if entry.ProxyStateVersion() == 3 {
+		if action == "list" || action == "prune-preview" || action == "prune" {
+			fmt.Fprintln(out, "外部模式备份位于 /opt/tgcloud-proxy/external-backups，仅含元数据与专属站点；不运行独立代理的整目录清理。")
+			return "", nil
+		}
+		return "", errors.New("外部 Docker Nginx 模式请运行 tgcloud --py-menu 执行外部入口元数据备份与核验")
+	}
 	const proxyRoot = "/opt/tgcloud-proxy"
 	const backupRoot = "/opt/tgcloud-proxy-backups"
 	switch action {

@@ -47,7 +47,7 @@ with closing(sqlite3.connect(db.as_uri() + "?mode=ro", uri=True, timeout=5)) as 
     n = c.execute("SELECT count(*) FROM tasks WHERE state IN ('reserved','downloading','streaming','uploading','verifying','finalizing','cleanup_pending')").fetchone()[0]
 print(int(n))`
 
-const snapshotBundleScript = `import hashlib, io, json, os, re, secrets, shutil, sqlite3, stat, sys, tarfile, tempfile
+const snapshotBundleScript = `import hashlib, io, json, os, re, secrets, shutil, sqlite3, sys, tarfile
 from contextlib import closing
 from pathlib import Path, PurePosixPath
 
@@ -95,10 +95,12 @@ def parse_ver(v):
         raise ValueError("invalid version")
     return tuple(map(int, v.split(".")))
 
-def check_preflight(archive, scratch, target_ver):
+def check_preflight(archive, scratch, extract_root, target_ver):
     target = parse_ver(target_ver)
-    if archive.is_symlink() or scratch.is_symlink() or not scratch.is_dir():
+    if archive.is_symlink() or scratch.is_symlink() or not scratch.is_dir() or extract_root.is_symlink() or not extract_root.is_dir():
         raise ValueError("invalid archive/scratch")
+    if extract_root.resolve().parent != scratch.resolve() or any(extract_root.iterdir()):
+        raise ValueError("invalid preflight directory")
     with tarfile.open(archive, "r:gz") as tar:
         first = tar.next()
         if first is None or first.name != "manifest.json" or not first.isfile() or first.size > 8 * 1024**2:
@@ -131,90 +133,117 @@ def check_preflight(archive, scratch, target_ver):
             total += rec["size"]
         if total > MAX_BYTES or shutil.disk_usage(scratch).free < total + MIN_FREE:
             raise ValueError("restore capacity limit")
-        with tempfile.TemporaryDirectory(prefix="tgcloud-restore-check-", dir=scratch) as priv:
-            root = Path(priv)
-            root.chmod(0o700)
-            seen = set()
-            for item in iter(tar.next, None):
-                valid_name(item.name)
-                if item.name not in records or item.name in seen or not item.isfile():
-                    raise ValueError("unexpected/duplicate/link entry")
-                rec = records[item.name]
-                if item.size != rec["size"]:
-                    raise ValueError("size mismatch")
-                dest = root / item.name
-                dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-                with tar.extractfile(item) as src, dest.open("xb") as out:
-                    dest.chmod(0o600)
-                    shutil.copyfileobj(src, out, length=1024 * 1024)
-                if sha256_file(dest) != rec["sha256"]:
-                    raise ValueError("checksum mismatch")
-                if dest.suffix in {".db", ".session"}:
-                    quick_check(dest)
-                seen.add(item.name)
-            if seen != set(records):
-                raise ValueError("missing entries")
-            return len(records)
+        root = extract_root.resolve()
+        root.chmod(0o700)
+        seen = set()
+        for item in iter(tar.next, None):
+            valid_name(item.name)
+            if item.name not in records or item.name in seen or not item.isfile():
+                raise ValueError("unexpected/duplicate/link entry")
+            rec = records[item.name]
+            if item.size != rec["size"]:
+                raise ValueError("size mismatch")
+            dest = root / item.name
+            dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with tar.extractfile(item) as src, dest.open("xb") as out:
+                dest.chmod(0o600)
+                shutil.copyfileobj(src, out, length=1024 * 1024)
+            if sha256_file(dest) != rec["sha256"]:
+                raise ValueError("checksum mismatch")
+            if dest.suffix in {".db", ".session"}:
+                quick_check(dest)
+            seen.add(item.name)
+        if seen != set(records):
+            raise ValueError("missing entries")
+        return len(records)
 
 mode = sys.argv[1]
 if mode == "preflight":
-    print(check_preflight(Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]))
+    print(check_preflight(Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4]), sys.argv[5]))
 elif mode == "pack":
     spec = json.loads(sys.stdin.read())
     dest_dir, archive, ver = Path(spec["dest_dir"]), Path(spec["archive"]), spec["version"]
+    snap, preflight_dir = Path(spec["stage_dir"]).resolve(), Path(spec["preflight_dir"]).resolve()
+    if snap.is_symlink() or not snap.is_dir() or snap.parent != dest_dir.resolve() or any(snap.iterdir()):
+        raise ValueError("invalid stage directory")
+    snap.chmod(0o700)
     files = spec["files"]
-    with tempfile.TemporaryDirectory(prefix="snapshot-", dir=dest_dir) as tmpdir:
-        snap = Path(tmpdir).resolve()
-        snap.chmod(0o700)
-        records = {}
-        total = 0
-        for rel in sorted(files):
-            src = Path(files[rel])
-            if src.resolve() != src or src.is_symlink() or not src.is_file():
-                raise ValueError("source changed")
-            dst = snap / rel
-            dst.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-            with src.open("rb") as r:
-                is_sqlite = r.read(16) == b"SQLite format 3\x00"
-            if is_sqlite:
-                backup_db(src, dst)
-            else:
-                if rel.endswith((".db", ".session")):
-                    raise ValueError("invalid sqlite file")
-                with src.open("rb") as r, dst.open("xb") as w:
-                    dst.chmod(0o600)
-                    shutil.copyfileobj(r, w, 1024 * 1024)
-            st = dst.stat()
-            total += st.st_size
-            if total > MAX_BYTES or len(records) >= MAX_FILES:
-                raise ValueError("snapshot limit exceeded")
-            records[rel] = {"size": st.st_size, "sha256": sha256_file(dst)}
-        if not any(k.startswith("config/") for k in records) or not any(k.startswith("clouddrive/config/") for k in records):
-            raise ValueError("configuration/gateway coverage incomplete")
-        manifest = {"format": 1, "edition": "clouddrive2", "version": ver, "files": records,
-                    "excluded": ["downloads", "logs", "shared-https"], "source": "operator-offline-copy"}
-        fd = os.open(archive, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        try:
-            with os.fdopen(fd, "wb") as out, tarfile.open(fileobj=out, mode="w:gz") as tar:
-                mb = json.dumps(manifest, ensure_ascii=False).encode()
-                ti = tarfile.TarInfo("manifest.json")
-                ti.size, ti.mode = len(mb), 0o600
-                tar.addfile(ti, io.BytesIO(mb))
-                for rel, rec in records.items():
-                    p = snap / rel
-                    with p.open("rb") as h:
-                        if sha256_file(p) != rec["sha256"]:
-                            raise ValueError("snapshot changed")
-                        ti = tarfile.TarInfo(rel)
-                        ti.size, ti.mode = rec["size"], 0o600
-                        tar.addfile(ti, h)
-            print(check_preflight(archive, archive.parent, ver))
-        except BaseException:
-            archive.unlink(missing_ok=True)
-            raise
+    records = {}
+    total = 0
+    for rel in sorted(files):
+        src = Path(files[rel])
+        if src.resolve() != src or src.is_symlink() or not src.is_file():
+            raise ValueError("source changed")
+        dst = snap / rel
+        dst.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        with src.open("rb") as r:
+            is_sqlite = r.read(16) == b"SQLite format 3\x00"
+        if is_sqlite:
+            backup_db(src, dst)
+        else:
+            if rel.endswith((".db", ".session")):
+                raise ValueError("invalid sqlite file")
+            with src.open("rb") as r, dst.open("xb") as w:
+                dst.chmod(0o600)
+                shutil.copyfileobj(r, w, 1024 * 1024)
+        st = dst.stat()
+        total += st.st_size
+        if total > MAX_BYTES or len(records) >= MAX_FILES:
+            raise ValueError("snapshot limit exceeded")
+        records[rel] = {"size": st.st_size, "sha256": sha256_file(dst)}
+    if not any(k.startswith("config/") for k in records) or not any(k.startswith("clouddrive/config/") for k in records):
+        raise ValueError("configuration/gateway coverage incomplete")
+    manifest = {"format": 1, "edition": "clouddrive2", "version": ver, "files": records,
+                "excluded": ["downloads", "logs", "shared-https"], "source": "operator-offline-copy"}
+    fd = os.open(archive, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as out, tarfile.open(fileobj=out, mode="w:gz") as tar:
+            mb = json.dumps(manifest, ensure_ascii=False).encode()
+            ti = tarfile.TarInfo("manifest.json")
+            ti.size, ti.mode = len(mb), 0o600
+            tar.addfile(ti, io.BytesIO(mb))
+            for rel, rec in records.items():
+                p = snap / rel
+                with p.open("rb") as h:
+                    if sha256_file(p) != rec["sha256"]:
+                        raise ValueError("snapshot changed")
+                    ti = tarfile.TarInfo(rel)
+                    ti.size, ti.mode = rec["size"], 0o600
+                    tar.addfile(ti, h)
+        print(check_preflight(archive, archive.parent, preflight_dir, ver))
+    except BaseException:
+        archive.unlink(missing_ok=True)
+        raise
 else:
     raise ValueError("unknown mode")
 `
+
+func createOwnedTempDir(parent, prefix string) (string, error) {
+	dir, err := os.MkdirTemp(parent, prefix)
+	if err != nil {
+		return "", errors.New("无法创建私密暂存目录")
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", errors.New("无法设置私密暂存目录权限")
+	}
+	return dir, nil
+}
+
+func removeOwnedChild(parent, child string) {
+	if child == "" || filepath.Dir(child) != filepath.Clean(parent) {
+		return
+	}
+	info, err := os.Lstat(child)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || (st.Uid != uint32(os.Geteuid()) && st.Uid != hostutil.ManagedOwnerUID) {
+		return
+	}
+	_ = os.RemoveAll(child)
+}
 
 func runSnapshotPython(ctx context.Context, script string, stdin []byte, args ...string) ([]byte, error) {
 	cmdArgs := append([]string{"-I", "-S", "-B", "-c", script}, args...)
@@ -436,7 +465,6 @@ func collectSnapshotFiles(installDir string, mounts []string) (map[string]string
 				return errors.New("备份范围包含特殊文件或硬链接")
 			}
 			if strings.HasSuffix(relPosix, "-wal") || strings.HasSuffix(relPosix, "-shm") || strings.HasSuffix(relPosix, "-journal") {
-				// SQLite files are copied through sqlite3.backup(); sidecar sizes are accounted for separately.
 				if !strings.HasSuffix(relPosix, "-shm") {
 					sidecarBytes += info.Size()
 				}
@@ -471,10 +499,11 @@ func checkCustomDataDir(installDir string) error {
 	return nil
 }
 
-// CreateInstanceSnapshot acquires the instance lock, verifies container and mount
-// ownership via inspect.Discover, stops running services safely under signal
-// protection, creates a SQLite-consistent offline snapshot archive compatible with
-// Python bundle.py, and restores prior running state before returning.
+// CreateInstanceSnapshot acquires the instance lock, verifies container, mount
+// and version ownership via inspect.Discover, stops running services safely
+// under signal protection, creates a SQLite-consistent offline snapshot archive
+// using parent-owned private staging directories, and restores prior running
+// state before returning (merging any restoration failure into the returned error).
 func CreateInstanceSnapshot(installDir, destDir, version string, docker inspect.DockerRunner) (archive string, retErr error) {
 	if !inspect.VersionPattern.MatchString(version) {
 		return "", errors.New("实例版本号格式无效")
@@ -491,6 +520,9 @@ func CreateInstanceSnapshot(installDir, destDir, version string, docker inspect.
 	inst, err := inspect.Discover(installDir, docker)
 	if err != nil || inst == nil {
 		return "", errors.New("无法核对实例安装目录与容器归属，拒绝执行实例快照")
+	}
+	if inst.Version != version {
+		return "", errors.New("确认期间实例版本发生变化，请重新预检")
 	}
 	if err := checkCustomDataDir(installDir); err != nil {
 		return "", err
@@ -600,10 +632,16 @@ func CreateInstanceSnapshot(installDir, destDir, version string, docker inspect.
 			}
 		}
 		if len(failures) > 0 {
-			_ = writeEvent("needs-service-review")
+			jErr := writeEvent("needs-service-review")
+			archive = ""
+			restoreErr := errors.New("原服务恢复未确认；保留操作记录，请人工检查")
 			if retErr == nil {
-				archive = ""
 				retErr = errors.New("实例备份结束但原服务恢复未确认；保留归档和操作记录，请人工检查")
+			} else {
+				retErr = errors.Join(retErr, restoreErr)
+			}
+			if jErr != nil {
+				retErr = errors.Join(retErr, jErr)
 			}
 			return
 		}
@@ -611,15 +649,19 @@ func CreateInstanceSnapshot(installDir, destDir, version string, docker inspect.
 		if completed {
 			finalState = "completed"
 		}
-		if jErr := writeEvent(finalState); jErr != nil && retErr == nil {
+		if jErr := writeEvent(finalState); jErr != nil {
 			archive = ""
-			retErr = jErr
+			if retErr == nil {
+				retErr = jErr
+			} else {
+				retErr = errors.Join(retErr, jErr)
+			}
 		}
 	}()
 
 	for _, name := range []string{inspect.BotName, inspect.GatewayName} {
 		if ctx.Err() != nil {
-			return "", errors.New("实例备份被中断，正在恢复原服务")
+			return "", errors.New("实例备份被中断")
 		}
 		prev := states[name]
 		curr, err := inspectSnapshotContainer(docker, name)
@@ -646,7 +688,7 @@ func CreateInstanceSnapshot(installDir, destDir, version string, docker inspect.
 	if n, err := activeTasksFunc(installDir); err != nil {
 		return "", err
 	} else if n > 0 {
-		return "", errors.New("停止前出现活动传输，备份取消；保留数据并恢复原服务")
+		return "", errors.New("停止前出现活动传输，备份取消；将尝试恢复原服务")
 	}
 
 	files, total, err := collectSnapshotFiles(installDir, mounts)
@@ -661,11 +703,25 @@ func CreateInstanceSnapshot(installDir, destDir, version string, docker inspect.
 		return "", errors.New("实例备份临时副本／归档／校验空间不足")
 	}
 	if ctx.Err() != nil {
-		return "", errors.New("实例备份被中断，正在恢复原服务")
+		return "", errors.New("实例备份被中断")
 	}
 
+	// Parent Go process owns private staging and preflight extraction directories
+	// so SIGKILL/timeout of the child process never leaves plaintext copies behind.
+	stageDir, err := createOwnedTempDir(destDir, "snapshot-")
+	if err != nil {
+		return "", err
+	}
+	defer removeOwnedChild(destDir, stageDir)
+	preflightDir, err := createOwnedTempDir(destDir, "tgcloud-restore-check-")
+	if err != nil {
+		return "", err
+	}
+	defer removeOwnedChild(destDir, preflightDir)
+
 	specBytes, err := json.Marshal(map[string]any{
-		"dest_dir": destDir, "archive": archivePath, "version": version, "files": files,
+		"dest_dir": destDir, "archive": archivePath, "version": version,
+		"stage_dir": stageDir, "preflight_dir": preflightDir, "files": files,
 	})
 	if err != nil {
 		return "", err
@@ -674,7 +730,7 @@ func CreateInstanceSnapshot(installDir, destDir, version string, docker inspect.
 	defer cancelPack()
 	if _, err := runSnapshotPython(packCtx, snapshotBundleScript, specBytes, "pack"); err != nil {
 		_ = os.Remove(archivePath)
-		return "", errors.New("实例快照一致性备份或校验失败，已清理临时产物并恢复原服务")
+		return "", errors.New("实例快照一致性备份或校验失败，已清理临时产物")
 	}
 	if err := writeEvent("packed"); err != nil {
 		return "", err
@@ -684,8 +740,8 @@ func CreateInstanceSnapshot(installDir, destDir, version string, docker inspect.
 }
 
 // PreflightInstanceSnapshot verifies an instance snapshot archive in an isolated
-// private directory using Python's read-only SQLite PRAGMA quick_check and full
-// manifest/scope/coverage validation without modifying live services or data.
+// parent-owned private directory using Python's read-only SQLite PRAGMA
+// quick_check and full manifest/scope/coverage validation.
 func PreflightInstanceSnapshot(archivePath, scratchDir, targetVersion string) (int, error) {
 	if !inspect.VersionPattern.MatchString(targetVersion) {
 		return 0, errors.New("目标版本号格式无效")
@@ -696,9 +752,15 @@ func PreflightInstanceSnapshot(archivePath, scratchDir, targetVersion string) (i
 	if err := ensurePrivateDir(scratchDir); err != nil {
 		return 0, err
 	}
+	extractDir, err := createOwnedTempDir(scratchDir, "tgcloud-restore-check-")
+	if err != nil {
+		return 0, err
+	}
+	defer removeOwnedChild(scratchDir, extractDir)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second)
 	defer cancel()
-	out, err := runSnapshotPython(ctx, snapshotBundleScript, nil, "preflight", archivePath, scratchDir, targetVersion)
+	out, err := runSnapshotPython(ctx, snapshotBundleScript, nil, "preflight", archivePath, scratchDir, extractDir, targetVersion)
 	if err != nil {
 		return 0, errors.New("实例快照结构／数据库预检未通过；请核对版本、覆盖范围与数据库完整性")
 	}

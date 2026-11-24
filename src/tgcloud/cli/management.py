@@ -628,6 +628,20 @@ def _has_interactive_tty() -> bool:
         return False
 
 
+def _go_menu_proxy_compatible(state_path: Path | None = None) -> bool:
+    """Keep v2 (external WebDAV) and v3 (external Docker Nginx) hosts on Python menu by default."""
+    path = state_path or Path("/opt/tgcloud-proxy/state/domains.json")
+    try:
+        if not path.exists() and not path.is_symlink():
+            return True
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 65536:
+            return False
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return isinstance(data, dict) and data.get("version") == 1
+    except (OSError, ValueError):
+        return False
+
+
 def main(argv=None, *, mode_hint=None) -> int:
     parser = argparse.ArgumentParser(description="TGCloud 本地管理；仅 CloudDrive2，安装及升级使用完整本地源码")
     parser.add_argument("--edition", choices=tuple(PRODUCTS), default="clouddrive2")
@@ -644,6 +658,7 @@ def main(argv=None, *, mode_hint=None) -> int:
         and mode_hint is None
         and args.source_dir is None
         and _has_interactive_tty()
+        and _go_menu_proxy_compatible()
     )
     if prefer_go:
         tool = runtime.installed_host_cli()
