@@ -255,18 +255,19 @@ func TestRenewDryRunProtectionAndCleanup(t *testing.T) {
 		t.Fatal("expected mismatch domain rejection")
 	}
 
-	// Exact-name container ls failure must report UNKNOWN and NOT return nil.
+	// Exact-name container ls failure must report UNKNOWN and NOT return nil,
+	// while preserving general and Compose-label ls queries in ownedContainers.
 	var unknownProg bytes.Buffer
-	lsCalls := 0
 	dockerUnknown := func(args ...string) ([]byte, error) {
 		switch args[0] {
 		case "container":
 			if args[1] == "ls" {
-				lsCalls++
-				if lsCalls == 1 {
-					return nil, nil // ownedContainers check before run
+				for _, a := range args {
+					if strings.HasPrefix(a, "name=^/tgcloud-proxy-dry-run-") {
+						return nil, errors.New("daemon unavailable")
+					}
 				}
-				return nil, errors.New("daemon unavailable")
+				return nil, nil
 			}
 			return nil, nil
 		case "compose":

@@ -1,6 +1,7 @@
 package backupops
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -308,6 +309,47 @@ func TestInstanceSnapshotCreatePreflightAndGuards(t *testing.T) {
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), "snapshot-") || strings.HasPrefix(e.Name(), "tgcloud-restore-check-") {
 			t.Fatalf("leftover temp dir after failed snapshot: %s", e.Name())
+		}
+	}
+}
+
+func TestPreflightAndRecoveryDrillCleanTempOnCancel(t *testing.T) {
+	prevUID := hostutil.ManagedOwnerUID
+	hostutil.ManagedOwnerUID = uint32(os.Geteuid())
+	t.Cleanup(func() { hostutil.ManagedOwnerUID = prevUID })
+
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	snapArchive := filepath.Join(root, "instance-clouddrive2-0.0.9-20260101T000000Z-abcdef123456.tar.gz")
+	if err := os.WriteFile(snapArchive, []byte("stub"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	proxyArchive := filepath.Join(root, "proxy-20260101T000000Z-"+strings.Repeat("a", 32)+".tar.gz")
+	if err := os.WriteFile(proxyArchive, []byte("stub"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := preflightInstanceSnapshotCtx(ctx, snapArchive, root, "0.0.9"); err == nil || !strings.Contains(err.Error(), "中断") {
+		t.Fatalf("expected interrupted preflight error, got %v", err)
+	}
+	if _, err := recoveryDrillCtx(ctx, proxyArchive, root); err == nil || !strings.Contains(err.Error(), "中断") {
+		t.Fatalf("expected interrupted recovery drill error, got %v", err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "tgcloud-restore-check-") || strings.HasPrefix(e.Name(), "recovery-drill-") {
+			t.Fatalf("leftover temp dir after cancellation: %s", e.Name())
 		}
 	}
 }

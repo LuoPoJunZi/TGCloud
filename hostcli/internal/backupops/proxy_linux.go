@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
@@ -280,10 +282,14 @@ else:
     raise ValueError("unknown action")
 `
 
-func runProxyHelper(args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+func runProxyHelperCtx(parentCtx context.Context, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(parentCtx, 180*time.Second)
 	defer cancel()
 	return runSnapshotPython(ctx, proxyArchiveScript, nil, args...)
+}
+
+func runProxyHelper(args ...string) ([]byte, error) {
+	return runProxyHelperCtx(context.Background(), args...)
 }
 
 func ListProxyBackups(backupRoot string) ([]ProxyBackupItem, error) {
@@ -345,6 +351,12 @@ func VerifyProxyBackup(archivePath string) (map[string]ManifestEntry, error) {
 }
 
 func RecoveryDrill(archivePath, backupRoot string) (int, error) {
+	sigCtx, stopSig := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	defer stopSig()
+	return recoveryDrillCtx(sigCtx, archivePath, backupRoot)
+}
+
+func recoveryDrillCtx(parentCtx context.Context, archivePath, backupRoot string) (int, error) {
 	if !hostutil.SafePath(archivePath, false) || !proxyArchiveRegex.MatchString(filepath.Base(archivePath)) {
 		return 0, errors.New("代理备份归档无效")
 	}
@@ -356,8 +368,11 @@ func RecoveryDrill(archivePath, backupRoot string) (int, error) {
 		return 0, err
 	}
 	defer removeOwnedChild(backupRoot, drillDir)
-	raw, err := runProxyHelper("drill", archivePath, backupRoot, drillDir)
+	raw, err := runProxyHelperCtx(parentCtx, "drill", archivePath, backupRoot, drillDir)
 	if err != nil {
+		if parentCtx.Err() != nil {
+			return 0, errors.New("共享代理备份隔离恢复演练被中断，已清理临时目录")
+		}
 		return 0, errors.New("共享代理备份隔离恢复演练未通过")
 	}
 	count, err := strconv.Atoi(strings.TrimSpace(string(raw)))

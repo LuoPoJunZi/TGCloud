@@ -248,6 +248,14 @@ func removeOwnedChild(parent, child string) {
 func runSnapshotPython(ctx context.Context, script string, stdin []byte, args ...string) ([]byte, error) {
 	cmdArgs := append([]string{"-I", "-S", "-B", "-c", script}, args...)
 	cmd := exec.CommandContext(ctx, snapshotPyBin, cmdArgs...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		return nil
+	}
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Env = []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"LC_ALL=C.UTF-8",
@@ -743,6 +751,12 @@ func CreateInstanceSnapshot(installDir, destDir, version string, docker inspect.
 // parent-owned private directory using Python's read-only SQLite PRAGMA
 // quick_check and full manifest/scope/coverage validation.
 func PreflightInstanceSnapshot(archivePath, scratchDir, targetVersion string) (int, error) {
+	sigCtx, stopSig := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	defer stopSig()
+	return preflightInstanceSnapshotCtx(sigCtx, archivePath, scratchDir, targetVersion)
+}
+
+func preflightInstanceSnapshotCtx(parentCtx context.Context, archivePath, scratchDir, targetVersion string) (int, error) {
 	if !inspect.VersionPattern.MatchString(targetVersion) {
 		return 0, errors.New("目标版本号格式无效")
 	}
@@ -758,10 +772,13 @@ func PreflightInstanceSnapshot(archivePath, scratchDir, targetVersion string) (i
 	}
 	defer removeOwnedChild(scratchDir, extractDir)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second)
+	ctx, cancel := context.WithTimeout(parentCtx, 600*time.Second)
 	defer cancel()
 	out, err := runSnapshotPython(ctx, snapshotBundleScript, nil, "preflight", archivePath, scratchDir, extractDir, targetVersion)
 	if err != nil {
+		if parentCtx.Err() != nil {
+			return 0, errors.New("实例快照预检被中断，已清理隔离临时目录")
+		}
 		return 0, errors.New("实例快照结构／数据库预检未通过；请核对版本、覆盖范围与数据库完整性")
 	}
 	count, err := strconv.Atoi(strings.TrimSpace(string(out)))
