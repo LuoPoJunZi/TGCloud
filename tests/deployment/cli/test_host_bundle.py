@@ -88,8 +88,10 @@ class HostBundleTests(unittest.TestCase):
             patch("tgcloud.addons.external_webdav.entry.sync_installed_runtime", return_value=True) as sync,
         ):
             result = runtime.install_release(ROOT, release, output)
+            deferred = runtime.install_release(ROOT, release, output, sync_addons=False, instance_dir=Path("/opt/tgcloud"))
         self.assertEqual(result["state"], "ok")
-        sync.assert_called_once_with(ROOT, release.version, output)
+        self.assertEqual(deferred["state"], "ok")
+        sync.assert_called_once_with(ROOT, release.version, output, instance_dir=None, allow_newer_installed=True)
 
     def test_foreign_manager_origin_is_rejected_without_executing_candidate(self):
         from tests.fixtures.local_project import host_source

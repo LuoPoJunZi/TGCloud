@@ -408,6 +408,27 @@ class EntryTests(unittest.TestCase):
         ):
             entry.sync_installed_runtime(ROOT, VERSION, self.messages.append, launcher=self.command, root=self.root)
         self.assertEqual(self.command.read_bytes(), before)
+        synced = entry.sync_installed_runtime(
+            ROOT, VERSION, self.messages.append, allow_newer_installed=True, launcher=self.command, root=self.root,
+        )
+        self.assertFalse(synced)
+        self.assertEqual(self.command.read_bytes(), before)
+        self.assertIn("保留现有高版本未降级", "\n".join(self.messages))
+
+    def test_sync_installed_runtime_skips_other_instance_directory_record(self):
+        self.bundle_version("0.0.1", origin_digest="a" * 64)
+        before = self.command.read_bytes()
+        config_file = self.root / "clouddrive2/config.json"
+        config_file.parent.mkdir(parents=True, mode=0o700)
+        config_file.write_text("{}", encoding="utf-8")
+        with patch.object(entry.config, "read_record", return_value={"edition": "clouddrive2", "instance_dir": "/opt/other-cd2"}):
+            synced = entry.sync_installed_runtime(
+                ROOT, VERSION, self.messages.append, instance_dir=self.instance.directory,
+                launcher=self.command, root=self.root,
+            )
+        self.assertFalse(synced)
+        self.assertEqual(self.command.read_bytes(), before)
+        self.assertIn("其他实例目录", "\n".join(self.messages))
 
     def test_sync_installed_runtime_skips_foreign_launcher_without_overwriting(self):
         self.command.write_text("#!/bin/sh\necho custom\n", encoding="utf-8")
@@ -420,18 +441,19 @@ class EntryTests(unittest.TestCase):
     def test_cli_from_manager_delegates_to_open_menu(self):
         from tgcloud.addons.external_webdav import cli as webdav_cli
 
-        fake_ui = Mock()
         with (
             patch("tgcloud.addons.external_webdav.discovery.host") as host_check,
-            patch.object(webdav_cli, "Terminal", return_value=fake_ui) as terminal,
+            patch.object(webdav_cli, "Terminal", autospec=True) as terminal_cls,
             patch("tgcloud.deployment.instances.docker_inventory", return_value=({}, set())),
             patch("tgcloud.deployment.instances.discover", return_value=self.instance) as discover,
             patch.object(entry, "open_menu") as open_menu,
         ):
             code = webdav_cli.main(["--from-manager", "--edition", "clouddrive2", "--install-dir", str(self.instance.directory)])
+        fake_ui = terminal_cls.return_value
         self.assertEqual(code, 0)
         host_check.assert_called_once()
-        terminal.assert_called_once_with(friendly=True)
+        terminal_cls.assert_called_once_with()
+        self.assertIs(fake_ui.friendly, True)
         discover.assert_called_once()
         open_menu.assert_called_once()
         self.assertIs(open_menu.call_args.args[0], self.instance)

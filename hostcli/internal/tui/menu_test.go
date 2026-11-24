@@ -265,3 +265,25 @@ func TestDecodeWebDAVCredentialsLegacyFallback(t *testing.T) {
 		t.Fatalf("unexpected creds: %+v, err=%v", creds, err)
 	}
 }
+
+func TestMainMenuShowsProcessVersionWhileSubmenuKeepsInstanceVersion(t *testing.T) {
+	fb := &fakeBackend{
+		instance: &inspect.Instance{
+			Version: "0.0.9",
+			Bot:     inspect.Container{State: "running"},
+			Gateway: inspect.Container{State: "running"},
+		},
+	}
+	var out bytes.Buffer
+	app := NewApp(fb, strings.NewReader("1\n0\n0\n"), &out, "0.0.10")
+	if code := app.Run(); code != 0 {
+		t.Fatalf("App.Run() = %d, output=%s", code, out.String())
+	}
+	text := out.String()
+	if !strings.Contains(text, "管理工具（当前进程）：v0.0.10") {
+		t.Fatalf("expected process version v0.0.10 in main menu, got:\n%s", text)
+	}
+	if !strings.Contains(text, "── 服务运行管理（CloudDrive2 · v0.0.9）──") {
+		t.Fatalf("expected instance version v0.0.9 in submenu heading, got:\n%s", text)
+	}
+}

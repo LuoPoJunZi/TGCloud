@@ -270,12 +270,14 @@ def execute_plan(
         if plan.action in {"install", "upgrade"}:
             preflight.resource_check(instance, plan.config, session, log)
         if install_manager:
-            log.cli = runtime.install_release(source, release, log)
+            log.cli = runtime.install_release(source, release, log, sync_addons=False, instance_dir=instance.directory)
             feedback.acceptance_tool = host_cli.deployment_tool("install-acceptance", source)
         feedback.stage = "基础安装与升级"
         apply_base(plan, release, source, session, log)
         if plan.action in {"install", "upgrade"}:
             feedback.checks["base"] = "ok"
+        if install_manager and isinstance(log.cli, dict) and log.cli.get("commands") == {"version": "ok", "listen": "ok"}:
+            runtime.sync_installed_addons(source, release, log, instance_dir=instance.directory)
         feedback.stage = "管理入口检查"
         if plan.configure_https:
             plan.manager.configure(plan.domain, plan.email)

@@ -153,7 +153,7 @@ def _publication_lock(root: Path):
 
 
 def install_runtime_bundle(source: Path, identity: dict, *, root: Path = config.ROOT,
-                           launcher: Path = COMMAND) -> Path:
+                           launcher: Path = COMMAND, verified_origin: dict | None = None) -> Path:
     """Install only reviewed host Python, never Bot deps or user configs."""
     paths = releases.host_files(source)
     checksum = hashlib.sha256()
@@ -161,7 +161,8 @@ def install_runtime_bundle(source: Path, identity: dict, *, root: Path = config.
         checksum.update(relative.encode() + b"\0" + (source / relative).read_bytes())
     revision = checksum.hexdigest()
     identity = releases.metadata(dict(identity, code_sha256=revision))
-    if identity["origin"] != releases.source_identity(source) or identity["version"] != releases.core.source_version(source):
+    expected_origin = releases.origin(verified_origin) if verified_origin is not None else releases.source_identity(source)
+    if identity["origin"] != expected_origin or identity["version"] != releases.core.source_version(source):
         raise ValueError("维护源码与来源记录不一致；停止切换")
     destination = root / "runtime" / revision
     config.canonical(destination)
@@ -208,22 +209,34 @@ def install_runtime_bundle(source: Path, identity: dict, *, root: Path = config.
     return destination
 
 
-def sync_installed_runtime(source: Path, target_version: str, log, *, launcher: Path = COMMAND,
+def sync_installed_runtime(source: Path, target_version: str, log, *, instance_dir: Path | None = None,
+                           allow_newer_installed: bool = False, launcher: Path = COMMAND,
                            root: Path = config.ROOT) -> bool:
     """Keep an already-installed offline WebDAV runtime synchronized with main updates.
 
     Never auto-installs when external WebDAV is not present, never mutates
-    records/auth/routes, and rejects automatic downgrades.
+    records/auth/routes, skips other custom instances, and never downgrades.
     """
     if not launcher.exists() and not launcher.is_symlink():
         return False
     try:
         previous = installed(launcher=launcher, root=root)
-    except ValueError:
+    except (ValueError, OSError):
         log("检测到外部 WebDAV 入口异常或不属于 TGCloud，已跳过自动同步；请进入菜单 2.3 核对。")
         return False
     if previous is None:
         return False
+    if instance_dir is not None:
+        record_path = root / "clouddrive2/config.json"
+        if record_path.exists() or record_path.is_symlink():
+            try:
+                record = config.read_record(record_path)
+            except (ValueError, OSError):
+                log("检测到外部 WebDAV 配置记录异常，已跳过自动同步；请进入菜单 2.3 核对。")
+                return False
+            if record is not None and record["instance_dir"] != str(instance_dir):
+                log("检测到外部 WebDAV 已绑定其他实例目录，已跳过自动同步。")
+                return False
     previous_identity = releases.source_identity(previous)
     previous_version = releases.core.source_version(previous)
     source_id = releases.source_identity(source)
@@ -234,13 +247,16 @@ def sync_installed_runtime(source: Path, target_version: str, log, *, launcher: 
     if previous_identity == source_id and previous_version == new_version:
         return False
     if releases.core.version_tuple(new_version) < releases.core.version_tuple(previous_version):
+        if allow_newer_installed:
+            log("检测到已安装的外部 WebDAV 维护工具版本（v" + previous_version + "）高于当前源码（v" + new_version + "），保留现有高版本未降级。")
+            return False
         raise ValueError("拒绝自动降级外部 WebDAV 维护代码。")
     with _publication_lock(root):
         if installed(launcher=launcher, root=root) != previous:
             raise ValueError("同步期间外部 WebDAV 维护代码已变化；停止自动切换。")
         metadata = {"schema": 1, "owner": releases.OWNER, "project": releases.PROJECT_ID,
                     "version": new_version, "origin": source_id}
-        install_runtime_bundle(source, metadata, root=root, launcher=launcher)
+        install_runtime_bundle(source, metadata, root=root, launcher=launcher, verified_origin=source_id)
         updated = installed(launcher=launcher, root=root)
         if (updated is None or releases.source_identity(updated) != source_id
                 or releases.core.source_version(updated) != new_version):

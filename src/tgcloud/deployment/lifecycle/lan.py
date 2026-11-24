@@ -158,7 +158,7 @@ def execute(plan: Plan, release, source, baseline, session, log, ui, *, verify=F
         else:
             instances.check_foreign_gateway(product, session)
         if install_manager:
-            log.cli = runtime.install_release(source, release, log)
+            log.cli = runtime.install_release(source, release, log, sync_addons=False, instance_dir=instance.directory)
             feedback.acceptance_tool = host_cli.deployment_tool("install-acceptance", source)
         # Persist the explicit intent before base installation. If base succeeds
         # but Nginx fails, rerunning resumes the LAN entry, not a fresh reinstall.
@@ -168,6 +168,8 @@ def execute(plan: Plan, release, source, baseline, session, log, ui, *, verify=F
         install.apply_base(plan, release, source, session, log)
         if plan.action in {"install", "upgrade"}:
             feedback.checks["base"] = "ok"
+        if install_manager and isinstance(log.cli, dict) and log.cli.get("commands") == {"version": "ok", "listen": "ok"}:
+            runtime.sync_installed_addons(source, release, log, instance_dir=instance.directory)
         feedback.stage = "管理入口检查"
         validate_environment(session)  # also validate a newly installed daemon
         current = instances.discover_for_install(product, session, log, install_dir=product.install_dir)
@@ -273,7 +275,11 @@ def main(argv=None, *, friendly=None) -> int:
                             upgrade.verify_confirmed_source(release, args.source_dir)
                             upgrade.recheck_plan(instance, plan.action, release, source, baseline, session, log,
                                                  install_dir=product.install_dir)
-                            log.cli = runtime.install_release(source, release, log)
+                            log.cli = runtime.install_release(
+                                source, release, log,
+                                sync_addons=plan.action == "current" and instance.present and instance.source_digest == release.digest,
+                                instance_dir=instance.directory,
+                            )
                 log("TGCLOUD_LAN_RESULT=NO_CHANGE；不重建、不降级")
                 return 0
             if manage_runtime:

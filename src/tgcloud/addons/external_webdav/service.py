@@ -481,11 +481,12 @@ class Service:
                 raise
         self.display(item)
 
-    def install_runtime(self, source: Path, identity: dict, *, launcher: Path = Path("/usr/local/bin/tgcloud-webdav")) -> None:
+    def install_runtime(self, source: Path, identity: dict, *, launcher: Path = Path("/usr/local/bin/tgcloud-webdav"),
+                        verified_origin: dict | None = None) -> None:
         """Install only reviewed host Python, never Bot deps or user configs."""
         if os.name == "posix":
             with entry._publication_lock(self.root):
-                entry.install_runtime_bundle(source, identity, root=self.root, launcher=launcher)
+                entry.install_runtime_bundle(source, identity, root=self.root, launcher=launcher, verified_origin=verified_origin)
         else:
-            entry.install_runtime_bundle(source, identity, root=self.root, launcher=launcher)
+            entry.install_runtime_bundle(source, identity, root=self.root, launcher=launcher, verified_origin=verified_origin)
         self.management_hint()

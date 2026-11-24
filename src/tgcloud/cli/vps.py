@@ -88,7 +88,12 @@ def main(argv: list[str] | None = None, *, friendly: bool | None = None) -> int:
                             upgrade.verify_confirmed_source(release, args.source_dir)
                             for plan, baseline in plans:
                                 upgrade.recheck_plan(plan.instance, plan.action, release, source, baseline, session, log)
-                            log.cli = runtime.install_release(source, release, log)
+                            can_sync = all(
+                                plan.action == "current" and plan.instance.present and plan.instance.source_digest == release.digest
+                                for plan, _ in plans
+                            )
+                            target_dir = plans[0][0].instance.directory if len(plans) == 1 else None
+                            log.cli = runtime.install_release(source, release, log, sync_addons=can_sync, instance_dir=target_dir)
                 log("TGCLOUD_CLI_RESULT=NO_CHANGE")
                 return 0
             if manage_runtime:

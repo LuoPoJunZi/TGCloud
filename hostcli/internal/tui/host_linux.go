@@ -284,8 +284,8 @@ func (b *HostBackend) ShowEntryStatus(instance *inspect.Instance, out io.Writer)
 		return nil
 	}
 	if ver := entry.ProxyStateVersion(); ver == 2 || ver == 3 {
-		const cliCmd = "/usr/local/bin/tgcloud"
-		if !hostutil.SafePath(cliCmd, false) {
+		cliCmd, verifyErr := inspect.VerifiedManagerCommand()
+		if verifyErr != nil {
 			return errors.New("当前为 v2/v3 代理状态，请通过 tgcloud --py-menu 或 tgcloud proxy check 检查入口")
 		}
 		cmd := exec.Command(cliCmd, "proxy", "check")
@@ -346,8 +346,8 @@ func (b *HostBackend) RenewHTTPSDryRun(_ *inspect.Instance, domain string, out i
 	if !errors.Is(err, entry.ErrExternalProxyMode) {
 		return err
 	}
-	const cliCmd = "/usr/local/bin/tgcloud"
-	if !hostutil.SafePath(cliCmd, false) {
+	cliCmd, verifyErr := inspect.VerifiedManagerCommand()
+	if verifyErr != nil {
 		return err
 	}
 	cmd := exec.Command(cliCmd, "proxy", "maintain", "--dry-run", "--yes", "--authorize-proxy")
@@ -371,9 +371,9 @@ func (b *HostBackend) ShowExternalWebDAV(_ *inspect.Instance, out io.Writer) err
 }
 
 func (b *HostBackend) ManageExternalWebDAV(_ *inspect.Instance, out io.Writer) error {
-	const mainCmd = "/usr/local/bin/tgcloud"
-	if !hostutil.SafePath(mainCmd, false) {
-		return errors.New("未找到受管 tgcloud 主入口；请在完整源码目录运行 tgcloud webdav")
+	mainCmd, err := inspect.VerifiedManagerCommand()
+	if err != nil {
+		return err
 	}
 	cmd := exec.Command(mainCmd, "webdav", "--from-manager", "--edition", "clouddrive2", "--install-dir", b.Directory)
 	env := make([]string, 0, len(os.Environ())+1)

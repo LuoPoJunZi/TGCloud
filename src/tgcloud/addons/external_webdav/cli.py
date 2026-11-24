@@ -212,13 +212,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         session = LocalSession(log)
         if getattr(args, "from_manager", False):
-            if args.action is not None:
-                raise ValueError("管理入口模式不支持直接指定子命令。")
+            if args.action is not None or args.sample_file or getattr(args, "runtime_check", False):
+                raise ValueError("管理入口模式不支持直接指定子命令或附加参数。")
             from tgcloud.addons.external_webdav import entry
             from tgcloud.deployment import instances
 
             discovery.host(session, log=log)
-            ui = Terminal(friendly=True)
+            ui = Terminal()
+            ui.friendly = True
             instance = instances.discover(
                 PRODUCTS[args.edition],
                 instances.docker_inventory(session),
