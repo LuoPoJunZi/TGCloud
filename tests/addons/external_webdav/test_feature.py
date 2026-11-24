@@ -21,6 +21,7 @@ from unittest.mock import Mock, patch
 from tgcloud.addons.external_webdav import (
     cli,
     config,
+    entry,
     nginx,
     releases,
     scope,
@@ -654,6 +655,18 @@ class LifecycleTests(unittest.TestCase):
         self.session.run.assert_not_called()
 
 
+def _fixture_runtime_owners():
+    # The runner owns the synthetic runtime. Keep the production mode checks.
+    check = entry._check_ownership
+
+    def fixture_owner(info, *, private=False):
+        if os.name == "posix" and info.st_uid == os.getuid():
+            info = SimpleNamespace(st_uid=0, st_mode=info.st_mode)
+        return check(info, private=private)
+
+    return patch.object(entry, "_check_ownership", side_effect=fixture_owner)
+
+
 class EntryAndReleaseTests(unittest.TestCase):
     def test_unified_management_hints_do_not_require_the_compatibility_command(self):
         messages = []
@@ -899,7 +912,7 @@ class EntryAndReleaseTests(unittest.TestCase):
                 releases.supported(root)
 
     def test_offline_host_bundle_is_self_contained_and_detects_tampering(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, _fixture_runtime_owners():
             root = Path(directory).resolve()
             service = Service(PRODUCTS["clouddrive2"], Mock(), Mock(), Mock(), root=root)
             launcher = root / "bin/tgcloud-webdav"
@@ -909,7 +922,7 @@ class EntryAndReleaseTests(unittest.TestCase):
             code = ("import sys; sys.path.insert(0," + repr(str(runtime / "src")) + "); "
                     "import tgcloud.addons.external_webdav.service, tgcloud.addons.external_webdav.cli; "
                     "assert not any(n.split('.')[0] in {'telethon','cryptg','psutil','PySide6'} for n in sys.modules)")
-            result = subprocess.run([sys.executable, "-I", "-S", "-c", code], cwd=root,
+            result = subprocess.run([sys.executable, "-I", "-S", "-B", "-c", code], cwd=root,
                                     capture_output=True, text=True, timeout=20, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             before = launcher.read_bytes()
@@ -917,7 +930,7 @@ class EntryAndReleaseTests(unittest.TestCase):
             self.assertEqual(launcher.read_bytes(), before)
             nested = runtime / "src/tgcloud/addons/external_webdav/nginx.py"
             nested.write_bytes(nested.read_bytes() + b"\n# synthetic tamper\n")
-            with self.assertRaisesRegex(ValueError, "摘要不匹配"):
+            with self.assertRaisesRegex(ValueError, "运行代码与来源清单不一致"):
                 service.install_runtime(ROOT, cli.source_identity(ROOT), launcher=launcher)
             self.assertEqual(launcher.read_bytes(), before)
 
@@ -947,9 +960,12 @@ class RuntimeInstallTests(unittest.TestCase):
         self.service = Service(PRODUCTS["clouddrive2"], Mock(), Mock(), Mock(), root=self.root / "addon")
         self.launcher = self.root / "bin/tgcloud-webdav"
         self.launcher.parent.mkdir(mode=0o700)
-        from tgcloud.addons.external_webdav.entry import HEADER
-        self.old_launcher = (HEADER + '# previous reviewed runtime\n').encode()
+        self.old_launcher = (entry.HEADER + '# previous reviewed runtime\n').encode()
         self.launcher.write_bytes(self.old_launcher)
+        self.launcher.chmod(0o700)
+        owners = _fixture_runtime_owners()
+        owners.start()
+        self.addCleanup(owners.stop)
         checksum = hashlib.sha256()
         for name in releases.host_files(self.source):
             checksum.update(name.encode() + b"\0" + (self.source / name).read_bytes())
@@ -966,7 +982,7 @@ class RuntimeInstallTests(unittest.TestCase):
     def test_copy_failure_and_normal_interruption_clean_only_current_candidate_and_retry(self):
         for failure in (OSError, KeyboardInterrupt):
             with self.subTest(failure=failure.__name__):
-                with patch("tgcloud.addons.external_webdav.service.shutil.copyfile", side_effect=failure("synthetic copy failure")), self.assertRaises(failure):
+                with patch.object(entry.shutil, "copyfile", side_effect=failure("synthetic copy failure")), self.assertRaises(failure):
                     self.install()
                 self.assert_failure_preserved_runtime()
         self.install()
@@ -992,10 +1008,11 @@ class RuntimeInstallTests(unittest.TestCase):
 
         def corrupt_copy(source, target):
             result = original(source, target)
-            target.write_bytes(target.read_bytes() + b"# synthetic corruption\n")
+            if target.name == "entry.py":
+                target.write_bytes(target.read_bytes() + b"# synthetic corruption\n")
             return result
 
-        with patch("tgcloud.addons.external_webdav.service.shutil.copyfile", side_effect=corrupt_copy), self.assertRaisesRegex(ValueError, "摘要不匹配"):
+        with patch.object(entry.shutil, "copyfile", side_effect=corrupt_copy), self.assertRaisesRegex(ValueError, "运行代码与来源清单不一致"):
             self.install()
         self.assert_failure_preserved_runtime()
         self.install()
@@ -1009,7 +1026,7 @@ class RuntimeInstallTests(unittest.TestCase):
                 raise OSError("synthetic promotion failure")
             return original(source, target)
 
-        with patch("tgcloud.addons.external_webdav.service.os.replace", side_effect=fail_promotion), self.assertRaises(OSError):
+        with patch.object(entry.os, "replace", side_effect=fail_promotion), self.assertRaises(OSError):
             self.install()
         self.assert_failure_preserved_runtime()
         self.install()
@@ -1028,7 +1045,7 @@ class RuntimeInstallTests(unittest.TestCase):
         self.assertTrue(self.destination.is_dir())
         self.assertEqual(self.launcher.read_bytes(), self.old_launcher)
         self.assertEqual(list(self.destination.parent.glob("stage-*")), [])
-        with patch("tgcloud.addons.external_webdav.service.shutil.copyfile") as copyfile:
+        with patch.object(entry.shutil, "copyfile") as copyfile:
             self.install()
         copyfile.assert_not_called()
         self.assertNotEqual(self.launcher.read_bytes(), self.old_launcher)
