@@ -214,3 +214,86 @@ func TestHTTPSPortAndDNSPreflight(t *testing.T) {
 		t.Fatal("NAT confirmation allowed an unmatched AAAA record")
 	}
 }
+
+func TestRenewDryRunProtectionAndCleanup(t *testing.T) {
+	previousOwner := hostutil.ManagedOwnerUID
+	hostutil.ManagedOwnerUID = uint32(os.Geteuid())
+	t.Cleanup(func() { hostutil.ManagedOwnerUID = previousOwner })
+
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyRoot := filepath.Join(root, "proxy")
+	for _, rel := range []string{"state", "nginx/conf.d"} {
+		if err := os.MkdirAll(filepath.Join(proxyRoot, rel), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(proxyRoot, "docker-compose.yml"), []byte("services:{}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proxyRoot, "nginx/nginx.conf"), []byte("events{}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// External proxy (schema v3) must branch out instead of running managed Compose.
+	if err := os.WriteFile(filepath.Join(proxyRoot, "state/domains.json"),
+		[]byte(`{"version":3,"project":"tgcloud","domains":{"clouddrive2":{"domain":"files.example.test","backend_port":19798}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := renewDryRunWith(proxyRoot, "files.example.test", func(...string) ([]byte, error) { return nil, nil }, nil); !errors.Is(err, ErrExternalProxyMode) {
+		t.Fatalf("expected ErrExternalProxyMode for schema v3, got %v", err)
+	}
+
+	// Managed v1 state with domain mismatch must be rejected.
+	if err := os.WriteFile(filepath.Join(proxyRoot, "state/domains.json"),
+		[]byte(`{"version":1,"project":"tgcloud","domains":{"clouddrive2":{"domain":"files.example.test","backend_port":19798}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := renewDryRunWith(proxyRoot, "other.example.test", func(...string) ([]byte, error) { return nil, nil }, nil); err == nil {
+		t.Fatal("expected mismatch domain rejection")
+	}
+
+	// Cleanup unconfirmed (docker info fails after container absent) must NOT return nil.
+	dockerFailCleanup := func(args ...string) ([]byte, error) {
+		switch args[0] {
+		case "container":
+			if args[1] == "ls" {
+				return nil, nil
+			}
+			return nil, errors.New("no such container")
+		case "compose":
+			return nil, nil
+		case "info":
+			return nil, errors.New("docker unreachable")
+		default:
+			return nil, nil
+		}
+	}
+	if err := renewDryRunWith(proxyRoot, "files.example.test", dockerFailCleanup, nil); err == nil {
+		t.Fatal("expected error when cleanup verification cannot reach docker")
+	}
+
+	// Confirmed cleanup returns nil and emits TGCLOUD_PROXY_TASK_CLEANUP=OK.
+	var progress bytes.Buffer
+	dockerOK := func(args ...string) ([]byte, error) {
+		switch args[0] {
+		case "container":
+			if args[1] == "ls" {
+				return nil, nil
+			}
+			return nil, errors.New("no such container")
+		case "compose", "info":
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	if err := renewDryRunWith(proxyRoot, "files.example.test", dockerOK, &progress); err != nil {
+		t.Fatalf("expected renewDryRunWith success, got %v", err)
+	}
+	if !strings.Contains(progress.String(), "TGCLOUD_PROXY_TASK_CLEANUP=OK") {
+		t.Fatalf("missing cleanup confirmation marker: %s", progress.String())
+	}
+}

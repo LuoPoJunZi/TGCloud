@@ -66,7 +66,7 @@ const usage = "用法：tgcloud-host {status|check|logs}\n" +
 
 func main() {
 	if len(os.Args) == 1 && filepath.Base(os.Args[0]) == "tgcloud" {
-		os.Exit(tui.RunMenu(inspect.InstallDirectory, os.Stdin, os.Stdout))
+		os.Exit(tui.RunMenu(inspect.InstallDirectory, os.Stdin, os.Stderr))
 	}
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, inspect.InstallDirectory, inspect.RunDocker))
 }
@@ -416,7 +416,7 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 				fmt.Fprintln(errOut, usage)
 				return 2
 			}
-			return tui.RunMenu(dir, os.Stdin, out)
+			return tui.RunMenu(dir, os.Stdin, errOut)
 		}
 	}
 	if len(args) == 2 && args[1] == "--supported" && (args[0] == "start" || args[0] == "stop" || args[0] == "restart") {

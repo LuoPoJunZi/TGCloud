@@ -1,20 +1,16 @@
 package backupops
 
 import (
-	"archive/tar"
-	"bytes"
-	"compress/gzip"
+	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"path"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -28,31 +24,229 @@ const (
 	snapshotMaxBytes = 2 * 1024 * 1024 * 1024
 	snapshotMaxFiles = 20000
 	snapshotMinFree  = 256 * 1024 * 1024
+	snapshotDBName   = "tgcloud.db"
 )
 
 var (
-	sqliteMagic      = []byte("SQLite format 3\x00")
-	snapshotDBNames  = []string{"tgcloud.db", "tasks.db"}
 	snapshotOptional = []string{"tgcloud-release.json", "tgcloud-source.json", "tgcloud-compose.json", "compose-bundle.json", "compose-access.json"}
+	lockInstanceFunc = inspect.LockInstance
+	activeTasksFunc  = queryActiveTasks
+	snapshotPyBin    = "python3"
 )
-
-type SnapshotFileRecord struct {
-	Size   int64  `json:"size"`
-	SHA256 string `json:"sha256"`
-}
-
-type SnapshotManifest struct {
-	Format   int                           `json:"format"`
-	Edition  string                        `json:"edition"`
-	Version  string                        `json:"version"`
-	Files    map[string]SnapshotFileRecord `json:"files"`
-	Excluded []string                      `json:"excluded"`
-	Source   string                        `json:"source"`
-}
 
 type containerState struct {
 	ID      string `json:"id"`
 	Running bool   `json:"running"`
+}
+
+const activeTasksScript = `import sqlite3, sys
+from contextlib import closing
+from pathlib import Path
+db = Path(sys.argv[1]).resolve()
+with closing(sqlite3.connect(db.as_uri() + "?mode=ro", uri=True, timeout=5)) as c:
+    n = c.execute("SELECT count(*) FROM tasks WHERE state IN ('reserved','downloading','streaming','uploading','verifying','finalizing','cleanup_pending')").fetchone()[0]
+print(int(n))`
+
+const snapshotBundleScript = `import hashlib, io, json, os, re, secrets, shutil, sqlite3, stat, sys, tarfile, tempfile
+from contextlib import closing
+from pathlib import Path, PurePosixPath
+
+MAX_BYTES, MAX_FILES, MIN_FREE = 2 * 1024**3, 20000, 256 * 1024**2
+DB_NAME = "tgcloud.db"
+SIDECARS = ("-wal", "-shm", "-journal")
+OPTIONAL = {"tgcloud-release.json", "tgcloud-source.json", "tgcloud-compose.json", "compose-bundle.json", "compose-access.json", "data/listener/personal.session"}
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        while chunk := f.read(1024 * 1024):
+            h.update(chunk)
+    return h.hexdigest()
+
+def quick_check(path):
+    with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro&immutable=1", uri=True)) as c:
+        if c.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+            raise ValueError("database integrity failed")
+
+def backup_db(src, dst):
+    dst.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    tmp = dst.with_name(f".{dst.name}.tmp-{os.getpid()}-{secrets.token_hex(6)}")
+    fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    os.close(fd)
+    try:
+        with closing(sqlite3.connect(src)) as orig, closing(sqlite3.connect(tmp)) as copy:
+            orig.backup(copy)
+            if copy.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                raise ValueError("sqlite backup quick_check failed")
+        os.chmod(tmp, 0o600)
+        with tmp.open("r+b") as h:
+            os.fsync(h.fileno())
+        os.replace(tmp, dst)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+def valid_name(name):
+    p = PurePosixPath(name)
+    if not name or p.is_absolute() or ".." in p.parts or "\\" in name or ":" in name or str(p) != name or any(ord(c) < 32 for c in name):
+        raise ValueError("unsafe archive path")
+
+def parse_ver(v):
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", v):
+        raise ValueError("invalid version")
+    return tuple(map(int, v.split(".")))
+
+def check_preflight(archive, scratch, target_ver):
+    target = parse_ver(target_ver)
+    if archive.is_symlink() or scratch.is_symlink() or not scratch.is_dir():
+        raise ValueError("invalid archive/scratch")
+    with tarfile.open(archive, "r:gz") as tar:
+        first = tar.next()
+        if first is None or first.name != "manifest.json" or not first.isfile() or first.size > 8 * 1024**2:
+            raise ValueError("missing manifest")
+        manifest = json.load(tar.extractfile(first))
+        src_ver = parse_ver(manifest["version"])
+        if manifest.get("format") != 1 or manifest.get("edition") != "clouddrive2" or src_ver > target or src_ver[0] != target[0]:
+            raise ValueError("edition/version incompatible")
+        records = manifest.get("files")
+        if not isinstance(records, dict) or not records or len(records) > MAX_FILES:
+            raise ValueError("incomplete manifest")
+        req = {".env", "docker-compose.yml", "data/" + DB_NAME, "data/bot.session"}
+        if not req.issubset(records):
+            raise ValueError("incomplete manifest")
+        for k in records:
+            p = PurePosixPath(k)
+            if p.parent.as_posix() == "data" and p.suffix in {".db", ".sqlite", ".sqlite3"} and p.name != DB_NAME:
+                raise ValueError("ambiguous database entry")
+        if not any(k.startswith("config/") for k in records) or not any(k.startswith("clouddrive/config/") for k in records):
+            raise ValueError("configuration/gateway coverage incomplete")
+        total = 0
+        for name, rec in records.items():
+            valid_name(name)
+            if name not in (req | OPTIONAL) and not name.startswith(("config/", "clouddrive/config/")):
+                raise ValueError("entry outside snapshot scope")
+            if name.endswith(SIDECARS):
+                raise ValueError("live sidecar in archive")
+            if type(rec.get("size")) is not int or rec["size"] < 0:
+                raise ValueError("invalid size")
+            total += rec["size"]
+        if total > MAX_BYTES or shutil.disk_usage(scratch).free < total + MIN_FREE:
+            raise ValueError("restore capacity limit")
+        with tempfile.TemporaryDirectory(prefix="tgcloud-restore-check-", dir=scratch) as priv:
+            root = Path(priv)
+            root.chmod(0o700)
+            seen = set()
+            for item in iter(tar.next, None):
+                valid_name(item.name)
+                if item.name not in records or item.name in seen or not item.isfile():
+                    raise ValueError("unexpected/duplicate/link entry")
+                rec = records[item.name]
+                if item.size != rec["size"]:
+                    raise ValueError("size mismatch")
+                dest = root / item.name
+                dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                with tar.extractfile(item) as src, dest.open("xb") as out:
+                    dest.chmod(0o600)
+                    shutil.copyfileobj(src, out, length=1024 * 1024)
+                if sha256_file(dest) != rec["sha256"]:
+                    raise ValueError("checksum mismatch")
+                if dest.suffix in {".db", ".session"}:
+                    quick_check(dest)
+                seen.add(item.name)
+            if seen != set(records):
+                raise ValueError("missing entries")
+            return len(records)
+
+mode = sys.argv[1]
+if mode == "preflight":
+    print(check_preflight(Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]))
+elif mode == "pack":
+    spec = json.loads(sys.stdin.read())
+    dest_dir, archive, ver = Path(spec["dest_dir"]), Path(spec["archive"]), spec["version"]
+    files = spec["files"]
+    with tempfile.TemporaryDirectory(prefix="snapshot-", dir=dest_dir) as tmpdir:
+        snap = Path(tmpdir).resolve()
+        snap.chmod(0o700)
+        records = {}
+        total = 0
+        for rel in sorted(files):
+            src = Path(files[rel])
+            if src.resolve() != src or src.is_symlink() or not src.is_file():
+                raise ValueError("source changed")
+            dst = snap / rel
+            dst.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+            with src.open("rb") as r:
+                is_sqlite = r.read(16) == b"SQLite format 3\x00"
+            if is_sqlite:
+                backup_db(src, dst)
+            else:
+                if rel.endswith((".db", ".session")):
+                    raise ValueError("invalid sqlite file")
+                with src.open("rb") as r, dst.open("xb") as w:
+                    dst.chmod(0o600)
+                    shutil.copyfileobj(r, w, 1024 * 1024)
+            st = dst.stat()
+            total += st.st_size
+            if total > MAX_BYTES or len(records) >= MAX_FILES:
+                raise ValueError("snapshot limit exceeded")
+            records[rel] = {"size": st.st_size, "sha256": sha256_file(dst)}
+        if not any(k.startswith("config/") for k in records) or not any(k.startswith("clouddrive/config/") for k in records):
+            raise ValueError("configuration/gateway coverage incomplete")
+        manifest = {"format": 1, "edition": "clouddrive2", "version": ver, "files": records,
+                    "excluded": ["downloads", "logs", "shared-https"], "source": "operator-offline-copy"}
+        fd = os.open(archive, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "wb") as out, tarfile.open(fileobj=out, mode="w:gz") as tar:
+                mb = json.dumps(manifest, ensure_ascii=False).encode()
+                ti = tarfile.TarInfo("manifest.json")
+                ti.size, ti.mode = len(mb), 0o600
+                tar.addfile(ti, io.BytesIO(mb))
+                for rel, rec in records.items():
+                    p = snap / rel
+                    with p.open("rb") as h:
+                        if sha256_file(p) != rec["sha256"]:
+                            raise ValueError("snapshot changed")
+                        ti = tarfile.TarInfo(rel)
+                        ti.size, ti.mode = rec["size"], 0o600
+                        tar.addfile(ti, h)
+            print(check_preflight(archive, archive.parent, ver))
+        except BaseException:
+            archive.unlink(missing_ok=True)
+            raise
+else:
+    raise ValueError("unknown mode")
+`
+
+func runSnapshotPython(ctx context.Context, script string, stdin []byte, args ...string) ([]byte, error) {
+	cmdArgs := append([]string{"-I", "-S", "-B", "-c", script}, args...)
+	cmd := exec.CommandContext(ctx, snapshotPyBin, cmdArgs...)
+	cmd.Env = []string{
+		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"LC_ALL=C.UTF-8",
+		"PYTHONUTF8=1",
+	}
+	if stdin != nil {
+		cmd.Stdin = strings.NewReader(string(stdin))
+	}
+	return cmd.Output()
+}
+
+func queryActiveTasks(installDir string) (int, error) {
+	dbPath := filepath.Join(installDir, "data", snapshotDBName)
+	info, err := os.Lstat(dbPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return 0, errors.New("业务数据库缺失或经过链接，无法确认备份条件")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	out, err := runSnapshotPython(ctx, activeTasksScript, nil, dbPath)
+	if err != nil {
+		return 0, errors.New("无法核对 Bot 活动传输任务数；请稍后重试")
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || n < 0 {
+		return 0, errors.New("无法解析 Bot 活动传输任务数")
+	}
+	return n, nil
 }
 
 func validateSnapshotDest(destDir, installDir string) error {
@@ -65,8 +259,7 @@ func validateSnapshotDest(destDir, installDir string) error {
 		return errors.New("备份位置不能位于实例或其父目录内")
 	}
 	if strings.HasPrefix(cleanDest, "/opt/") {
-		rest := strings.TrimPrefix(cleanDest, "/opt/")
-		top := strings.SplitN(rest, "/", 2)[0]
+		top := strings.SplitN(strings.TrimPrefix(cleanDest, "/opt/"), "/", 2)[0]
 		if strings.HasPrefix(top, "tgcloud-") && top != "tgcloud-snapshots" {
 			return errors.New("备份位置不能复用其他 TGCloud 运行目录")
 		}
@@ -116,16 +309,66 @@ func checkPendingJournals(destDir string) error {
 	return nil
 }
 
-func resolveDatabaseRel(installDir string) (string, error) {
-	for _, name := range snapshotDBNames {
-		rel := "data/" + name
-		full := filepath.Join(installDir, filepath.FromSlash(rel))
-		info, err := os.Lstat(full)
-		if err == nil && info.Mode().IsRegular() {
-			return rel, nil
+func checkDatabaseAndSidecars(installDir string) (int64, error) {
+	dataDir := filepath.Join(installDir, "data")
+	resolved, err := filepath.EvalSymlinks(dataDir)
+	if err != nil || resolved != dataDir {
+		return 0, errors.New("数据库目录经过链接；停止")
+	}
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return 0, errors.New("无法读取业务数据目录")
+	}
+	for _, e := range entries {
+		base := e.Name()
+		for _, sfx := range []string{"-wal", "-shm", "-journal"} {
+			base = strings.TrimSuffix(base, sfx)
+		}
+		if (strings.HasSuffix(base, ".db") || strings.HasSuffix(base, ".sqlite") || strings.HasSuffix(base, ".sqlite3")) && base != snapshotDBName {
+			return 0, errors.New("发现其他数据库或旁文件；停止，不自动选择替代数据库")
 		}
 	}
-	return "", errors.New("业务数据库缺失，无法创建实例快照")
+	var sidecarBytes int64
+	checkMainAndSidecars := func(rel string, required bool) error {
+		full := filepath.Join(installDir, filepath.FromSlash(rel))
+		info, err := os.Lstat(full)
+		exists := err == nil
+		if !exists && !errors.Is(err, os.ErrNotExist) {
+			return errors.New("无法检查数据库或 Session 文件")
+		}
+		if exists {
+			st := info.Sys().(*syscall.Stat_t)
+			if !info.Mode().IsRegular() || st.Nlink != 1 {
+				return errors.New("数据库或 Session 不是安全的独立常规文件")
+			}
+		} else if required {
+			return errors.New("业务数据库或主 Session 缺失，无法创建实例快照")
+		}
+		for _, sfx := range []string{"-wal", "-shm", "-journal"} {
+			sc := full + sfx
+			scInfo, scErr := os.Lstat(sc)
+			if errors.Is(scErr, os.ErrNotExist) {
+				continue
+			}
+			if scErr != nil || !scInfo.Mode().IsRegular() || scInfo.Sys().(*syscall.Stat_t).Nlink != 1 || !exists {
+				return errors.New("数据库或 Session 旁文件归属不明确或路径不安全")
+			}
+			if sfx != "-shm" {
+				sidecarBytes += scInfo.Size()
+			}
+		}
+		return nil
+	}
+	if err := checkMainAndSidecars("data/"+snapshotDBName, true); err != nil {
+		return 0, err
+	}
+	if err := checkMainAndSidecars("data/bot.session", true); err != nil {
+		return 0, err
+	}
+	if err := checkMainAndSidecars("data/listener/personal.session", false); err != nil {
+		return 0, err
+	}
+	return sidecarBytes, nil
 }
 
 func collectSnapshotFiles(installDir string, mounts []string) (map[string]string, int64, error) {
@@ -133,16 +376,12 @@ func collectSnapshotFiles(installDir string, mounts []string) (map[string]string
 	if err != nil || resolved != installDir {
 		return nil, 0, errors.New("实例路径经过链接")
 	}
-	dbRel, err := resolveDatabaseRel(installDir)
+	sidecarBytes, err := checkDatabaseAndSidecars(installDir)
 	if err != nil {
 		return nil, 0, err
 	}
-	names := []string{".env", "docker-compose.yml", dbRel, "data/bot.session", "config", "clouddrive/config"}
-	personal := filepath.Join(installDir, "data/listener/personal.session")
-	if info, err := os.Lstat(personal); err == nil {
-		if !info.Mode().IsRegular() {
-			return nil, 0, errors.New("监听 Session 不是常规文件，停止备份")
-		}
+	names := []string{".env", "docker-compose.yml", "data/" + snapshotDBName, "data/bot.session", "config", "clouddrive/config"}
+	if info, err := os.Lstat(filepath.Join(installDir, "data/listener/personal.session")); err == nil && info.Mode().IsRegular() {
 		names = append(names, "data/listener/personal.session")
 	}
 	for _, opt := range snapshotOptional {
@@ -197,13 +436,14 @@ func collectSnapshotFiles(installDir string, mounts []string) (map[string]string
 				return errors.New("备份范围包含特殊文件或硬链接")
 			}
 			if strings.HasSuffix(relPosix, "-wal") || strings.HasSuffix(relPosix, "-shm") || strings.HasSuffix(relPosix, "-journal") {
-				if info.Size() > 0 {
-					return errors.New("检测到非空 SQLite 活跃日志文件，请先确认服务已完全停止")
+				// SQLite files are copied through sqlite3.backup(); sidecar sizes are accounted for separately.
+				if !strings.HasSuffix(relPosix, "-shm") {
+					sidecarBytes += info.Size()
 				}
 				return nil
 			}
 			total += info.Size()
-			if total > snapshotMaxBytes || len(files) >= snapshotMaxFiles {
+			if total+sidecarBytes > snapshotMaxBytes || len(files) >= snapshotMaxFiles {
 				return errors.New("实例备份超过容量／文件数量上限")
 			}
 			files[relPosix] = curr
@@ -213,30 +453,46 @@ func collectSnapshotFiles(installDir string, mounts []string) (map[string]string
 			return nil, 0, walkErr
 		}
 	}
-	return files, total, nil
+	return files, total + sidecarBytes, nil
 }
 
-func checkSQLiteHeader(path string) error {
-	f, err := os.Open(path)
+func checkCustomDataDir(installDir string) error {
+	raw, err := os.ReadFile(filepath.Join(installDir, ".env"))
+	if err != nil {
+		return errors.New("无法读取实例 .env 配置")
+	}
+	env, err := hostutil.ParseEnvLines(raw, errors.New("实例 .env 配置格式无效"))
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	buf := make([]byte, len(sqliteMagic))
-	if _, err := io.ReadFull(f, buf); err != nil || !bytes.Equal(buf, sqliteMagic) {
-		return errors.New("数据库／Session 格式不正确，未生成备份")
+	if dataDir := strings.TrimSpace(env["DATA_DIR"]); dataDir != "" && dataDir != "/data" {
+		return errors.New("自定义数据路径暂不支持自动实例备份")
 	}
 	return nil
 }
 
-// CreateInstanceSnapshot creates a verified offline-compatible instance snapshot
-// archive after stopping running Bot/Gateway containers, and restores their prior
-// running state before returning.
+// CreateInstanceSnapshot acquires the instance lock, verifies container and mount
+// ownership via inspect.Discover, stops running services safely under signal
+// protection, creates a SQLite-consistent offline snapshot archive compatible with
+// Python bundle.py, and restores prior running state before returning.
 func CreateInstanceSnapshot(installDir, destDir, version string, docker inspect.DockerRunner) (archive string, retErr error) {
 	if !inspect.VersionPattern.MatchString(version) {
 		return "", errors.New("实例版本号格式无效")
 	}
 	if err := validateSnapshotDest(destDir, installDir); err != nil {
+		return "", err
+	}
+	lock, err := lockInstanceFunc()
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+
+	inst, err := inspect.Discover(installDir, docker)
+	if err != nil || inst == nil {
+		return "", errors.New("无法核对实例安装目录与容器归属，拒绝执行实例快照")
+	}
+	if err := checkCustomDataDir(installDir); err != nil {
 		return "", err
 	}
 	mounts, err := hostutil.Mountpoints()
@@ -246,28 +502,21 @@ func CreateInstanceSnapshot(installDir, destDir, version string, docker inspect.
 	if _, _, err := collectSnapshotFiles(installDir, mounts); err != nil {
 		return "", err
 	}
-	botState, err := inspectSnapshotContainer(docker, inspect.BotName)
-	if err != nil {
+	if n, err := activeTasksFunc(installDir); err != nil {
 		return "", err
+	} else if n > 0 {
+		return "", errors.New("存在活动传输，先等待完成；暂停调度不会停止当前任务")
+	}
+	botState, err := inspectSnapshotContainer(docker, inspect.BotName)
+	if err != nil || botState.ID != inst.Bot.ID {
+		return "", errors.New("无法核对 Bot 容器归属／运行状态")
 	}
 	gwState, err := inspectSnapshotContainer(docker, inspect.GatewayName)
-	if err != nil {
-		return "", err
+	if err != nil || gwState.ID != inst.Gateway.ID {
+		return "", errors.New("无法核对网关容器归属／运行状态")
 	}
 	if botState.Running && !gwState.Running {
 		return "", errors.New("Bot 与网关运行状态不一致，先人工核对")
-	}
-	if botState.Running {
-		activeOut, err := docker("exec", botState.ID, "python", "-B", "-c",
-			"import sqlite3; from tgcloud.persistence.paths import database_path; "+
-				"c=sqlite3.connect(database_path('/data', require_existing=True).as_uri()+'?mode=ro', uri=True, timeout=5); "+
-				"print(c.execute(\"SELECT count(*) FROM tasks WHERE state IN ('reserved','downloading','streaming','uploading','verifying','finalizing','cleanup_pending')\").fetchone()[0])")
-		if err != nil {
-			return "", errors.New("无法核对 Bot 活动传输任务数；请稍后重试")
-		}
-		if strings.TrimSpace(string(activeOut)) != "0" {
-			return "", errors.New("存在活动传输，先等待完成；暂停调度不会停止当前任务")
-		}
 	}
 	if err := ensurePrivateDir(destDir); err != nil {
 		return "", err
@@ -294,15 +543,28 @@ func CreateInstanceSnapshot(installDir, destDir, version string, docker inspect.
 		inspect.BotName:     botState,
 		inspect.GatewayName: gwState,
 	}
-	writeEvent := func(st string) {
-		raw, _ := json.Marshal(map[string]any{
+	writeEvent := func(st string) error {
+		raw, err := json.Marshal(map[string]any{
 			"schema": 1, "owner": "tgcloud.instance-snapshot", "edition": "clouddrive2",
 			"state": st, "containers": states, "archive": filepath.Base(archivePath),
 		})
-		_, _ = jFile.Write(append(raw, '\n'))
-		_ = jFile.Sync()
+		if err != nil {
+			return errors.New("无法编码实例快照操作日志")
+		}
+		if _, err := jFile.Write(append(raw, '\n')); err != nil {
+			return errors.New("无法写入实例快照操作日志")
+		}
+		if err := jFile.Sync(); err != nil {
+			return errors.New("无法落盘实例快照操作日志")
+		}
+		return nil
 	}
-	writeEvent("prepared")
+	if err := writeEvent("prepared"); err != nil {
+		return "", err
+	}
+
+	ctx, stopSig := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	defer stopSig()
 
 	var stopped []string
 	completed := false
@@ -338,29 +600,37 @@ func CreateInstanceSnapshot(installDir, destDir, version string, docker inspect.
 			}
 		}
 		if len(failures) > 0 {
-			writeEvent("needs-service-review")
+			_ = writeEvent("needs-service-review")
 			if retErr == nil {
 				archive = ""
 				retErr = errors.New("实例备份结束但原服务恢复未确认；保留归档和操作记录，请人工检查")
 			}
 			return
 		}
+		finalState := "failed-services-restored"
 		if completed {
-			writeEvent("completed")
-		} else {
-			writeEvent("failed-services-restored")
+			finalState = "completed"
+		}
+		if jErr := writeEvent(finalState); jErr != nil && retErr == nil {
+			archive = ""
+			retErr = jErr
 		}
 	}()
 
 	for _, name := range []string{inspect.BotName, inspect.GatewayName} {
+		if ctx.Err() != nil {
+			return "", errors.New("实例备份被中断，正在恢复原服务")
+		}
 		prev := states[name]
 		curr, err := inspectSnapshotContainer(docker, name)
 		if err != nil || curr != prev {
 			return "", errors.New("备份前容器已变化，请重新预检")
 		}
 		if prev.Running {
+			if err := writeEvent("stopping"); err != nil {
+				return "", err
+			}
 			stopped = append(stopped, name)
-			writeEvent("stopping")
 			if _, err := docker("stop", "-t", "45", prev.ID); err != nil {
 				return "", errors.New("无法确认容器已停止，未生成备份")
 			}
@@ -370,7 +640,14 @@ func CreateInstanceSnapshot(installDir, destDir, version string, docker inspect.
 			}
 		}
 	}
-	writeEvent("stopped")
+	if err := writeEvent("stopped"); err != nil {
+		return "", err
+	}
+	if n, err := activeTasksFunc(installDir); err != nil {
+		return "", err
+	} else if n > 0 {
+		return "", errors.New("停止前出现活动传输，备份取消；保留数据并恢复原服务")
+	}
 
 	files, total, err := collectSnapshotFiles(installDir, mounts)
 	if err != nil {
@@ -380,155 +657,38 @@ func CreateInstanceSnapshot(installDir, destDir, version string, docker inspect.
 	if err := syscall.Statfs(destDir, &statfs); err != nil {
 		return "", errors.New("无法核对备份目录剩余空间")
 	}
-	freeBytes := uint64(statfs.Bavail) * uint64(statfs.Bsize)
-	if freeBytes < uint64(total)*3+snapshotMinFree {
+	if uint64(statfs.Bavail)*uint64(statfs.Bsize) < uint64(total)*3+snapshotMinFree {
 		return "", errors.New("实例备份临时副本／归档／校验空间不足")
 	}
+	if ctx.Err() != nil {
+		return "", errors.New("实例备份被中断，正在恢复原服务")
+	}
 
-	if err := packInstanceSnapshot(files, archivePath, version); err != nil {
+	specBytes, err := json.Marshal(map[string]any{
+		"dest_dir": destDir, "archive": archivePath, "version": version, "files": files,
+	})
+	if err != nil {
 		return "", err
 	}
-	writeEvent("packed")
-	if _, err := PreflightInstanceSnapshot(archivePath, destDir, version); err != nil {
+	packCtx, cancelPack := context.WithTimeout(ctx, 2400*time.Second)
+	defer cancelPack()
+	if _, err := runSnapshotPython(packCtx, snapshotBundleScript, specBytes, "pack"); err != nil {
 		_ = os.Remove(archivePath)
+		return "", errors.New("实例快照一致性备份或校验失败，已清理临时产物并恢复原服务")
+	}
+	if err := writeEvent("packed"); err != nil {
 		return "", err
 	}
 	completed = true
 	return archivePath, nil
 }
 
-func packInstanceSnapshot(files map[string]string, archivePath, version string) error {
-	records := make(map[string]SnapshotFileRecord, len(files))
-	relNames := make([]string, 0, len(files))
-	for rel, src := range files {
-		if strings.HasSuffix(rel, ".db") || strings.HasSuffix(rel, ".session") {
-			if err := checkSQLiteHeader(src); err != nil {
-				return err
-			}
-		}
-		info, err := os.Lstat(src)
-		if err != nil || !info.Mode().IsRegular() {
-			return errors.New("打包前备份对象发生变化")
-		}
-		sum, err := fileSHA256(src)
-		if err != nil {
-			return err
-		}
-		records[rel] = SnapshotFileRecord{Size: info.Size(), SHA256: sum}
-		relNames = append(relNames, rel)
-	}
-	slices.Sort(relNames)
-
-	manifest := SnapshotManifest{
-		Format:   1,
-		Edition:  "clouddrive2",
-		Version:  version,
-		Files:    records,
-		Excluded: []string{"downloads", "logs", "shared-https"},
-		Source:   "operator-offline-copy",
-	}
-	manifestBytes, err := json.Marshal(manifest)
-	if err != nil {
-		return err
-	}
-
-	f, err := os.OpenFile(archivePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return errors.New("无法创建实例快照归档")
-	}
-	cleanup := func() { _ = os.Remove(archivePath) }
-	gz := gzip.NewWriter(f)
-	tw := tar.NewWriter(gz)
-
-	if err := tw.WriteHeader(&tar.Header{
-		Name:     "manifest.json",
-		Mode:     0600,
-		Size:     int64(len(manifestBytes)),
-		Typeflag: tar.TypeReg,
-		ModTime:  time.Now().UTC(),
-	}); err != nil {
-		tw.Close()
-		gz.Close()
-		f.Close()
-		cleanup()
-		return err
-	}
-	if _, err := io.Copy(tw, bytes.NewReader(manifestBytes)); err != nil {
-		tw.Close()
-		gz.Close()
-		f.Close()
-		cleanup()
-		return err
-	}
-	for _, rel := range relNames {
-		src := files[rel]
-		rec := records[rel]
-		raw, err := os.ReadFile(src)
-		if err != nil || int64(len(raw)) != rec.Size {
-			tw.Close()
-			gz.Close()
-			f.Close()
-			cleanup()
-			return errors.New("打包期间实例快照内容发生变化")
-		}
-		sum := sha256.Sum256(raw)
-		if hex.EncodeToString(sum[:]) != rec.SHA256 {
-			tw.Close()
-			gz.Close()
-			f.Close()
-			cleanup()
-			return errors.New("打包期间实例快照摘要发生变化")
-		}
-		if err := tw.WriteHeader(&tar.Header{
-			Name:     rel,
-			Mode:     0600,
-			Size:     rec.Size,
-			Typeflag: tar.TypeReg,
-			ModTime:  time.Now().UTC(),
-		}); err != nil {
-			tw.Close()
-			gz.Close()
-			f.Close()
-			cleanup()
-			return err
-		}
-		if _, err := tw.Write(raw); err != nil {
-			tw.Close()
-			gz.Close()
-			f.Close()
-			cleanup()
-			return err
-		}
-	}
-	if err := errors.Join(tw.Close(), gz.Close(), f.Sync(), f.Close()); err != nil {
-		cleanup()
-		return err
-	}
-	return nil
-}
-
-func parseSemver(v string) ([3]int, error) {
-	if !inspect.VersionPattern.MatchString(v) {
-		return [3]int{}, errors.New("版本号格式无效")
-	}
-	parts := strings.Split(v, ".")
-	var out [3]int
-	for i := range 3 {
-		n, err := strconv.Atoi(parts[i])
-		if err != nil {
-			return [3]int{}, err
-		}
-		out[i] = n
-	}
-	return out, nil
-}
-
 // PreflightInstanceSnapshot verifies an instance snapshot archive in an isolated
-// temporary directory without modifying live services or data.
+// private directory using Python's read-only SQLite PRAGMA quick_check and full
+// manifest/scope/coverage validation without modifying live services or data.
 func PreflightInstanceSnapshot(archivePath, scratchDir, targetVersion string) (int, error) {
-	targetVer, err := parseSemver(targetVersion)
-	if err != nil {
-		return 0, err
+	if !inspect.VersionPattern.MatchString(targetVersion) {
+		return 0, errors.New("目标版本号格式无效")
 	}
 	if !hostutil.SafePath(archivePath, true) || !hostutil.SafePath(scratchDir, true) {
 		return 0, errors.New("快照归档或隔离目录路径不安全")
@@ -536,102 +696,15 @@ func PreflightInstanceSnapshot(archivePath, scratchDir, targetVersion string) (i
 	if err := ensurePrivateDir(scratchDir); err != nil {
 		return 0, err
 	}
-	tmp, err := os.MkdirTemp(scratchDir, "snapshot-preflight-")
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second)
+	defer cancel()
+	out, err := runSnapshotPython(ctx, snapshotBundleScript, nil, "preflight", archivePath, scratchDir, targetVersion)
 	if err != nil {
-		return 0, errors.New("无法创建隔离预检目录")
+		return 0, errors.New("实例快照结构／数据库预检未通过；请核对版本、覆盖范围与数据库完整性")
 	}
-	defer os.RemoveAll(tmp)
-
-	f, err := os.Open(archivePath)
-	if err != nil {
-		return 0, errors.New("无法打开实例快照归档")
+	count, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || count <= 0 {
+		return 0, errors.New("无法解析实例快照预检结果")
 	}
-	defer f.Close()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		return 0, errors.New("实例快照 gzip 格式无效")
-	}
-	defer gz.Close()
-	tr := tar.NewReader(gz)
-
-	first, err := tr.Next()
-	if err != nil || first.Name != "manifest.json" || first.Typeflag != tar.TypeReg || first.Size > 8*1024*1024 {
-		return 0, errors.New("实例快照缺少有效 manifest.json")
-	}
-	mRaw, err := io.ReadAll(io.LimitReader(tr, 8*1024*1024+1))
-	var manifest SnapshotManifest
-	if err != nil || json.Unmarshal(mRaw, &manifest) != nil || manifest.Format != 1 || manifest.Edition != "clouddrive2" {
-		return 0, errors.New("实例快照 manifest 版本或产品不匹配")
-	}
-	srcVer, err := parseSemver(manifest.Version)
-	if err != nil || srcVer[0] != targetVer[0] ||
-		(srcVer[0] == targetVer[0] && (srcVer[1] > targetVer[1] || (srcVer[1] == targetVer[1] && srcVer[2] > targetVer[2]))) {
-		return 0, errors.New("实例快照版本高于目标版本或主版本不兼容")
-	}
-	if len(manifest.Files) == 0 || len(manifest.Files) > snapshotMaxFiles {
-		return 0, errors.New("实例快照文件清单无效")
-	}
-	hasDB := false
-	for _, dbName := range snapshotDBNames {
-		if _, ok := manifest.Files["data/"+dbName]; ok {
-			hasDB = true
-		}
-	}
-	for _, req := range []string{".env", "docker-compose.yml", "data/bot.session"} {
-		if _, ok := manifest.Files[req]; !ok {
-			return 0, errors.New("实例快照缺少必需文件：" + req)
-		}
-	}
-	if !hasDB {
-		return 0, errors.New("实例快照缺少业务数据库")
-	}
-
-	seen := make(map[string]bool, len(manifest.Files))
-	var total int64
-	for {
-		hdr, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return 0, errors.New("实例快照归档内容损坏")
-		}
-		name := hdr.Name
-		if name == "" || strings.HasPrefix(name, "/") || strings.Contains(name, "\\") || strings.Contains(name, ":") ||
-			path.Clean(name) != name || slices.Contains(strings.Split(name, "/"), "..") || hdr.Typeflag != tar.TypeReg {
-			return 0, errors.New("实例快照包含不安全路径或非文件条目")
-		}
-		rec, ok := manifest.Files[name]
-		if !ok || seen[name] || hdr.Size != rec.Size || hdr.Size < 0 {
-			return 0, errors.New("实例快照条目与 manifest 不一致")
-		}
-		total += hdr.Size
-		if total > snapshotMaxBytes {
-			return 0, errors.New("实例快照解压容量超过上限")
-		}
-		dest := filepath.Join(tmp, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
-			return 0, err
-		}
-		out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if err != nil {
-			return 0, err
-		}
-		h := sha256.New()
-		n, copyErr := io.Copy(io.MultiWriter(out, h), tr)
-		closeErr := out.Close()
-		if copyErr != nil || closeErr != nil || n != rec.Size || hex.EncodeToString(h.Sum(nil)) != rec.SHA256 {
-			return 0, errors.New("实例快照文件 SHA256 校验失败：" + name)
-		}
-		if strings.HasSuffix(name, ".db") || strings.HasSuffix(name, ".session") {
-			if err := checkSQLiteHeader(dest); err != nil {
-				return 0, err
-			}
-		}
-		seen[name] = true
-	}
-	if len(seen) != len(manifest.Files) {
-		return 0, errors.New("实例快照缺少 manifest 声明的文件")
-	}
-	return len(seen), nil
+	return count, nil
 }

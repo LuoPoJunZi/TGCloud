@@ -1,10 +1,11 @@
 package redact
 
 import (
+	"cmp"
 	"encoding/base64"
 	"errors"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -44,11 +45,11 @@ func NewLogRedactor(config []byte) (func(string) string, error) {
 			}
 		}
 	}
-	sort.Slice(secrets, func(i, j int) bool {
-		if len(secrets[i]) != len(secrets[j]) {
-			return len(secrets[i]) > len(secrets[j])
+	slices.SortFunc(secrets, func(a, b string) int {
+		if len(a) != len(b) {
+			return cmp.Compare(len(b), len(a))
 		}
-		return secrets[i] < secrets[j]
+		return cmp.Compare(a, b)
 	})
 	var pairs []string
 	for _, secret := range secrets {

@@ -159,6 +159,9 @@ func (a *App) handleEntry(instance *inspect.Instance) (bool, error) {
 }
 
 func (a *App) handleCredentials(instance *inspect.Instance) error {
+	if a.PrivateOut == nil {
+		return errors.New("凭据只能在当前交互终端显示")
+	}
 	env, err := a.Backend.ReadEnv(instance)
 	if err != nil {
 		return err
@@ -168,18 +171,42 @@ func (a *App) handleCredentials(instance *inspect.Instance) error {
 		return err
 	}
 	fmt.Fprintln(a.Out, "网关地址："+creds.URL)
-	fmt.Fprintln(a.Out, "用户名："+creds.Username)
 	fmt.Fprintln(a.Out, "保存目录："+creds.TargetPath)
-	ok, err := a.confirm("是否在当前私密终端临时显示 WebDAV 密码？（请确认无旁观/录屏）")
-	if err != nil {
-		return err
-	}
-	if ok {
-		fmt.Fprintln(a.Out, "密码："+creds.Password)
-	} else {
-		fmt.Fprintln(a.Out, "密码：已隐藏")
+	fmt.Fprintln(a.Out, "TGCloud：逐项确认后仅向当前私有终端显示已保存凭据；默认不显示。")
+	for _, field := range []struct{ label, value string }{
+		{"WebDAV 用户名", creds.Username},
+		{"WebDAV 密码", creds.Password},
+	} {
+		ok, err := a.confirm("是否仅在当前私密终端显示" + field.label + "？请确保没有旁观/录屏")
+		if err != nil {
+			return err
+		}
+		if ok {
+			fmt.Fprintln(a.PrivateOut, field.label+"："+field.value)
+		} else {
+			fmt.Fprintln(a.Out, field.label+"：已隐藏")
+		}
 	}
 	return nil
+}
+
+func (a *App) handleExternalWebDAV(instance *inspect.Instance) (bool, error) {
+	fmt.Fprintln(a.Out, FormatPageHeading("外部 WebDAV 管理", instance.Version))
+	if err := a.Backend.ShowExternalWebDAV(instance, a.Out); err != nil {
+		return false, err
+	}
+	fmt.Fprintln(a.Out, "\n"+FormatNumberedMenu([]MenuItem{
+		{1, "打开完整外部 WebDAV 管理菜单", "1"},
+		{0, "返回上级", "0"},
+	}))
+	sel, err := a.choose("选择操作", []string{"0", "1"}, "1")
+	if err != nil || sel == "0" {
+		return false, err
+	}
+	if err := a.Backend.ManageExternalWebDAV(instance, a.Out); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (a *App) readAdminID(instance *inspect.Instance) (int64, error) {

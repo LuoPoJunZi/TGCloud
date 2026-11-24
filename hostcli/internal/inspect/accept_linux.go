@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 )
@@ -143,7 +143,7 @@ func verifyBotRuntime(directory, id string, marker sourceMarker, progress io.Wri
 		}
 	}
 	if len(changed) != 0 {
-		sort.Strings(changed)
+		slices.Sort(changed)
 		fmt.Fprintln(progress, "TGCLOUD_CONFIG=MISMATCH_KEYS:"+strings.Join(changed, ","))
 		return errors.New("运行中的 Bot 配置与预期不一致")
 	}

@@ -299,7 +299,7 @@ func (entry lanEntry) inspectAndCheck(ctx context.Context, result lanObservation
 		if err != nil || base == nil {
 			return result, errors.New("无法核对 Bot 和 CloudDrive2 网关归属")
 		}
-		gateway = &inspect.GatewayContainer{inspect.Container: base.Gateway}
+		gateway = &inspect.GatewayContainer{Container: base.Gateway}
 	}
 	if _, err := inspect.CheckGatewayPort(gateway, docker); err != nil {
 		return result, err

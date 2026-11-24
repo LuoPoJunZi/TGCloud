@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/acceptance"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/backupops"
@@ -28,14 +29,44 @@ import (
 type HostBackend struct {
 	Directory string
 	Docker    inspect.DockerRunner
+	TTYIn     *os.File
+	TTYOut    *os.File
 }
 
-func RunMenu(directory string, in io.Reader, out io.Writer) int {
+func isTerminalFile(f *os.File) bool {
+	if f == nil {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	var termios syscall.Termios
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), uintptr(syscall.TCGETS), uintptr(unsafe.Pointer(&termios)))
+	return errno == 0
+}
+
+func RunMenu(directory string, _ io.Reader, errOut io.Writer) int {
 	if directory == "" {
 		directory = inspect.InstallDirectory
 	}
-	backend := &HostBackend{Directory: directory, Docker: inspect.RunDocker}
-	app := NewApp(backend, in, out, "hostcli")
+	ttyIn, errIn := os.OpenFile("/dev/tty", os.O_RDONLY, 0)
+	ttyOut, errOutOpen := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+	if errIn != nil || errOutOpen != nil || !isTerminalFile(ttyIn) || !isTerminalFile(ttyOut) {
+		if ttyIn != nil {
+			ttyIn.Close()
+		}
+		if ttyOut != nil {
+			ttyOut.Close()
+		}
+		fmt.Fprintln(errOut, "需要交互终端；不从管道/历史记录读取或显示凭据")
+		return 1
+	}
+	defer ttyIn.Close()
+	defer ttyOut.Close()
+	backend := &HostBackend{Directory: directory, Docker: inspect.RunDocker, TTYIn: ttyIn, TTYOut: ttyOut}
+	app := NewApp(backend, ttyIn, ttyOut, "hostcli")
+	app.PrivateOut = ttyOut
 	return app.Run()
 }
 
@@ -298,7 +329,18 @@ func (b *HostBackend) RenewHTTPSDryRun(_ *inspect.Instance, domain string, out i
 		return err
 	}
 	defer lock.Close()
-	return entry.RenewDryRun(domain, out)
+	err = entry.RenewDryRun(domain, out)
+	if !errors.Is(err, entry.ErrExternalProxyMode) {
+		return err
+	}
+	const cliCmd = "/usr/local/bin/tgcloud"
+	if !hostutil.SafePath(cliCmd, false) {
+		return err
+	}
+	cmd := exec.Command(cliCmd, "proxy", "maintain", "--dry-run", "--yes", "--authorize-proxy")
+	cmd.Stdout = out
+	cmd.Stderr = out
+	return cmd.Run()
 }
 
 func (b *HostBackend) ShowExternalWebDAV(_ *inspect.Instance, out io.Writer) error {
@@ -307,12 +349,46 @@ func (b *HostBackend) ShowExternalWebDAV(_ *inspect.Instance, out io.Writer) err
 		return err
 	}
 	if !status.Present {
-		fmt.Fprintln(out, "外部 WebDAV 尚未登记。如需首次配置，请运行 tgcloud-webdav 或原 Python 向导。")
+		fmt.Fprintln(out, "外部 WebDAV 尚未登记。")
 		return nil
 	}
 	fmt.Fprintf(out, "外部域名：%s\n主用户名：%s\n共享目录：%s\n状态：%s\n认证账号数：%d\n",
 		status.Domain, status.Username, status.TargetDir, status.Phase, status.AuthUserCount)
 	return nil
+}
+
+func (b *HostBackend) ManageExternalWebDAV(_ *inspect.Instance, out io.Writer) error {
+	const webdavCmd = "/usr/local/bin/tgcloud-webdav"
+	const mainCmd = "/usr/local/bin/tgcloud"
+	var cmd *exec.Cmd
+	if _, err := os.Lstat(webdavCmd); err == nil {
+		if !hostutil.SafePath(webdavCmd, true) {
+			return errors.New("现有 tgcloud-webdav 入口路径不安全，拒绝执行")
+		}
+		cmd = exec.Command(webdavCmd, "--edition", "clouddrive2", "--install-dir", b.Directory)
+	} else {
+		if !hostutil.SafePath(mainCmd, false) {
+			return errors.New("未找到受管外部 WebDAV 入口；请在完整源码目录运行 tgcloud webdav")
+		}
+		cmd = exec.Command(mainCmd, "webdav", "--edition", "clouddrive2", "--install-dir", b.Directory)
+	}
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "TGCLOUD_SOURCE_ROOT=") {
+			env = append(env, kv)
+		}
+	}
+	cmd.Env = append(env, "TGCLOUD_MANAGER_MENU=1")
+	if b.TTYIn != nil && b.TTYOut != nil {
+		cmd.Stdin = b.TTYIn
+		cmd.Stdout = b.TTYOut
+		cmd.Stderr = b.TTYOut
+	} else {
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = out
+		cmd.Stderr = out
+	}
+	return cmd.Run()
 }
 
 func (b *HostBackend) dockerExecJSON(containerID, module string, reqPayload map[string]any) ([]byte, error) {
@@ -374,9 +450,15 @@ func (b *HostBackend) RunListenAccount(instance *inspect.Instance, action string
 	}
 	args = append(args, instance.Bot.ID, "python", "-B", "-m", "tgcloud.listening.account", action)
 	cmd := exec.Command("docker", args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = out
-	cmd.Stderr = out
+	if b.TTYIn != nil && b.TTYOut != nil {
+		cmd.Stdin = b.TTYIn
+		cmd.Stdout = b.TTYOut
+		cmd.Stderr = b.TTYOut
+	} else {
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = out
+		cmd.Stderr = out
+	}
 	return cmd.Run()
 }
 
@@ -396,11 +478,6 @@ func (b *HostBackend) ListBackups(out io.Writer) error {
 }
 
 func (b *HostBackend) CreateInstanceSnapshot(instance *inspect.Instance, destDir string) (string, error) {
-	lock, err := inspect.LockInstance()
-	if err != nil {
-		return "", err
-	}
-	defer lock.Close()
 	return backupops.CreateInstanceSnapshot(b.Directory, destDir, instance.Version, b.Docker)
 }
 

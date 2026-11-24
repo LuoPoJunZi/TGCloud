@@ -48,7 +48,7 @@ func TestLANEntryReusesAndRepairsOnlyProxy(t *testing.T) {
 		item := inspect.Container{ID: id, Name: "/" + name, Project: "tgcloud", Directory: entry.directory,
 			Service: service, State: "running", Health: "healthy"}
 		for destination, relative := range paths {
-			item.Mounts = append(item.Mounts, inspect.Mount{"bind", filepath.Join(entry.directory, relative), destination})
+			item.Mounts = append(item.Mounts, inspect.Mount{Type: "bind", Source: filepath.Join(entry.directory, relative), Destination: destination})
 		}
 		return item
 	}

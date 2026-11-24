@@ -105,6 +105,7 @@ type Backend interface {
 	ConfigureHTTPS(instance *inspect.Instance, domain, email, confirmedNAT, expectedDomain string, out io.Writer) error
 	RenewHTTPSDryRun(instance *inspect.Instance, domain string, out io.Writer) error
 	ShowExternalWebDAV(instance *inspect.Instance, out io.Writer) error
+	ManageExternalWebDAV(instance *inspect.Instance, out io.Writer) error
 	BotUsersRPC(instance *inspect.Instance, adminID int64, payload map[string]any) (UsersRecord, error)
 	BotControlRPC(instance *inspect.Instance, adminID int64, payload map[string]any) (map[string]any, error)
 	RunListenAccount(instance *inspect.Instance, action string, out io.Writer) error
@@ -130,10 +131,11 @@ type FamilyUser struct {
 }
 
 type App struct {
-	Backend Backend
-	In      *bufio.Scanner
-	Out     io.Writer
-	Version string
+	Backend    Backend
+	In         *bufio.Scanner
+	Out        io.Writer
+	PrivateOut io.Writer
+	Version    string
 }
 
 func NewApp(backend Backend, in io.Reader, out io.Writer, version string) *App {
@@ -301,9 +303,7 @@ func (a *App) dispatchAction(action string, instance *inspect.Instance) (int, bo
 		err = a.handleCredentials(instance)
 		completed = true
 	case "external_webdav":
-		fmt.Fprintln(a.Out, FormatPageHeading("外部 WebDAV 管理", instance.Version))
-		err = a.Backend.ShowExternalWebDAV(instance, a.Out)
-		completed = true
+		completed, err = a.handleExternalWebDAV(instance)
 	case "users":
 		err = a.handleUsers(instance)
 	case "listening":

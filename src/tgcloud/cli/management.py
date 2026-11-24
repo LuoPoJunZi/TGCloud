@@ -618,6 +618,16 @@ class Management:
                 return exit_code
 
 
+def _has_interactive_tty() -> bool:
+    if os.name != "posix" or not sys.stdin.isatty() or not sys.stdout.isatty():
+        return False
+    try:
+        with open("/dev/tty", "rb+", buffering=0) as tty:
+            return tty.isatty()
+    except OSError:
+        return False
+
+
 def main(argv=None, *, mode_hint=None) -> int:
     parser = argparse.ArgumentParser(description="TGCloud 本地管理；仅 CloudDrive2，安装及升级使用完整本地源码")
     parser.add_argument("--edition", choices=tuple(PRODUCTS), default="clouddrive2")
@@ -633,6 +643,7 @@ def main(argv=None, *, mode_hint=None) -> int:
         and sys.platform == "linux"
         and mode_hint is None
         and args.source_dir is None
+        and _has_interactive_tty()
     )
     if prefer_go:
         tool = runtime.installed_host_cli()

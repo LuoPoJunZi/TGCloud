@@ -1,10 +1,7 @@
 package backupops
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,18 +16,12 @@ import (
 const (
 	defaultProxyRoot       = "/opt/tgcloud-proxy"
 	defaultProxyBackupRoot = "/opt/tgcloud-proxy-backups"
-	composeRegistry        = "state/compose-instances.json"
-	composeTransaction     = "state/compose-transaction.json"
-	maxBackupBytes         = 512 * 1024 * 1024
-	maxBackupEntries       = 20000
-	projectID              = "tgcloud"
 )
 
 var (
 	instanceBackupRegex = regexp.MustCompile(`^(config-[A-Za-z0-9]{8}\.tar\.gz|database-[A-Za-z0-9]{8}\.db|env-[A-Za-z0-9]{8}\.env)$`)
 	proxyArchiveRegex   = regexp.MustCompile(`^proxy-([0-9]{8}T[0-9]{6}Z)-[0-9a-f]{32}\.tar\.gz$`)
 	sha256Regex         = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	proxySelection      = []string{"state/domains.json", composeRegistry, "docker-compose.yml", "nginx", "certbot/letsencrypt", "certbot/status", "external-auth"}
 )
 
 type InstanceBackupItem struct {
@@ -230,17 +221,4 @@ func ensurePrivateDir(dir string) error {
 		}
 	}
 	return nil
-}
-
-func fileSHA256(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
 }

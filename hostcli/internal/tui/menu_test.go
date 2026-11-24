@@ -22,6 +22,7 @@ type fakeBackend struct {
 	controlRPCs     []map[string]any
 	snapshots       []string
 	preflights      []string
+	webdavManaged   int
 	uninstallCalls  int
 }
 
@@ -73,6 +74,11 @@ func (f *fakeBackend) RenewHTTPSDryRun(_ *inspect.Instance, domain string, out i
 }
 func (f *fakeBackend) ShowExternalWebDAV(_ *inspect.Instance, out io.Writer) error {
 	fmt.Fprintln(out, "外部 WebDAV 尚未登记")
+	return nil
+}
+func (f *fakeBackend) ManageExternalWebDAV(_ *inspect.Instance, out io.Writer) error {
+	f.webdavManaged++
+	fmt.Fprintln(out, "已转交外部 WebDAV 管理")
 	return nil
 }
 func (f *fakeBackend) BotUsersRPC(_ *inspect.Instance, adminID int64, payload map[string]any) (UsersRecord, error) {
@@ -164,23 +170,26 @@ func TestMenuFiveGroupsAndAllClosures(t *testing.T) {
 		},
 	}
 
-	// Flow covering all 5 groups + all 3 interactive closures:
+	// Flow covering all 5 groups + all interactive closures + TTY credential isolation + external WebDAV handoff:
 	// 1 -> 3 (control) -> 3 (restart bot) -> n (cancel) -> 0
-	// 2 -> 1 (entry) -> 3 (renew dry-run) -> y -> 0 (return) -> 2 (credentials) -> n (hide password) -> 0 -> 0
+	// 2 -> 1 (entry) -> 3 (renew dry-run) -> y -> 0 (return)
+	//   -> 2 (credentials) -> n (hide user) -> y (show pass on PrivateOut ONLY) -> 0
+	//   -> 3 (external_webdav) -> 1 (open full manager) -> 0 -> 0
 	// 3 -> 1 (users) -> 6 (quota-set) -> 1 (member 1) -> 20 (GB) -> 10 (queued) -> 3 (active) -> y -> 0 -> 0
 	// 4 -> 3 (diagnostics) -> n (no save) -> 0 -> 0
 	// 5 -> 2 (backups) -> 2 (snapshot create) -> "" (default dir) -> y -> 0 (return) -> 3 (uninstall) -> y -> WRONG -> 0
 	// 0 (exit)
 	input := strings.Join([]string{
 		"1", "3", "3", "n", "0",
-		"2", "1", "3", "y", "0", "2", "n", "0", "0",
+		"2", "1", "3", "y", "0", "2", "n", "y", "0", "3", "1", "0", "0",
 		"3", "1", "6", "1", "20", "10", "3", "y", "0", "0",
 		"4", "3", "n", "0", "0",
 		"5", "2", "2", "", "y", "0", "3", "y", "WRONG", "0",
 		"0",
 	}, "\n") + "\n"
-	var out bytes.Buffer
+	var out, privOut bytes.Buffer
 	app := NewApp(fb, strings.NewReader(input), &out, "0.0.9")
+	app.PrivateOut = &privOut
 	if code := app.Run(); code != 0 {
 		t.Fatalf("App.Run() = %d, output=%s", code, out.String())
 	}
@@ -190,6 +199,9 @@ func TestMenuFiveGroupsAndAllClosures(t *testing.T) {
 	}
 	if len(fb.renewDryRuns) != 1 || fb.renewDryRuns[0] != "files.example.com" {
 		t.Fatalf("expected renew dry-run for files.example.com, got: %v", fb.renewDryRuns)
+	}
+	if fb.webdavManaged != 1 {
+		t.Fatalf("expected ManageExternalWebDAV handoff once, got %d", fb.webdavManaged)
 	}
 	if len(fb.snapshots) != 1 || fb.snapshots[0] != "/opt/tgcloud-snapshots/clouddrive2" {
 		t.Fatalf("expected snapshot creation in default dir, got: %v", fb.snapshots)
@@ -206,13 +218,38 @@ func TestMenuFiveGroupsAndAllClosures(t *testing.T) {
 	if fb.uninstallCalls != 0 {
 		t.Fatalf("mismatched uninstall token should not execute uninstall")
 	}
+	// Password must NEVER appear on general stdout; it goes ONLY to PrivateOut.
 	if strings.Contains(text, "supersecret") {
-		t.Fatal("password leaked when confirmation was declined")
+		t.Fatal("password leaked to non-private stdout")
 	}
-	for _, want := range []string{"服务运行管理", "访问入口管理", "业务功能设置", "健康检查诊断", "实例维护备份", "0. 返回上级", "配额已更新", "实例快照已核验", "密码：已隐藏"} {
+	if !strings.Contains(privOut.String(), "supersecret") || strings.Contains(privOut.String(), "botuser") {
+		t.Fatalf("unexpected PrivateOut contents: %q", privOut.String())
+	}
+	for _, want := range []string{"服务运行管理", "访问入口管理", "业务功能设置", "健康检查诊断", "实例维护备份", "0. 返回上级", "配额已更新", "实例快照已核验", "WebDAV 用户名：已隐藏", "已转交外部 WebDAV 管理"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in output:\n%s", want, text)
 		}
+	}
+}
+
+func TestCredentialsRejectsNonTTYOutput(t *testing.T) {
+	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+	fb := &fakeBackend{
+		instance: &inspect.Instance{Version: "0.0.9", Bot: inspect.Container{State: "running"}, Gateway: inspect.Container{State: "running"}},
+		env: map[string]string{
+			"WEBDAV_URL_B64":      b64("http://gw:19798/dav"),
+			"WEBDAV_USERNAME_B64": b64("u"),
+			"WEBDAV_PASSWORD_B64": b64("secret-should-not-leak"),
+		},
+	}
+	var out bytes.Buffer
+	app := NewApp(fb, strings.NewReader("2\n2\n0\n0\n0\n"), &out, "0.0.9")
+	// PrivateOut intentionally left nil (non-TTY).
+	if code := app.Run(); code != 0 {
+		t.Fatalf("unexpected exit code %d", code)
+	}
+	if strings.Contains(out.String(), "secret-should-not-leak") || !strings.Contains(out.String(), "凭据只能在当前交互终端显示") {
+		t.Fatalf("expected fail-closed non-TTY credential guard, got:\n%s", out.String())
 	}
 }
 
