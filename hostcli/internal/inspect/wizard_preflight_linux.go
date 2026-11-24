@@ -110,6 +110,10 @@ func installerOSName(release string) (string, error) {
 	return pretty, nil
 }
 
+func InstallerDocker(mode string) (*PreflightResult, error) {
+	return installerDocker(mode)
+}
+
 func installerDocker(mode string) (*PreflightResult, error) {
 	if mode != "base" && mode != "lan" && mode != "upgrade" {
 		return nil, errors.New("未知的 Docker 预检模式")

@@ -14,7 +14,8 @@ import (
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 )
 
-const installConfigLimit = 128 * 1024
+const InstallConfigLimit = 128 * 1024
+const installConfigLimit = InstallConfigLimit
 
 var (
 	installPathPattern = hostutil.OptPathRegex
@@ -157,6 +158,10 @@ func ensureInstallDirectory(path string) error {
 		return errors.New("持久化目录不是实际目录：" + filepath.Base(path))
 	}
 	return nil
+}
+
+func ReadInstallConfig(path string) ([]byte, error) {
+	return readInstallConfig(path)
 }
 
 func readInstallConfig(path string) ([]byte, error) {

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/entry"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
@@ -57,7 +58,7 @@ func DefaultPaths() Paths {
 	return Paths{
 		InstallDir:     inspect.InstallDirectory,
 		BackupDir:      inspect.UpgradeBackupDir,
-		ProxyRoot:      inspect.HTTPSRoot,
+		ProxyRoot:      entry.HTTPSRoot,
 		ProxyBackupDir: "/opt/tgcloud-proxy-backups",
 		LANRoot:        defaultLANRoot,
 		WebDAVRoot:     "/opt/tgcloud-webdav",
@@ -128,84 +129,6 @@ type proxyState struct {
 	Project        string                     `json:"project"`
 	Domains        map[string]json.RawMessage `json:"domains"`
 	ExternalWebDAV map[string]json.RawMessage `json:"external_webdav,omitempty"`
-}
-
-func Supported() bool { return true }
-
-func Run(args []string, progress io.Writer) (any, error) {
-	if len(args) == 0 {
-		return nil, errors.New("卸载子命令参数无效")
-	}
-	action := args[0]
-	opts := Options{PurgeData: true, PurgeBackups: true}
-	jsonOutput := false
-	confirmed := false
-	for i := 1; i < len(args); i++ {
-		switch args[i] {
-		case "--keep-data":
-			opts.PurgeData = false
-			opts.PurgeBackups = false
-		case "--purge-data":
-			opts.PurgeData = true
-			opts.PurgeBackups = false
-		case "--purge-all":
-			opts.PurgeData = true
-			opts.PurgeBackups = true
-		case "--json":
-			jsonOutput = true
-		case "--yes":
-			confirmed = true
-		case "--plan":
-			if i+1 >= len(args) {
-				return nil, errors.New("缺少 --plan 摘要参数")
-			}
-			i++
-			opts.PlanDigest = args[i]
-		default:
-			return nil, errors.New("未知卸载参数：" + args[i])
-		}
-	}
-	if _, err := inspect.DockerPreflight(false); err != nil {
-		return nil, err
-	}
-	if os.Geteuid() != 0 {
-		return nil, errors.New("卸载 TGCloud 实例需要 Linux root 权限")
-	}
-	paths := DefaultPaths()
-	switch action {
-	case "check":
-		plan, err := BuildPlan(paths, opts, inspect.RunDocker, hostutil.Mountpoints)
-		if err != nil {
-			return nil, err
-		}
-		if jsonOutput {
-			return plan.Summary, nil
-		}
-		WritePreview(plan, progress)
-		fmt.Fprintln(progress, "TGCLOUD_UNINSTALL_CHECK=OK；只是预检，不是已经卸载")
-		return nil, nil
-	case "run":
-		if !confirmed {
-			return nil, errors.New("执行卸载必须显式传入 --yes 确认")
-		}
-		plan, err := BuildPlan(paths, opts, inspect.RunDocker, hostutil.Mountpoints)
-		if err != nil {
-			return nil, err
-		}
-		if opts.PlanDigest != "" && opts.PlanDigest != plan.Summary.PlanDigest {
-			return nil, errors.New("确认期间卸载计划发生变化；请重新预检")
-		}
-		if err := Execute(plan, inspect.RunDocker, hostutil.Mountpoints, progress); err != nil {
-			return nil, err
-		}
-		if jsonOutput {
-			return map[string]any{"result": "ok", "plan_sha256": plan.Summary.PlanDigest}, nil
-		}
-		fmt.Fprintln(progress, "TGCLOUD_UNINSTALL_RESULT=OK；所选受管运行资源及路由已移除，系统应用未卸载。")
-		return nil, nil
-	default:
-		return nil, errors.New("卸载子命令参数无效")
-	}
 }
 
 func WritePreview(plan *Plan, out io.Writer) {
@@ -361,7 +284,7 @@ func BuildPlan(paths Paths, opts Options, docker inspect.DockerRunner, mountFn f
 		if item.Labels[roleLabel] == "maintenance-dry-run" {
 			return nil, errors.New("检测到代理证书维护辅助容器；先完成/核对维护，不在卸载时接管")
 		}
-		if name == inspect.HTTPSNginx || name == inspect.HTTPSCertbot || item.Labels[composeLabel+"project"] == inspect.HTTPSProject {
+		if name == entry.HTTPSNginx || name == entry.HTTPSCertbot || item.Labels[composeLabel+"project"] == entry.HTTPSProject {
 			if err := verifyProxyIdentity(paths.ProxyRoot, name, item); err != nil {
 				return nil, err
 			}
@@ -371,16 +294,16 @@ func BuildPlan(paths Paths, opts Options, docker inspect.DockerRunner, mountFn f
 		}
 	}
 	if !stateExists {
-		if _, ok := containers[inspect.HTTPSNginx]; ok {
+		if _, ok := containers[entry.HTTPSNginx]; ok {
 			return nil, errors.New("共享代理容器存在但状态缺失；停止")
 		}
-		if _, ok := containers[inspect.HTTPSCertbot]; ok {
+		if _, ok := containers[entry.HTTPSCertbot]; ok {
 			return nil, errors.New("共享代理容器存在但状态缺失；停止")
 		}
 	}
 	if removeProxy {
 		if network, ok := networks[proxyNetwork]; ok {
-			if network.Driver != "bridge" || network.Labels[composeLabel+"project"] != inspect.HTTPSProject ||
+			if network.Driver != "bridge" || network.Labels[composeLabel+"project"] != entry.HTTPSProject ||
 				network.Labels[composeLabel+"network"] != "default" || hasExternalEndpoints(network, selected) {
 				return nil, errors.New("共享代理网络有外部连接或类型不符；不强制删除")
 			}
@@ -451,8 +374,8 @@ func BuildPlan(paths Paths, opts Options, docker inspect.DockerRunner, mountFn f
 			if err != nil {
 				return nil, errors.New("无法读取共享代理目录；不递归删除")
 			}
-			for _, entry := range entries {
-				name := entry.Name()
+			for _, item := range entries {
+				name := item.Name()
 				if name != "transaction.lock" && !slices.Contains(proxyChildren, name) {
 					return nil, errors.New("共享代理目录有未知文件；不递归删除")
 				}
@@ -498,221 +421,6 @@ func BuildPlan(paths Paths, opts Options, docker inspect.DockerRunner, mountFn f
 		PurgeBackups:  purgeBackups,
 		RemoveProxy:   removeProxy,
 	}, nil
-}
-
-func Execute(plan *Plan, docker inspect.DockerRunner, mountFn func() ([]string, error), progress io.Writer) error {
-	editionLock, err := inspect.LockInstance()
-	if err != nil {
-		return err
-	}
-	defer editionLock.Close()
-
-	proxyLock, err := lockProxy(plan.Paths.ProxyRoot)
-	if err != nil {
-		return err
-	}
-	if proxyLock != nil {
-		defer proxyLock.Close()
-	}
-
-	rechecked, err := BuildPlan(plan.Paths, Options{PurgeData: plan.PurgeData, PurgeBackups: plan.PurgeBackups}, docker, mountFn)
-	if err != nil {
-		return err
-	}
-	if rechecked.Summary.PlanDigest != plan.Summary.PlanDigest {
-		return errors.New("确认期间实例/网络/HTTPS 状态发生变化；停止，请重新预检")
-	}
-
-	if plan.Summary.HasHTTPSRoute && !plan.RemoveProxy {
-		return errors.New("共享代理仍有其他活动路由或外部接入，请先通过 tgcloud 管理菜单移除对应路由后再卸载")
-	}
-
-	order := []string{lanContainer, inspect.BotName, inspect.GatewayName}
-	for _, name := range plan.Summary.Containers {
-		if !slices.Contains(order, name) {
-			order = append(order, name)
-		}
-	}
-	for _, name := range order {
-		item, ok := plan.Containers[name]
-		if !ok {
-			continue
-		}
-		if err := removeContainer(docker, name, item, progress); err != nil {
-			return err
-		}
-	}
-
-	for _, name := range plan.Summary.Networks {
-		item := plan.Networks[name]
-		if err := removeNetwork(docker, name, item, progress); err != nil {
-			return err
-		}
-	}
-
-	afterContainers, afterNetworks, err := dockerSnapshot(docker)
-	if err != nil {
-		return err
-	}
-	for name := range plan.Containers {
-		if _, still := afterContainers[name]; still {
-			return errors.New("卸载后容器复检未通过；不输出成功标记")
-		}
-	}
-	for name := range plan.Networks {
-		if _, still := afterNetworks[name]; still {
-			return errors.New("卸载后网络复检未通过；不输出成功标记")
-		}
-	}
-
-	lanDir := filepath.Join(plan.Paths.LANRoot, editionKey)
-	if pathExists(lanDir) {
-		if err := safeDeleteTree(lanDir, []string{lanDir}, mountFn); err != nil {
-			return err
-		}
-		logLine(progress, "已移除内网入口配置："+lanDir)
-	}
-
-	if plan.PurgeData {
-		points, err := mountFn()
-		if err != nil {
-			return err
-		}
-		if hasMountUnder(points, plan.Paths.InstallDir) {
-			return errors.New("删除前发现挂载点；停止，不触碰云盘文件")
-		}
-		if pathExists(plan.Paths.InstallDir) {
-			if err := safeDeleteTree(plan.Paths.InstallDir, []string{plan.Paths.InstallDir}, mountFn); err != nil {
-				return err
-			}
-			logLine(progress, "已删除本地实例目录："+plan.Paths.InstallDir)
-		}
-		if plan.RemoveProxy && pathExists(plan.Paths.ProxyRoot) {
-			var allowed []string
-			for _, child := range proxyChildren {
-				allowed = append(allowed, filepath.Join(plan.Paths.ProxyRoot, child))
-			}
-			for _, target := range allowed {
-				if pathExists(target) {
-					if err := safeDeleteTree(target, allowed, mountFn); err != nil {
-						return err
-					}
-				}
-			}
-			logLine(progress, "已删除不再使用的共享代理配置/证书；事务锁文件保留。")
-		}
-		for _, dir := range plan.Summary.BackupDirs {
-			pattern := instanceBackupRegex
-			if dir == plan.Paths.ProxyBackupDir {
-				pattern = proxyBackupRegex
-			}
-			entries, present, err := inspectBackupDir(dir, pattern)
-			if err != nil || !present || !slices.Equal(entries, plan.BackupEntries[dir]) {
-				return errors.New("备份在删除前变化；停止，不删除未经确认的新备份")
-			}
-			if err := safeDeleteTree(dir, plan.Summary.BackupDirs, mountFn); err != nil {
-				return err
-			}
-			logLine(progress, "已删除历史备份目录："+dir)
-		}
-	}
-
-	if plan.PurgeBackups {
-		cleanupManagerIfUnused(plan.Paths, afterContainers, afterNetworks, mountFn, progress)
-	}
-	return nil
-}
-
-func cleanupManagerIfUnused(paths Paths, containers map[string]DockerContainer, networks map[string]DockerNetwork, mountFn func() ([]string, error), progress io.Writer) {
-	if !pathExists(paths.CLIRoot) && !pathExists(paths.CLICommand) {
-		return
-	}
-	for name, item := range containers {
-		if strings.HasPrefix(name, "tgcloud-") || item.Labels[managedLabel] == "true" || strings.HasPrefix(item.Labels[composeLabel+"project"], "tgcloud-") {
-			logLine(progress, "仍有受管容器存在；保留 tgcloud 管理命令及其代码。")
-			return
-		}
-	}
-	for name, item := range networks {
-		if strings.HasPrefix(name, "tgcloud-") || item.Labels[managedLabel] == "true" || strings.HasPrefix(item.Labels[composeLabel+"project"], "tgcloud-") {
-			logLine(progress, "仍有受管网络存在；保留 tgcloud 管理命令及其代码。")
-			return
-		}
-	}
-	for _, check := range []string{paths.InstallDir, paths.BackupDir, filepath.Join(paths.LANRoot, editionKey), paths.ProxyBackupDir, filepath.Join(paths.WebDAVRoot, editionKey, "config.json")} {
-		if pathExists(check) {
-			logLine(progress, "仍有实例、入口或保留数据/备份；保留 tgcloud 管理命令及其代码。")
-			return
-		}
-	}
-	points, err := mountFn()
-	if err != nil || hasMountUnder(points, paths.CLIRoot) || hasMountUnder(points, paths.CLICommand) {
-		logLine(progress, "警告：无法确认管理目录挂载状态；保留 tgcloud 管理命令及其代码。")
-		return
-	}
-	if pathExists(paths.CLICommand) {
-		if err := os.Remove(paths.CLICommand); err != nil {
-			logLine(progress, "警告：无法移除 tgcloud 快捷命令，请人工核对。")
-			return
-		}
-	}
-	if pathExists(paths.CLIRoot) {
-		if err := safeDeleteTree(paths.CLIRoot, []string{paths.CLIRoot}, mountFn); err != nil {
-			logLine(progress, "警告：无法移除受管管理代码目录，请人工核对。")
-			return
-		}
-	}
-	logLine(progress, "最后一个实例已完整卸载：tgcloud 快捷命令及受管管理代码已移除。")
-}
-
-func lockProxy(proxyRoot string) (*os.File, error) {
-	if !pathExists(proxyRoot) {
-		return nil, nil
-	}
-	if err := checkedPath(proxyRoot); err != nil {
-		return nil, err
-	}
-	lockPath := filepath.Join(proxyRoot, "transaction.lock")
-	file, err := hostutil.OpenPrivate(lockPath, syscall.O_CREAT|syscall.O_RDWR, hostutil.ManagedOwnerUID)
-	if err != nil {
-		return nil, errors.New("无法安全获取共享代理锁")
-	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		file.Close()
-		return nil, errors.New("另一个操作正在使用共享代理锁；未执行卸载")
-	}
-	return file, nil
-}
-
-func removeContainer(docker inspect.DockerRunner, name string, item DockerContainer, progress io.Writer) error {
-	if !hex64Pattern.MatchString(item.ID) {
-		return errors.New("容器 ID 无效")
-	}
-	if _, err := docker("container", "stop", "--time", "60", item.ID); err != nil {
-		return errors.New("容器停止失败；没有显示原始输出，停止后续删除")
-	}
-	if _, err := docker("container", "rm", item.ID); err != nil {
-		return errors.New("容器移除失败；停止，请重新预检核对部分完成状态")
-	}
-	logLine(progress, "已移除容器："+name)
-	return nil
-}
-
-func removeNetwork(docker inspect.DockerRunner, name string, item DockerNetwork, progress io.Writer) error {
-	const tmpl = `{"id":{{json .Id}},"containers":{{json .Containers}},"labels":{{json .Labels}}}`
-	out, err := docker("network", "inspect", "--format", tmpl, item.ID)
-	if err != nil {
-		return errors.New("网络删除前复检失败；停止")
-	}
-	var current DockerNetwork
-	if json.Unmarshal(out, &current) != nil || current.ID != item.ID || len(current.Containers) != 0 {
-		return errors.New("网络归属或连接已变化；不强制断开任何容器")
-	}
-	if _, err := docker("network", "rm", item.ID); err != nil {
-		return errors.New("网络移除失败；停止，请核对部分完成状态")
-	}
-	logLine(progress, "已移除网络："+name)
-	return nil
 }
 
 func dockerSnapshot(docker inspect.DockerRunner) (map[string]DockerContainer, map[string]DockerNetwork, error) {
@@ -929,13 +637,13 @@ func verifyLANDir(lanDir, installDir string) error {
 
 func verifyProxyIdentity(proxyRoot, name string, item DockerContainer) error {
 	service, role := "nginx", "reverse-proxy"
-	if name == inspect.HTTPSCertbot {
+	if name == entry.HTTPSCertbot {
 		service, role = "certbot", "certificate-manager"
-	} else if name != inspect.HTTPSNginx {
+	} else if name != entry.HTTPSNginx {
 		return errors.New("共享代理项目存在未知容器；停止")
 	}
 	if item.Labels[managedLabel] != "true" || item.Labels[roleLabel] != role ||
-		item.Labels[composeLabel+"project"] != inspect.HTTPSProject ||
+		item.Labels[composeLabel+"project"] != entry.HTTPSProject ||
 		item.Labels[composeLabel+"service"] != service ||
 		item.Labels[composeLabel+"project.working_dir"] != proxyRoot ||
 		item.Labels[composeLabel+"project.config_files"] != filepath.Join(proxyRoot, "docker-compose.yml") {
@@ -977,14 +685,14 @@ func inspectBackupDir(dir string, pattern *regexp.Regexp) ([]string, bool, error
 		return nil, false, errors.New("无法读取备份目录；停止")
 	}
 	var names []string
-	for _, entry := range entries {
-		childPath := filepath.Join(dir, entry.Name())
+	for _, item := range entries {
+		childPath := filepath.Join(dir, item.Name())
 		childInfo, err := os.Lstat(childPath)
-		if err != nil || !pattern.MatchString(entry.Name()) || !childInfo.Mode().IsRegular() ||
+		if err != nil || !pattern.MatchString(item.Name()) || !childInfo.Mode().IsRegular() ||
 			!hostutil.PrivateOwner(childInfo, hostutil.ManagedOwnerUID) {
 			return nil, false, errors.New("备份目录含未知文件、链接或不安全归属；停止，不按目录名猜测删除")
 		}
-		names = append(names, fmt.Sprintf("%s:%d:%d", entry.Name(), childInfo.Size(), childInfo.ModTime().UnixNano()))
+		names = append(names, fmt.Sprintf("%s:%d:%d", item.Name(), childInfo.Size(), childInfo.ModTime().UnixNano()))
 	}
 	slices.Sort(names)
 	return names, true, nil
@@ -1073,38 +781,9 @@ func otherContainerOverlaps(containers, selected map[string]DockerContainer, roo
 	return false
 }
 
-func safeDeleteTree(target string, allowed []string, mountFn func() ([]string, error)) error {
-	if !slices.Contains(allowed, target) {
-		return errors.New("删除目标不在本次已确认的精确目录白名单中")
-	}
-	if err := checkedPath(target); err != nil {
-		return err
-	}
-	points, err := mountFn()
-	if err != nil {
-		return err
-	}
-	if hasMountUnder(points, target) {
-		return errors.New("删除前发现挂载点；停止，不触碰云盘文件")
-	}
-	if err := os.RemoveAll(target); err != nil {
-		return errors.New("删除目标失败：" + target)
-	}
-	if pathExists(target) {
-		return errors.New("删除后复检失败；停止，不输出成功")
-	}
-	return nil
-}
-
 func pathExists(path string) bool {
 	_, err := os.Lstat(path)
 	return !errors.Is(err, os.ErrNotExist)
-}
-
-func logLine(out io.Writer, msg string) {
-	if out != nil {
-		fmt.Fprintln(out, msg)
-	}
 }
 
 func computePlanDigest(summary PlanSummary, containers map[string]DockerContainer, networks map[string]DockerNetwork, backups map[string][]string) string {

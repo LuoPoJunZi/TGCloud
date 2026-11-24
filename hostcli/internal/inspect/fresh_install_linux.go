@@ -108,6 +108,10 @@ func publishFreshEntries(work, directory string) (err error) {
 
 // renameat2 with RENAME_NOREPLACE atomically refuses an existing target.
 // The standard syscall package omits SYS_RENAMEAT2 on Linux AMD64.
+func RenameNoReplace(from, to string) error {
+	return renameNoReplace(from, to)
+}
+
 func renameNoReplace(from, to string) error {
 	var renameat2 uintptr
 	switch runtime.GOARCH {

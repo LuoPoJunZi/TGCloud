@@ -15,16 +15,18 @@ import (
 	"syscall"
 )
 
-const sourceMarkerName = "tgcloud-source.json"
+const SourceMarkerName = "tgcloud-source.json"
+const sourceMarkerName = SourceMarkerName
 
-var requiredSourceFiles = []string{"app/main.py", "app/tgcloud/version.py", "Dockerfile", "docker-compose.yml", "manage.sh"}
+var RequiredSourceFiles = []string{"app/main.py", "app/tgcloud/version.py", "Dockerfile", "docker-compose.yml", "manage.sh"}
+var requiredSourceFiles = RequiredSourceFiles
 
 var (
 	sourceHash = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	errSource  = errors.New("本地部署来源检查未通过，未激活安装")
 )
 
-type sourceMarker struct {
+type SourceMarker struct {
 	Schema       int               `json:"schema"`
 	Owner        string            `json:"owner"`
 	Project      string            `json:"project"`
@@ -34,6 +36,18 @@ type sourceMarker struct {
 	SourceSHA256 string            `json:"source_sha256"`
 	Files        map[string]string `json:"files"`
 	State        string            `json:"state"`
+}
+
+type sourceMarker = SourceMarker
+
+func (marker SourceMarker) CodeFingerprint() string { return marker.codeFingerprint() }
+
+func SHA256Text(data []byte) string { return sha256Text(data) }
+
+func ReadSourceFile(path string, limit int64) ([]byte, error) { return readSourceFile(path, limit) }
+
+func VerifyDeploymentSource(directory, state string) (SourceMarker, error) {
+	return verifyDeploymentSource(directory, state)
 }
 
 func sha256Text(data []byte) string {

@@ -1,4 +1,4 @@
-package inspect
+package entry
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
 
 const (
@@ -61,10 +62,10 @@ func (entry lanEntry) rejectHTTPS() error {
 	if _, err := os.Lstat(entry.httpsState); errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	if !managerSafePath(entry.httpsState, true) {
+	if !hostutil.SafePath(entry.httpsState, true) {
 		return errors.New("既有 HTTPS 状态无法核对，不改变访问模式")
 	}
-	body, err := readInstallConfig(entry.httpsState)
+	body, err := inspect.ReadInstallConfig(entry.httpsState)
 	var state, domains map[string]json.RawMessage
 	if err != nil || json.Unmarshal(body, &state) != nil ||
 		json.Unmarshal(state["domains"], &domains) != nil || domains == nil {
@@ -79,12 +80,12 @@ func (entry lanEntry) rejectHTTPS() error {
 func lanDirectory(path string) (bool, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		if !managerSafePath(path, false) {
+		if !hostutil.SafePath(path, false) {
 			return false, errors.New("内网状态目录经过链接或权限不安全")
 		}
 		return false, nil
 	}
-	if err != nil || !info.IsDir() || !privateOwner(info, hostutil.ManagedOwnerUID) || !managerSafePath(path, true) {
+	if err != nil || !info.IsDir() || !hostutil.PrivateOwner(info, hostutil.ManagedOwnerUID) || !hostutil.SafePath(path, true) {
 		return false, errors.New("内网状态目录必须归 root 所有且权限为 700，不能经过链接")
 	}
 	return true, nil
@@ -102,7 +103,7 @@ func (entry lanEntry) load() (*lanState, error) {
 	if err != nil || len(entries) != 3 {
 		return nil, errors.New("内网入口文件不完整或含额外文件；停止，不自动清理")
 	}
-	raw, err := readInstallConfig(filepath.Join(directory, "state.json"))
+	raw, err := inspect.ReadInstallConfig(filepath.Join(directory, "state.json"))
 	var state lanState
 	if err != nil || json.Unmarshal(raw, &state) != nil || state != entry.stateFor(state.BindIP) {
 		return nil, errors.New("内网模式记录无效；不接管其他实例或改变安装模式")
@@ -116,7 +117,7 @@ func (entry lanEntry) load() (*lanState, error) {
 		if err != nil || !info.Mode().IsRegular() || info.Sys().(*syscall.Stat_t).Uid != hostutil.ManagedOwnerUID || info.Mode().Perm()&0022 != 0 {
 			return nil, errors.New("内网入口文件归属、权限或类型不安全")
 		}
-		body, err := readSourceFile(path, installConfigLimit)
+		body, err := inspect.ReadSourceFile(path, inspect.InstallConfigLimit)
 		if err != nil || !bytes.Equal([]byte(strings.ReplaceAll(strings.ReplaceAll(string(body), "\r\n", "\n"), "\r", "\n")), expected) {
 			return nil, errors.New("内网入口配置缺失或被修改；停止，不覆盖手改配置")
 		}
@@ -158,11 +159,11 @@ func (entry lanEntry) save(address string) error {
 			mode = 0644 // The unprivileged Nginx process reads this bind mount.
 		}
 		file, err := os.OpenFile(filepath.Join(staged, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
-		if err != nil || finishManagerFile(file, body, mode) != nil {
+		if err != nil || hostutil.FinishFile(file, body, mode) != nil {
 			return errors.New("无法写入内网入口配置")
 		}
 	}
-	if err := renameNoReplace(staged, entry.configDir()); err != nil {
+	if err := inspect.RenameNoReplace(staged, entry.configDir()); err != nil {
 		return errors.New("无法发布内网入口配置，已有状态保留")
 	}
 	return nil

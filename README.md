@@ -20,7 +20,7 @@ TGCloud 是面向 CloudDrive2 的自托管 Telegram 文件自动化工具。把�
 Telegram → TGCloud → rclone → CloudDrive2 WebDAV → 云存储
 ```
 
-当前稳定版为 **[v0.0.9](https://github.com/LuoPoJunZi/TGCloud/releases/tag/v0.0.9)**。源码包（含原生 AMD64／ARM64 的 `tgcloud-host` 宿主管理工具）、Compose 部署包和校验文件由 GitHub Actions 验证后自动生成；Bot 镜像在部署主机本地构建。
+当前稳定版为 **[v0.0.10](https://github.com/LuoPoJunZi/TGCloud/releases/tag/v0.0.10)**。源码包（含原生 AMD64／ARM64 的 `tgcloud-host` 宿主管理工具）、Compose 部署包和校验文件由 GitHub Actions 验证后自动生成；Bot 镜像在部署主机本地构建。
 
 ## 主要能力
 
@@ -51,7 +51,7 @@ Telegram → TGCloud → rclone → CloudDrive2 WebDAV → 云存储
 bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/install.sh)
 ```
 
-入口自动下载并校验 `v0.0.9` 正式源码，直接进入安装／管理向导，无需安装 Git、输入源码目录或选择版本。资源预算依据本次探测结果推荐，执行前会再次检查。默认安装目录为 `/opt/tgcloud`；安装后运行 `tgcloud` 管理。
+入口自动下载并校验 `v0.0.10` 正式源码，直接进入安装／管理向导，无需安装 Git、输入源码目录或选择版本。资源预算依据本次探测结果推荐，执行前会再次检查。默认安装目录为 `/opt/tgcloud`；安装后运行 `tgcloud` 管理。
 
 ### 可信内网
 
@@ -70,13 +70,13 @@ bash <(curl -fsSL https://raw.githubusercontent.com/LuoPoJunZi/TGCloud/main/inst
 ```bash
 mkdir -m 700 /root/TGCloud-Compose && \
 cd /root/TGCloud-Compose && \
-curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.9/TGCloud-v0.0.9-compose.tar.gz && \
-curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.9/COMPOSE-SHA256SUMS.txt && \
+curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.10/TGCloud-v0.0.10-compose.tar.gz && \
+curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.0.10/COMPOSE-SHA256SUMS.txt && \
 sha256sum -c COMPOSE-SHA256SUMS.txt && \
-tar --no-same-owner -xzf TGCloud-v0.0.9-compose.tar.gz --strip-components=1
+tar --no-same-owner -xzf TGCloud-v0.0.10-compose.tar.gz --strip-components=1
 ```
 
-命令下载 `v0.0.9` 正式部署包和对应的 SHA256 校验文件。部署目录固定为 `/root/TGCloud-Compose`，首次运行前须尚不存在；安装文件直接位于该目录，不再增加 `deployment/` 子目录。
+命令下载 `v0.0.10` 正式部署包和对应的 SHA256 校验文件。部署目录固定为 `/root/TGCloud-Compose`，首次运行前须尚不存在；安装文件直接位于该目录，不再增加 `deployment/` 子目录。
 
 解压成功后，在同一目录运行 `bash manage.sh` 进入初始化菜单。
 

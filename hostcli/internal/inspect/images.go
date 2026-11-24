@@ -22,6 +22,14 @@ func PrepareImage(reference string) error {
 	return ensureNativeImage(reference, *docker, RunDocker)
 }
 
+func EnsureNativeImage(reference string, native PreflightResult, docker DockerRunner) error {
+	return ensureNativeImage(reference, native, docker)
+}
+
+func ImageIsNative(reference, architecture string, docker DockerRunner) bool {
+	return imageIsNative(reference, architecture, docker)
+}
+
 func ensureNativeImage(reference string, native PreflightResult, docker DockerRunner) error {
 	if imageIsNative(reference, native.Architecture, docker) {
 		return nil

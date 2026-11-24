@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/entry"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
@@ -128,8 +129,8 @@ func (summary *installSummary) observe(directory string, observed installEvidenc
 		"Certbot":  "unknown",
 	}
 	if observed.Mode == "https" {
-		summary.LogRotation["共享 Nginx"] = InspectContainerLogRotation(inspect.HTTPSNginx, inspect.HTTPSRoot, "nginx", inspect.HTTPSProject, "reverse-proxy", docker)
-		summary.LogRotation["Certbot"] = InspectContainerLogRotation(inspect.HTTPSCertbot, inspect.HTTPSRoot, "certbot", inspect.HTTPSProject, "certificate-manager", docker)
+		summary.LogRotation["共享 Nginx"] = InspectContainerLogRotation(entry.HTTPSNginx, entry.HTTPSRoot, "nginx", entry.HTTPSProject, "reverse-proxy", docker)
+		summary.LogRotation["Certbot"] = InspectContainerLogRotation(entry.HTTPSCertbot, entry.HTTPSRoot, "certbot", entry.HTTPSProject, "certificate-manager", docker)
 	}
 
 	switch {

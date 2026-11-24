@@ -11,6 +11,7 @@ import (
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/acceptance"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/backupops"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/deps"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/entry"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/report"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/tui"
@@ -30,7 +31,7 @@ const usage = "用法：tgcloud-host {status|check|logs}\n" +
 	"      tgcloud-host discover-install [<install-dir>]\n" +
 	"      tgcloud-host install-source {snapshot|verify|payload|mark} ...\n" +
 	"      tgcloud-host install-acceptance {summary|webdav} ...\n" +
-	"      tgcloud-host https-entry {probe|status|configure} ...\n" +
+	"      tgcloud-host https-entry {probe|status|configure|renew-dry-run} ...\n" +
 	"      tgcloud-host lan-entry {state|check|save|activate} ...\n" +
 	"      tgcloud-host manager-runtime {check|publish} ...\n" +
 	"      tgcloud-host installer-preflight {host|docker|storage|write-config} ...\n" +
@@ -58,14 +59,14 @@ const usage = "用法：tgcloud-host {status|check|logs}\n" +
 	"      tgcloud-host install-layout prepare <install-dir> <stage-dir> <config-file>\n" +
 	"      tgcloud-host install-layout finalize <install-dir> [<fresh-stage-dir>]\n" +
 	"      tgcloud-host uninstall {check|run} [--keep-data|--purge-data|--purge-all] [--plan <sha256>] [--json] [--yes]\n" +
-	"      tgcloud-host backups {list|proxy-list|proxy-create|proxy-verify|proxy-prune-preview|proxy-prune} ...\n" +
+	"      tgcloud-host backups {list|snapshot-create|snapshot-preflight|proxy-list|proxy-create|proxy-verify|proxy-prune-preview|proxy-prune} ...\n" +
 	"      tgcloud-host webdav-entry {status|write-auth|verify-auth} ...\n" +
 	"      tgcloud-host diagnostics [--install-dir <dir>] [--save <dir>]\n" +
 	"      tgcloud-host menu [--install-dir <dir>]"
 
 func main() {
 	if len(os.Args) == 1 && filepath.Base(os.Args[0]) == "tgcloud" {
-		os.Exit(tui.RunMenu(inspect.InstallDirectory, os.Stdin, os.Stdout))
+		os.Exit(tui.RunMenu(inspect.InstallDirectory, os.Stdin, os.Stderr))
 	}
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, inspect.InstallDirectory, inspect.RunDocker))
 }
@@ -220,12 +221,16 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 			return writeJSON(out, errOut, result, 0)
 		case "https-entry":
 			if len(args) == 2 && args[1] == "--supported" {
-				if inspect.HTTPSEntrySupported() {
-					return 0
-				}
-				return 1
+				return supportedExit(entry.HTTPSEntrySupported())
 			}
-			result, err := inspect.HTTPSEntry(args[1:], out)
+			if len(args) == 4 && args[1] == "renew-dry-run" && args[3] == "--yes" {
+				if err := entry.RenewDryRun(args[2], out); err != nil {
+					fmt.Fprintln(errOut, err)
+					return 1
+				}
+				return 0
+			}
+			result, err := entry.HTTPSEntry(args[1:], out)
 			if err != nil {
 				fmt.Fprintln(errOut, err)
 				return 1
@@ -236,12 +241,9 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 			return writeJSON(out, errOut, result, 0)
 		case "lan-entry":
 			if len(args) == 2 && args[1] == "--supported" {
-				if inspect.LANEntrySupported() {
-					return 0
-				}
-				return 1
+				return supportedExit(entry.LANEntrySupported())
 			}
-			result, err := inspect.LANEntry(args[1:])
+			result, err := entry.LANEntry(args[1:])
 			if err != nil {
 				fmt.Fprintln(errOut, err)
 				return 1
@@ -414,7 +416,7 @@ func run(args []string, out, errOut io.Writer, directory string, docker inspect.
 				fmt.Fprintln(errOut, usage)
 				return 2
 			}
-			return tui.RunMenu(dir, os.Stdin, out)
+			return tui.RunMenu(dir, os.Stdin, errOut)
 		}
 	}
 	if len(args) == 2 && args[1] == "--supported" && (args[0] == "start" || args[0] == "stop" || args[0] == "restart") {

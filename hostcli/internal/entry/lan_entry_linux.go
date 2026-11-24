@@ -1,4 +1,4 @@
-package inspect
+package entry
 
 import (
 	"context"
@@ -19,6 +19,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
 
 const lanContainerFields = `{"id":{{json .Id}},"name":{{json .Name}},"reference":{{json .Config.Image}},` +
@@ -66,7 +68,7 @@ func LANEntry(args []string) (any, error) {
 		strings.HasPrefix(entry.directory, entry.root+"/") {
 		return nil, errors.New("内网入口镜像或安装目录无效")
 	}
-	if err := checkPlanningDirectory(entry.directory); err != nil {
+	if err := inspect.CheckPlanningDirectory(entry.directory); err != nil {
 		return nil, err
 	}
 	switch {
@@ -110,12 +112,12 @@ func validateLanInterface(ctx context.Context, address string) error {
 	defer cancel()
 	command := exec.CommandContext(ctx, "ip", "-j", "-4", "address", "show")
 	command.Env = append(os.Environ(), "LC_ALL=C")
-	var output dockerOutput
+	var output hostutil.BoundedBuffer
 	command.Stdout = &output
 	if command.Run() != nil {
 		return errors.New("无法读取本机网卡；需要 iproute2，不会猜测内网地址")
 	}
-	return checkLanInterface(ip, output.buffer.Bytes())
+	return checkLanInterface(ip, output.Bytes())
 }
 
 func checkLanInterface(ip netip.Addr, data []byte) error {
@@ -159,7 +161,7 @@ func checkLanBind(address string) error {
 	return listener.Close()
 }
 
-func (entry lanEntry) inspect(docker DockerRunner) (*lanContainer, error) {
+func (entry lanEntry) inspect(docker inspect.DockerRunner) (*lanContainer, error) {
 	output, err := docker("container", "ls", "--all", "--no-trunc", "--filter", "name=^/"+lanName+"$", "--format", "{{.ID}}")
 	if err != nil {
 		return nil, errors.New("无法核对内网入口容器，不接管同名容器")
@@ -168,12 +170,12 @@ func (entry lanEntry) inspect(docker DockerRunner) (*lanContainer, error) {
 	if id == "" {
 		return nil, nil
 	}
-	if !containerID.MatchString(id) {
+	if !inspect.ContainerIDPattern.MatchString(id) {
 		return nil, errors.New("无法核对内网入口容器身份")
 	}
 	output, err = docker("container", "inspect", "--format", lanContainerFields, id)
 	var item lanContainer
-	if err != nil || json.Unmarshal(output, &item) != nil || item.ID != id || item.Name != "/"+lanName || !imageID.MatchString(item.Image) {
+	if err != nil || json.Unmarshal(output, &item) != nil || item.ID != id || item.Name != "/"+lanName || !inspect.ImageIDPattern.MatchString(item.Image) {
 		return nil, errors.New("无法核对内网入口容器身份")
 	}
 	directory := entry.configDir()
@@ -201,7 +203,7 @@ func (entry lanEntry) inspect(docker DockerRunner) (*lanContainer, error) {
 
 type lanBinding struct{ HostIP, HostPort string }
 
-func checkLanBindings(id string, docker DockerRunner) error {
+func checkLanBindings(id string, docker inspect.DockerRunner) error {
 	output, err := docker("inspect", "--format", "{{json .HostConfig.PortBindings}}", id)
 	var bindings map[string][]lanBinding
 	if err != nil || json.Unmarshal(output, &bindings) != nil {
@@ -219,21 +221,21 @@ func checkLanBindings(id string, docker DockerRunner) error {
 	return nil
 }
 
-func (entry lanEntry) checkBackend(ctx context.Context, base *Instance, docker DockerRunner) error {
+func (entry lanEntry) checkBackend(ctx context.Context, base *inspect.Instance, docker inspect.DockerRunner) error {
 	if err := checkLanBindings(base.Gateway.ID, docker); err != nil {
 		return err
 	}
 	healthCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	if (base.Bot.State != "running" || base.Bot.Health != "healthy") &&
-		waitContainerHealthContext(healthCtx, base.Bot.ID, docker) != "healthy" {
+		inspect.WaitContainerHealthContext(healthCtx, base.Bot.ID, docker) != "healthy" {
 		return errors.New("Bot 基础健康检查未通过；不自动重装")
 	}
-	marker, err := verifyDeploymentSource(entry.directory, "ready")
+	marker, err := inspect.VerifyDeploymentSource(entry.directory, "ready")
 	if err != nil {
 		return errors.New("无法核对 Bot 已安装程序的来源")
 	}
-	return verifyBotRuntime(entry.directory, base.Bot.ID, marker, io.Discard, docker)
+	return inspect.VerifyBotRuntime(entry.directory, base.Bot.ID, marker, io.Discard, docker)
 }
 
 func (entry lanEntry) observe(ctx context.Context, address string, existing, activating bool) (lanObservation, error) {
@@ -255,7 +257,7 @@ func (entry lanEntry) observe(ctx context.Context, address string, existing, act
 	if err := validateLanInterface(ctx, address); err != nil {
 		return result, err
 	}
-	native, err := installerDocker("lan")
+	native, err := inspect.InstallerDocker("lan")
 	if err != nil {
 		return result, err
 	}
@@ -275,13 +277,13 @@ func (entry lanEntry) observe(ctx context.Context, address string, existing, act
 			timeout = 180 * time.Second
 			environment = []string{"DOCKER_DEFAULT_PLATFORM=" + native.Platform}
 		}
-		return runBotAcceptanceDocker(ctx, timeout, environment, args...)
+		return inspect.RunBotAcceptanceDocker(ctx, timeout, environment, args...)
 	}
 	return entry.inspectAndCheck(ctx, result, address, existing, activating, native.Architecture, docker, checkLanBind, checkLanHTTP)
 }
 
 func (entry lanEntry) inspectAndCheck(ctx context.Context, result lanObservation, address string, existing, activating bool,
-	architecture string, docker DockerRunner, bind, probe func(string) error,
+	architecture string, docker inspect.DockerRunner, bind, probe func(string) error,
 ) (lanObservation, error) {
 	item, err := entry.inspect(docker)
 	if err != nil {
@@ -290,16 +292,16 @@ func (entry lanEntry) inspectAndCheck(ctx context.Context, result lanObservation
 	if item != nil && (result.Saved == nil || !existing) {
 		return result, errors.New("内网入口缺少受管记录或完整 Bot/网关；不接管、不重装")
 	}
-	var base *Instance
-	var gateway *gatewayContainer
+	var base *inspect.Instance
+	var gateway *inspect.GatewayContainer
 	if existing {
-		base, err = Discover(entry.directory, docker)
+		base, err = inspect.Discover(entry.directory, docker)
 		if err != nil || base == nil {
 			return result, errors.New("无法核对 Bot 和 CloudDrive2 网关归属")
 		}
-		gateway = &gatewayContainer{Container: base.Gateway}
+		gateway = &inspect.GatewayContainer{Container: base.Gateway}
 	}
-	if _, err := checkGatewayPort(gateway, docker); err != nil {
+	if _, err := inspect.CheckGatewayPort(gateway, docker); err != nil {
 		return result, err
 	}
 	result.Running = item != nil && item.Running
@@ -314,7 +316,7 @@ func (entry lanEntry) inspectAndCheck(ctx context.Context, result lanObservation
 	if err := entry.checkBackend(ctx, base, docker); err != nil {
 		return result, err
 	}
-	result.Healthy = result.Running && imageIsNative(item.Image, architecture, docker) && probe(address) == nil
+	result.Healthy = result.Running && inspect.ImageIsNative(item.Image, architecture, docker) && probe(address) == nil
 	if !activating || result.Healthy {
 		return result, nil
 	}
@@ -330,7 +332,7 @@ func (entry lanEntry) compose() []string {
 		"-f", filepath.Join(directory, "compose.json")}
 }
 
-func (entry lanEntry) start(ctx context.Context, address string, recreate bool, architecture string, docker DockerRunner,
+func (entry lanEntry) start(ctx context.Context, address string, recreate bool, architecture string, docker inspect.DockerRunner,
 	probe func(string) error,
 ) error {
 	fail := func(stage string) error {
@@ -340,7 +342,7 @@ func (entry lanEntry) start(ctx context.Context, address string, recreate bool, 
 	if _, err := docker(append(compose, "config", "--quiet")...); err != nil {
 		return fail("配置检查")
 	}
-	if _, err := docker(append(compose, "pull", "lan")...); err != nil || !imageIsNative(entry.image, architecture, docker) {
+	if _, err := docker(append(compose, "pull", "lan")...); err != nil || !inspect.ImageIsNative(entry.image, architecture, docker) {
 		return fail("镜像核验")
 	}
 	if _, err := docker(append(compose, "run", "--rm", "--no-deps", "lan", "-t")...); err != nil {
@@ -354,7 +356,7 @@ func (entry lanEntry) start(ctx context.Context, address string, recreate bool, 
 		return fail("启动")
 	}
 	item, err := entry.inspect(docker)
-	if err != nil || item == nil || !item.Running || !imageIsNative(item.Image, architecture, docker) {
+	if err != nil || item == nil || !item.Running || !inspect.ImageIsNative(item.Image, architecture, docker) {
 		return fail("启动后的容器核验")
 	}
 

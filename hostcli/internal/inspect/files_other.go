@@ -72,18 +72,6 @@ func VerifyInstallPlan(expected InstallInstance, source, targetVersion, targetDi
 	return "", errLinuxRequired
 }
 
-func HTTPSEntrySupported() bool { return false }
-
-func HTTPSEntry(args []string, progress io.Writer) (any, error) {
-	return nil, errLinuxRequired
-}
-
-func LANEntrySupported() bool { return false }
-
-func LANEntry(args []string) (any, error) {
-	return nil, errLinuxRequired
-}
-
 func InstallerPreflightSupported() bool { return false }
 
 func InstallerPreflight(args []string, input io.Reader) (any, error) {

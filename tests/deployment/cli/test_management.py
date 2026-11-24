@@ -813,6 +813,65 @@ class FriendlyInstallTests(unittest.TestCase):
             install.execute_plan(plan, releases.Release("v1.3.1", "a" * 40), ROOT, None, session, log, ui)
         show.assert_not_called()
 
+    def test_default_go_menu_requires_interactive_tty_and_respects_fallback(self):
+        fake_tool = Path("/opt/tgcloud-manager/runtime/test/tgcloud-host")
+        with (
+            patch.object(management.sys, "platform", "linux"),
+            patch.object(management.runtime, "installed_host_cli", return_value=fake_tool),
+            patch.object(management.host_cli, "supports", return_value=True),
+            patch.object(management, "_has_interactive_tty", return_value=False),
+            patch.object(management.preflight, "validate_host", side_effect=RuntimeError("py-path")),
+            patch.object(management.subprocess, "run") as sub_run,
+        ):
+            self.assertEqual(management.main([]), 1)
+            sub_run.assert_not_called()
+        with (
+            patch.object(management.sys, "platform", "linux"),
+            patch.object(management.os, "name", "nt"),
+            patch.object(management.runtime, "installed_host_cli", return_value=fake_tool),
+            patch.object(management.host_cli, "supports", return_value=True),
+            patch.object(management, "_has_interactive_tty", return_value=True),
+            patch.object(management, "_go_menu_proxy_compatible", return_value=True),
+            patch.dict(management.os.environ, {}, clear=False),
+            patch.object(management.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as sub_run,
+        ):
+            management.os.environ.pop("TGCLOUD_PY_MENU", None)
+            self.assertEqual(management.main([]), 0)
+            sub_run.assert_called_once()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_file = Path(tmpdir) / "domains.json"
+            self.assertTrue(management._go_menu_proxy_compatible(state_file))
+            state_file.write_text('{"version": 1, "domains": {}}', encoding="utf-8")
+            self.assertTrue(management._go_menu_proxy_compatible(state_file))
+            for legacy_ver in (2, 3):
+                state_file.write_text(json.dumps({"version": legacy_ver, "domains": {}}), encoding="utf-8")
+                self.assertFalse(management._go_menu_proxy_compatible(state_file))
+        with (
+            patch.object(management.sys, "platform", "linux"),
+            patch.object(management.runtime, "installed_host_cli", return_value=fake_tool),
+            patch.object(management.host_cli, "supports", return_value=True),
+            patch.object(management, "_has_interactive_tty", return_value=True),
+            patch.object(management, "_go_menu_proxy_compatible", return_value=False),
+            patch.object(management.preflight, "validate_host", side_effect=RuntimeError("py-path")),
+            patch.object(management.subprocess, "run") as sub_run,
+        ):
+            self.assertEqual(management.main([]), 1)
+            sub_run.assert_not_called()
+        with (
+            patch.object(management.sys, "platform", "linux"),
+            patch.object(management.runtime, "installed_host_cli", return_value=fake_tool),
+            patch.object(management.host_cli, "supports", return_value=True),
+            patch.object(management, "_has_interactive_tty", return_value=True),
+            patch.object(management, "_go_menu_proxy_compatible", return_value=True),
+            patch.object(management.preflight, "validate_host", side_effect=RuntimeError("py-path")),
+            patch.object(management.subprocess, "run") as sub_run,
+        ):
+            self.assertEqual(management.main(["--py-menu"]), 1)
+            sub_run.assert_not_called()
+            with patch.dict(management.os.environ, {"TGCLOUD_PY_MENU": "1"}):
+                self.assertEqual(management.main([]), 1)
+                sub_run.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

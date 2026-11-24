@@ -22,7 +22,8 @@ var managedUpgradeFiles = []string{
 var (
 	rollbackArchive = regexp.MustCompile(`^config-[A-Za-z0-9]{8}\.tar\.gz$`)
 	rollbackDB      = regexp.MustCompile(`^\.rollback-[A-Za-z0-9]{8}\.db$`)
-	imageID         = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+	ImageIDPattern  = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+	imageID         = ImageIDPattern
 	imageReference  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_./:@-]{0,299}$`)
 )
 

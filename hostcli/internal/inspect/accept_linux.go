@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 )
@@ -45,6 +45,14 @@ func AcceptBot(directory string, checkGateway bool, progress io.Writer) error {
 		return runBotAcceptanceDocker(context.Background(), 20*time.Second, nil, args...)
 	}
 	return acceptBot(directory, checkGateway, native.Architecture, progress, docker)
+}
+
+func RunBotAcceptanceDocker(ctx context.Context, timeout time.Duration, environment []string, args ...string) ([]byte, error) {
+	return runBotAcceptanceDocker(ctx, timeout, environment, args...)
+}
+
+func VerifyBotRuntime(directory, id string, marker SourceMarker, progress io.Writer, docker DockerRunner) error {
+	return verifyBotRuntime(directory, id, marker, progress, docker)
 }
 
 func runBotAcceptanceDocker(ctx context.Context, timeout time.Duration, environment []string, args ...string) ([]byte, error) {
@@ -135,7 +143,7 @@ func verifyBotRuntime(directory, id string, marker sourceMarker, progress io.Wri
 		}
 	}
 	if len(changed) != 0 {
-		sort.Strings(changed)
+		slices.Sort(changed)
 		fmt.Fprintln(progress, "TGCLOUD_CONFIG=MISMATCH_KEYS:"+strings.Join(changed, ","))
 		return errors.New("运行中的 Bot 配置与预期不一致")
 	}

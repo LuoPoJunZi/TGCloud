@@ -1,4 +1,4 @@
-package inspect
+package entry
 
 import (
 	"bytes"
@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
 
 func TestHTTPSManagedTransactionRecoversWithoutChangingBase(t *testing.T) {
@@ -107,7 +108,7 @@ func TestHTTPSManagedTransactionRecoversWithoutChangingBase(t *testing.T) {
 		}
 		return nil, nil
 	}
-	succeed := func(_ context.Context, _ string, proxy httpsProxy, _ DockerRunner) map[string]string {
+	succeed := func(_ context.Context, _ string, proxy httpsProxy, _ inspect.DockerRunner) map[string]string {
 		if proxy.nginx == nil || !proxy.nginx.Running || proxy.certbot == nil || !proxy.certbot.Running {
 			t.Fatal("proxy checked before both services started")
 		}
@@ -211,5 +212,136 @@ func TestHTTPSPortAndDNSPreflight(t *testing.T) {
 	environment.DNSAAAA = []string{"2001:db8::1"}
 	if environment.safe("8.8.8.8") == nil {
 		t.Fatal("NAT confirmation allowed an unmatched AAAA record")
+	}
+}
+
+func TestRenewDryRunProtectionAndCleanup(t *testing.T) {
+	previousOwner := hostutil.ManagedOwnerUID
+	hostutil.ManagedOwnerUID = uint32(os.Geteuid())
+	t.Cleanup(func() { hostutil.ManagedOwnerUID = previousOwner })
+
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyRoot := filepath.Join(root, "proxy")
+	for _, rel := range []string{"state", "nginx/conf.d"} {
+		if err := os.MkdirAll(filepath.Join(proxyRoot, rel), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(proxyRoot, "docker-compose.yml"), []byte("services:{}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proxyRoot, "nginx/nginx.conf"), []byte("events{}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// External proxy (schema v3) must branch out instead of running managed Compose.
+	if err := os.WriteFile(filepath.Join(proxyRoot, "state/domains.json"),
+		[]byte(`{"version":3,"project":"tgcloud","domains":{"clouddrive2":{"domain":"files.example.test","backend_port":19798}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := renewDryRunWith(proxyRoot, "files.example.test", func(...string) ([]byte, error) { return nil, nil }, nil); !errors.Is(err, ErrExternalProxyMode) {
+		t.Fatalf("expected ErrExternalProxyMode for schema v3, got %v", err)
+	}
+
+	// Managed v1 state with domain mismatch must be rejected.
+	if err := os.WriteFile(filepath.Join(proxyRoot, "state/domains.json"),
+		[]byte(`{"version":1,"project":"tgcloud","domains":{"clouddrive2":{"domain":"files.example.test","backend_port":19798}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := renewDryRunWith(proxyRoot, "other.example.test", func(...string) ([]byte, error) { return nil, nil }, nil); err == nil {
+		t.Fatal("expected mismatch domain rejection")
+	}
+
+	// Exact-name container ls failure must report UNKNOWN and NOT return nil,
+	// while preserving general and Compose-label ls queries in ownedContainers.
+	var unknownProg bytes.Buffer
+	dockerUnknown := func(args ...string) ([]byte, error) {
+		switch args[0] {
+		case "container":
+			if args[1] == "ls" {
+				for _, a := range args {
+					if strings.HasPrefix(a, "name=^/tgcloud-proxy-dry-run-") {
+						return nil, errors.New("daemon unavailable")
+					}
+				}
+				return nil, nil
+			}
+			return nil, nil
+		case "compose":
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	if err := renewDryRunWith(proxyRoot, "files.example.test", dockerUnknown, &unknownProg); err == nil || !strings.Contains(unknownProg.String(), "TGCLOUD_PROXY_TASK_CLEANUP=UNKNOWN") {
+		t.Fatalf("expected UNKNOWN cleanup error, err=%v out=%s", err, unknownProg.String())
+	}
+
+	// Present container with mismatched task label must be REFUSED and NEVER call rm.
+	var refusedProg bytes.Buffer
+	rmCalled := false
+	var seenName string
+	dockerRefused := func(args ...string) ([]byte, error) {
+		switch args[0] {
+		case "compose":
+			for i, a := range args {
+				if a == "--name" && i+1 < len(args) {
+					seenName = args[i+1]
+				}
+			}
+			return nil, nil
+		case "container":
+			if args[1] == "ls" {
+				if seenName != "" && slices.Contains(args, "name=^/"+seenName+"$") {
+					return []byte(seenName + "\n"), nil
+				}
+				return nil, nil
+			}
+			return []byte("wrong-task|maintenance-dry-run\n"), nil
+		case "rm":
+			rmCalled = true
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	if err := renewDryRunWith(proxyRoot, "files.example.test", dockerRefused, &refusedProg); err == nil || rmCalled || !strings.Contains(refusedProg.String(), "TGCLOUD_PROXY_TASK_CLEANUP=REFUSED") {
+		t.Fatalf("expected REFUSED without rm, err=%v rm=%v out=%s", err, rmCalled, refusedProg.String())
+	}
+
+	// Present container with matching label is removed and re-checked absent -> OK.
+	var removedProg bytes.Buffer
+	var matchName, matchTask string
+	removed := false
+	dockerRemoved := func(args ...string) ([]byte, error) {
+		switch args[0] {
+		case "compose":
+			for i, a := range args {
+				if a == "--name" && i+1 < len(args) {
+					matchName = args[i+1]
+					matchTask = strings.TrimPrefix(matchName, "tgcloud-proxy-dry-run-")
+				}
+			}
+			return nil, nil
+		case "container":
+			if args[1] == "ls" {
+				if matchName != "" && !removed && slices.Contains(args, "name=^/"+matchName+"$") {
+					return []byte(matchName + "\n"), nil
+				}
+				return nil, nil
+			}
+			return []byte(matchTask + "|maintenance-dry-run\n"), nil
+		case "rm":
+			removed = true
+			return nil, nil
+		default:
+			return nil, nil
+		}
+	}
+	if err := renewDryRunWith(proxyRoot, "files.example.test", dockerRemoved, &removedProg); err != nil || !removed || !strings.Contains(removedProg.String(), "TGCLOUD_PROXY_TASK_CLEANUP=OK") {
+		t.Fatalf("expected label-verified removal + recheck OK, err=%v removed=%v out=%s", err, removed, removedProg.String())
 	}
 }
