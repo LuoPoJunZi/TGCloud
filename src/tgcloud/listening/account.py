@@ -181,7 +181,9 @@ def main(argv=None):
             write_state(db, enabled=False, status="已停用")
             print("监听已停用；来源、任务和 Session 保留。")
         else:
-            print("监听账号：" + state(db)["status"])
+            from tgcloud.version import VERSION
+
+            print(f"监听账号：{state(db)['status']}（版本：v{VERSION}）")
         return 0
     except Exception:  # noqa: BLE001 - private boundary must not expose credentials
         print(

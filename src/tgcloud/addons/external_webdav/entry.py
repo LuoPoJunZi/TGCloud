@@ -10,8 +10,10 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess  # nosec B404
 import sys
+import tempfile
 from pathlib import Path
 
 from tgcloud.addons.external_webdav import config, releases
@@ -42,29 +44,7 @@ def _safe_path(path: Path, *, private: bool = False) -> None:
         _check_ownership(item.stat(), private=private and item == path)
 
 
-def installed(*, launcher: Path = COMMAND, root: Path = config.ROOT) -> Path | None:
-    """Verify the historical add-on layout without requiring new marker fields.
-
-    Existing releases record the digest of sorted relative host paths and file
-    contents as both the directory name and installation.json.code_sha256.
-    This is integrity/ownership verification, not a digital signature.
-    """
-    if not launcher.exists() and not launcher.is_symlink():
-        return None
-    _safe_path(launcher, private=True)
-    if not launcher.is_file() or launcher.stat().st_size > 4096:
-        raise ValueError("现有 tgcloud-webdav 命令不属于受支持的受管入口。")
-    text = launcher.read_text(encoding="utf-8")
-    match = re.fullmatch(re.escape(HEADER) + r'exec python3 -B (.+) webdav "\$@"\n', text)
-    arguments = shlex.split(match[1]) if match else []
-    if len(arguments) != 1:
-        raise ValueError("现有 tgcloud-webdav 命令不属于受支持的受管入口。")
-    entry = Path(arguments[0])
-    bundle = entry.parent.parent
-    if (bundle.parent != root / "runtime" or not re.fullmatch(r"[0-9a-f]{64}", bundle.name)
-            or entry != bundle / "scripts/run_source.py"
-            or text != HEADER + 'exec python3 -B ' + shlex.quote(str(entry)) + ' webdav "$@"\n'):
-        raise ValueError("现有 tgcloud-webdav 命令的代码位置不符合受管布局。")
+def _verify_bundle(bundle: Path) -> dict:
     _safe_path(bundle, private=True)
     marker = bundle / "installation.json"
     _safe_path(marker, private=True)
@@ -99,6 +79,33 @@ def installed(*, launcher: Path = COMMAND, root: Path = config.ROOT) -> Path | N
             raise ValueError("外部 WebDAV 离线目录含特殊文件。")
     if checksum.hexdigest() != bundle.name:
         raise ValueError("外部 WebDAV 离线源码摘要不匹配；停止，不执行。")
+    return identity
+
+
+def installed(*, launcher: Path = COMMAND, root: Path = config.ROOT) -> Path | None:
+    """Verify the historical add-on layout without requiring new marker fields.
+
+    Existing releases record the digest of sorted relative host paths and file
+    contents as both the directory name and installation.json.code_sha256.
+    This is integrity/ownership verification, not a digital signature.
+    """
+    if not launcher.exists() and not launcher.is_symlink():
+        return None
+    _safe_path(launcher, private=True)
+    if not launcher.is_file() or launcher.stat().st_size > 4096:
+        raise ValueError("现有 tgcloud-webdav 命令不属于受支持的受管入口。")
+    text = launcher.read_text(encoding="utf-8")
+    match = re.fullmatch(re.escape(HEADER) + r'exec python3 -B (.+) webdav "\$@"\n', text)
+    arguments = shlex.split(match[1]) if match else []
+    if len(arguments) != 1:
+        raise ValueError("现有 tgcloud-webdav 命令不属于受支持的受管入口。")
+    entry = Path(arguments[0])
+    bundle = entry.parent.parent
+    if (bundle.parent != root / "runtime" or not re.fullmatch(r"[0-9a-f]{64}", bundle.name)
+            or entry != bundle / "scripts/run_source.py"
+            or text != HEADER + 'exec python3 -B ' + shlex.quote(str(entry)) + ' webdav "$@"\n'):
+        raise ValueError("现有 tgcloud-webdav 命令的代码位置不符合受管布局。")
+    _verify_bundle(bundle)
     return bundle
 
 
@@ -136,6 +143,143 @@ def _run(source: Path, instance, log) -> None:
         log("外部 WebDAV 管理已结束；请核对上方结果，未假定操作成功。")
 
 
+def _publication_lock_path(root: Path) -> Path:
+    from tgcloud.deployment import runtime
+
+    if root == config.ROOT:
+        return runtime.LOCK_ROOT / "webdav-code.lock"
+    return root.parent / (root.name + "-code.lock")
+
+
+def _publication_lock(root: Path):
+    from tgcloud.deployment.host import edition_lock
+
+    return edition_lock(_publication_lock_path(root))
+
+
+def install_runtime_bundle(source: Path, identity: dict, *, root: Path = config.ROOT,
+                           launcher: Path = COMMAND, verified_origin: dict | None = None) -> Path:
+    """Install only reviewed host Python, never Bot deps or user configs."""
+    paths = releases.host_files(source)
+    checksum = hashlib.sha256()
+    for relative in paths:
+        checksum.update(relative.encode() + b"\0" + (source / relative).read_bytes())
+    revision = checksum.hexdigest()
+    identity = releases.metadata(dict(identity, code_sha256=revision))
+    expected_origin = releases.origin(verified_origin) if verified_origin is not None else releases.source_identity(source)
+    if identity["origin"] != expected_origin or identity["version"] != releases.core.source_version(source):
+        raise ValueError("维护源码与来源记录不一致；停止切换")
+    config.canonical(launcher)
+    if launcher.exists() or launcher.is_symlink():
+        _safe_path(launcher, private=True)
+        if not launcher.is_file() or launcher.stat().st_size > 4096 or not launcher.read_text(encoding="utf-8").startswith(HEADER):
+            raise ValueError("已有同名命令不属于 TGCloud，拒绝覆盖。")
+    elif launcher.parent.exists() or launcher.parent.is_symlink():
+        _safe_path(launcher.parent)
+    destination = root / "runtime" / revision
+    config.canonical(destination)
+
+    if not destination.exists() and not destination.is_symlink():
+        root.mkdir(parents=True, mode=0o700, exist_ok=True)
+        destination.parent.mkdir(mode=0o700, exist_ok=True)
+        # Only this invocation's private candidate is removed on ordinary
+        # failure/interruption. Old stage-* paths (including unknown files)
+        # are preserved and cannot block a fresh, uniquely named attempt.
+        with tempfile.TemporaryDirectory(prefix="stage-" + revision + "-", dir=destination.parent) as temporary:
+            staged_parent = Path(temporary)
+            config.canonical(staged_parent)
+            staged = staged_parent / revision
+            staged.mkdir(mode=0o700)
+            for relative in paths:
+                target = staged / relative
+                # parents=True only applies mode to the leaf directory.
+                # Every copied source directory must stay private under 022.
+                for parent in reversed(Path(relative).parents):
+                    (staged / parent).mkdir(mode=0o700, exist_ok=True)
+                shutil.copyfile(source / relative, target)
+                target.chmod(0o600)
+            config.atomic(staged / "installation.json", (json.dumps(identity) + "\n").encode(), mode=0o600)
+            _verify_bundle(staged)
+            os.replace(staged, destination)
+    existing = _verify_bundle(destination)
+    if {k: v for k, v in existing.items() if k != "origin"} != {k: v for k, v in identity.items() if k != "origin"}:
+        raise ValueError("维护目录来源记录不一致；不替换旧命令")
+    marker = destination / "installation.json"
+    old_marker = None
+    if existing != identity:
+        old_marker = marker.read_bytes()
+        config.atomic(marker, (json.dumps(identity) + "\n").encode(), mode=0o600)
+    try:
+        if _verify_bundle(destination) != identity:
+            raise ValueError("维护目录来源记录不一致；不替换旧命令")
+        script = HEADER + 'exec python3 -B ' + shlex.quote(str(destination / "scripts/run_source.py")) + ' webdav "$@"\n'
+        config.atomic(launcher, script.encode(), mode=0o700)
+    except BaseException:
+        if old_marker is not None:
+            try:
+                config.atomic(marker, old_marker, mode=0o600)
+            except OSError:
+                pass
+        raise
+    return destination
+
+
+def sync_installed_runtime(source: Path, target_version: str, log, *, instance_dir: Path | None = None,
+                           allow_newer_installed: bool = False, launcher: Path = COMMAND,
+                           root: Path = config.ROOT) -> bool:
+    """Keep an already-installed offline WebDAV runtime synchronized with main updates.
+
+    Never auto-installs when external WebDAV is not present, never mutates
+    records/auth/routes, skips other custom instances, and never downgrades.
+    """
+    if not launcher.exists() and not launcher.is_symlink():
+        return False
+    try:
+        previous = installed(launcher=launcher, root=root)
+    except (ValueError, OSError):
+        log("检测到外部 WebDAV 入口异常或不属于 TGCloud，已跳过自动同步；请进入菜单 2.3 核对。")
+        return False
+    if previous is None:
+        return False
+    if instance_dir is not None:
+        record_path = root / "clouddrive2/config.json"
+        if record_path.exists() or record_path.is_symlink():
+            try:
+                record = config.read_record(record_path)
+            except (ValueError, OSError):
+                log("检测到外部 WebDAV 配置记录异常，已跳过自动同步；请进入菜单 2.3 核对。")
+                return False
+            if record is not None and record["instance_dir"] != str(instance_dir):
+                log("检测到外部 WebDAV 已绑定其他实例目录，已跳过自动同步。")
+                return False
+    previous_identity = releases.source_identity(previous)
+    previous_version = releases.core.source_version(previous)
+    source_id = releases.source_identity(source)
+    new_version = releases.core.source_version(source)
+    if target_version and new_version != target_version:
+        raise ValueError("外部 WebDAV 同步版本与主程序目标版本不一致。")
+    releases.supported(source)
+    if previous_identity == source_id and previous_version == new_version:
+        return False
+    if releases.core.version_tuple(new_version) < releases.core.version_tuple(previous_version):
+        if allow_newer_installed:
+            log("检测到已安装的外部 WebDAV 维护工具版本（v" + previous_version + "）高于当前源码（v" + new_version + "），保留现有高版本未降级。")
+            return False
+        raise ValueError("拒绝自动降级外部 WebDAV 维护代码。")
+    with _publication_lock(root):
+        if installed(launcher=launcher, root=root) != previous:
+            raise ValueError("同步期间外部 WebDAV 维护代码已变化；停止自动切换。")
+        metadata = {"schema": 1, "owner": releases.OWNER, "project": releases.PROJECT_ID,
+                    "version": new_version, "origin": source_id}
+        install_runtime_bundle(source, metadata, root=root, launcher=launcher, verified_origin=source_id)
+        updated = installed(launcher=launcher, root=root)
+        if (updated is None or releases.source_identity(updated) != source_id
+                or releases.core.source_version(updated) != new_version):
+            raise RuntimeError("同步后的外部 WebDAV 离线命令未通过完整性核验。")
+    log("已同步更新外部 WebDAV 维护工具：tgcloud-webdav · v" + new_version + "（保留既有配置与启用状态）")
+    return True
+
+
 def open_menu(instance, ui, log) -> None:
     """Use the independent lifecycle; returning never resumes obsolete code."""
     from tgcloud.deployment.configuration import checked_directory
@@ -151,15 +295,17 @@ def open_menu(instance, ui, log) -> None:
         record = config.read_record(record_path)
         if record is None or record["edition"] != instance.product.key or record["instance_dir"] != str(instance.directory):
             raise ValueError("外部 WebDAV 记录与当前实例目录不一致；请先核对附加功能配置，不自动切换实例。")
-    previous = installed()
-    source = Path(__file__).resolve().parents[4]
-    identity = releases.source_identity(source)
-    if not instance.source_digest or identity["source_sha256"] != instance.source_digest:
+    if not instance.source_digest:
         raise ValueError("外部 WebDAV 维护源码与当前实例来源不同；请用同一完整本地源码更新主实例后重试。")
-    releases.supported(source)
-    if previous is not None and releases.source_identity(previous) == identity:
+    previous = installed()
+    if previous is not None and releases.source_identity(previous)["source_sha256"] == instance.source_digest:
         _run(previous, instance, log)
         return
+    source = Path(__file__).resolve().parents[4]
+    identity = releases.source_identity(source)
+    if identity["source_sha256"] != instance.source_digest:
+        raise ValueError("外部 WebDAV 维护源码与当前实例来源不同；请用同一完整本地源码更新主实例后重试。")
+    releases.supported(source)
     log("首次打开／更新只复制同源本地维护代码，不联网、不会自动启用文件访问。")
     if not ui.confirm("是否安装同源离线外部 WebDAV 维护代码并进入菜单？"):
         return

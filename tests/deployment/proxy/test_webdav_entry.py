@@ -344,6 +344,208 @@ class EntryTests(unittest.TestCase):
         self.assertIn("外部 WebDAV", result.stdout)
         self.assertFalse((source / "src/tgcloud/telegram").exists())
 
+    def bundle_version(self, version: str, *, origin_digest: str):
+        source = self.source(self.directory / ("source-" + version.replace(".", "_")))
+        (source / "src/tgcloud/version.py").write_text(f'VERSION = "{version}"\n', encoding="utf-8")
+        checksum = hashlib.sha256()
+        for relative in runtime.files(source):
+            checksum.update(relative.encode() + b"\0" + (source / relative).read_bytes())
+        digest = checksum.hexdigest()
+        bundle = self.root / "runtime" / digest
+        bundle.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        self.root.chmod(0o700)
+        shutil.move(str(source), bundle)
+        identity = {
+            "schema": 1, "owner": releases.OWNER, "project": "tgcloud", "version": version,
+            "origin": {"kind": "local-source", "project": "tgcloud", "source_sha256": origin_digest},
+            "code_sha256": digest,
+        }
+        (bundle / "installation.json").write_text(json.dumps(identity), encoding="utf-8")
+        (bundle / "installation.json").chmod(0o600)
+        self.command.write_text(
+            entry.HEADER + "exec python3 -B " + shlex.quote(str(bundle / "scripts/run_source.py")) + ' webdav "$@"\n',
+            encoding="utf-8",
+        )
+        self.command.chmod(0o700)
+        return bundle
+
+    def test_sync_installed_runtime_does_not_auto_install_when_absent(self):
+        with patch.object(entry, "_publication_lock", return_value=nullcontext()) as lock:
+            synced = entry.sync_installed_runtime(ROOT, VERSION, self.messages.append, launcher=self.command, root=self.root)
+        self.assertFalse(synced)
+        self.assertFalse(self.command.exists())
+        self.assertFalse(self.root.exists())
+        lock.assert_not_called()
+
+    def test_sync_installed_runtime_updates_installed_bundle_and_preserves_config(self):
+        old_bundle = self.bundle_version("0.0.1", origin_digest="a" * 64)
+        config_file = self.root / "clouddrive2/config.json"
+        config_file.parent.mkdir(parents=True, mode=0o700)
+        original_config = b'{"schema":1,"phase":"enabled","domain":"dav.example.com"}\n'
+        config_file.write_bytes(original_config)
+        with (
+            patch.object(entry, "_publication_lock", return_value=nullcontext()),
+            patch.object(entry.config, "canonical"),
+        ):
+            synced = entry.sync_installed_runtime(ROOT, VERSION, self.messages.append, launcher=self.command, root=self.root)
+            self.assertTrue(synced)
+            updated = self.verify()
+            self.assertIsNotNone(updated)
+            self.assertNotEqual(updated, old_bundle)
+            self.assertEqual(releases.core.source_version(updated), VERSION)
+            self.assertEqual(releases.source_identity(updated), project_source().origin)
+            self.assertEqual(config_file.read_bytes(), original_config)
+            self.assertIn("tgcloud-webdav · v" + VERSION, "\n".join(self.messages))
+            # Already synchronized: second sync is a clean no-op.
+            self.assertFalse(entry.sync_installed_runtime(ROOT, VERSION, self.messages.append, launcher=self.command, root=self.root))
+
+    def test_sync_installed_runtime_rejects_downgrade(self):
+        self.bundle_version("99.0.0", origin_digest="c" * 64)
+        before = self.command.read_bytes()
+        with (
+            patch.object(entry, "_publication_lock", return_value=nullcontext()),
+            self.assertRaisesRegex(ValueError, "拒绝自动降级"),
+        ):
+            entry.sync_installed_runtime(ROOT, VERSION, self.messages.append, launcher=self.command, root=self.root)
+        self.assertEqual(self.command.read_bytes(), before)
+        synced = entry.sync_installed_runtime(
+            ROOT, VERSION, self.messages.append, allow_newer_installed=True, launcher=self.command, root=self.root,
+        )
+        self.assertFalse(synced)
+        self.assertEqual(self.command.read_bytes(), before)
+        self.assertIn("保留现有高版本未降级", "\n".join(self.messages))
+
+    def test_sync_installed_runtime_skips_other_instance_directory_record(self):
+        self.bundle_version("0.0.1", origin_digest="a" * 64)
+        before = self.command.read_bytes()
+        config_file = self.root / "clouddrive2/config.json"
+        config_file.parent.mkdir(parents=True, mode=0o700)
+        config_file.write_text("{}", encoding="utf-8")
+        with patch.object(entry.config, "read_record", return_value={"edition": "clouddrive2", "instance_dir": "/opt/other-cd2"}):
+            synced = entry.sync_installed_runtime(
+                ROOT, VERSION, self.messages.append, instance_dir=self.instance.directory,
+                launcher=self.command, root=self.root,
+            )
+        self.assertFalse(synced)
+        self.assertEqual(self.command.read_bytes(), before)
+        self.assertIn("其他实例目录", "\n".join(self.messages))
+
+    def test_sync_installed_runtime_skips_foreign_launcher_without_overwriting(self):
+        self.command.write_text("#!/bin/sh\necho custom\n", encoding="utf-8")
+        before = self.command.read_bytes()
+        synced = entry.sync_installed_runtime(ROOT, VERSION, self.messages.append, launcher=self.command, root=self.root)
+        self.assertFalse(synced)
+        self.assertEqual(self.command.read_bytes(), before)
+        self.assertIn("已跳过自动同步", "\n".join(self.messages))
+
+    def test_cli_from_manager_delegates_to_open_menu(self):
+        from tgcloud.addons.external_webdav import cli as webdav_cli
+
+        with (
+            patch("tgcloud.addons.external_webdav.discovery.host") as host_check,
+            patch.object(webdav_cli, "Terminal", autospec=True) as terminal_cls,
+            patch("tgcloud.deployment.instances.docker_inventory", return_value=({}, set())),
+            patch("tgcloud.deployment.instances.discover", return_value=self.instance) as discover,
+            patch.object(entry, "open_menu") as open_menu,
+        ):
+            code = webdav_cli.main(["--from-manager", "--edition", "clouddrive2", "--install-dir", str(self.instance.directory)])
+        fake_ui = terminal_cls.return_value
+        self.assertEqual(code, 0)
+        host_check.assert_called_once()
+        terminal_cls.assert_called_once_with()
+        self.assertIs(fake_ui.friendly, True)
+        discover.assert_called_once()
+        open_menu.assert_called_once()
+        self.assertIs(open_menu.call_args.args[0], self.instance)
+        self.assertIs(open_menu.call_args.args[1], fake_ui)
+        fake_ui.close.assert_called_once_with()
+
+    def test_open_menu_reuses_verified_previous_bundle_matching_rolled_back_instance(self):
+        rolled_back_digest = "a" * 64
+        previous = self.bundle_version("0.0.9", origin_digest=rolled_back_digest)
+        self.instance.source_digest = rolled_back_digest
+        installed = entry.installed
+        process = Mock()
+        process.wait.return_value = 0
+        with (
+            patch.object(entry, "installed", side_effect=lambda: installed(launcher=self.command, root=self.root)),
+            patch.object(entry.subprocess, "Popen", return_value=process) as execute,
+        ):
+            entry.open_menu(self.instance, self.ui, self.messages.append)
+        self.ui.confirm.assert_not_called()
+        self.assertEqual(
+            execute.call_args.args[0],
+            [sys.executable, "-B", str(previous / "scripts/run_source.py"), "webdav",
+             "--edition", "clouddrive2", "--install-dir", str(self.instance.directory)],
+        )
+
+    def test_preexisting_polluted_candidate_never_replaces_launcher(self):
+        old_bundle = self.bundle_version("0.0.1", origin_digest="a" * 64)
+        before = self.command.read_bytes()
+        paths = releases.host_files(ROOT)
+        checksum = hashlib.sha256()
+        for relative in paths:
+            checksum.update(relative.encode() + b"\0" + (ROOT / relative).read_bytes())
+        polluted = self.root / "runtime" / checksum.hexdigest()
+        for relative in paths:
+            target = polluted / relative
+            for parent in reversed(Path(relative).parents):
+                (polluted / parent).mkdir(parents=True, mode=0o700, exist_ok=True)
+            shutil.copyfile(ROOT / relative, target)
+            target.chmod(0o600)
+        polluted.chmod(0o700)
+        identity = {
+            "schema": 1, "owner": releases.OWNER, "project": "tgcloud",
+            "version": VERSION, "origin": project_source().origin, "code_sha256": polluted.name,
+        }
+        (polluted / "installation.json").write_text(json.dumps(identity) + "\n", encoding="utf-8")
+        (polluted / "installation.json").chmod(0o600)
+        extra = polluted / "extra-private.txt"
+        extra.write_bytes(b"unexpected")
+        extra.chmod(0o600)
+        with (
+            patch.object(entry, "_publication_lock", return_value=nullcontext()),
+            patch.object(entry.config, "canonical"),
+            self.assertRaisesRegex(ValueError, "未知资源"),
+        ):
+            entry.sync_installed_runtime(ROOT, VERSION, self.messages.append, launcher=self.command, root=self.root)
+        self.assertEqual(self.command.read_bytes(), before)
+        self.assertEqual(self.verify(), old_bundle)
+
+    def test_same_code_different_verified_source_digest_updates_cleanly(self):
+        from tgcloud.deployment import local_source
+
+        src_b = self.directory / "repo-readme-update"
+        for name in local_source.source_names(ROOT):
+            target = src_b / name
+            target.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+            shutil.copyfile(ROOT / name, target)
+            target.chmod(0o600)
+        src_b.chmod(0o700)
+        (src_b / "README.md").write_bytes((ROOT / "README.md").read_bytes() + b"\n")
+        (src_b / "README.md").chmod(0o600)
+        with local_source.snapshot(src_b) as snap_b:
+            digest_b = snap_b.digest
+            self.assertNotEqual(digest_b, project_source().digest)
+            with (
+                patch.object(entry, "_publication_lock", return_value=nullcontext()),
+                patch.object(entry.config, "canonical"),
+            ):
+                first = entry.install_runtime_bundle(
+                    ROOT,
+                    {"schema": 1, "owner": releases.OWNER, "project": "tgcloud",
+                     "version": VERSION, "origin": project_source().origin},
+                    root=self.root, launcher=self.command, verified_origin=project_source().origin,
+                )
+                self.assertEqual(releases.source_identity(self.verify())["source_sha256"], project_source().digest)
+                synced = entry.sync_installed_runtime(
+                    snap_b.root, VERSION, self.messages.append, launcher=self.command, root=self.root,
+                )
+                self.assertTrue(synced)
+                updated = self.verify()
+                self.assertEqual(updated, first)
+                self.assertEqual(releases.source_identity(updated)["source_sha256"], digest_b)
+
 
 class OwnershipPolicyTests(unittest.TestCase):
     def test_root_and_private_permissions_remain_required(self):

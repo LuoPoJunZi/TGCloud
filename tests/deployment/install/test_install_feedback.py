@@ -252,6 +252,64 @@ class ExecutionSummaryTests(unittest.TestCase):
         self.assertIn("本机 HTTPS：通过", self.messages[-1])
         self.assertNotIn("本次执行完成", self.messages[-1])
 
+    def test_addon_sync_failure_reports_separately_without_failing_base_or_skipping_entry(self):
+        cli_ok = {"version": VERSION, "matches": True, "state": "ok", "commands": {"version": "ok", "listen": "ok"}}
+        # 1. Public HTTPS upgrade continues through entry check and reports add-on sync warning separately.
+        plan = self.plan()
+        with (
+            patch.object(install.runtime, "install_release", return_value=cli_ok),
+            patch.object(install.runtime, "sync_installed_addons", side_effect=ValueError("外部 WebDAV 离线目录含未知资源")),
+        ):
+            self.run_plan(plan, install_manager=True)
+        self.assertTrue(plan.feedback.completed)
+        self.assertEqual(plan.feedback.checks["base"], "ok")
+        self.assertEqual(plan.feedback.checks["entry"], "ok")
+        self.assertEqual(plan.feedback.addon_sync_error, "外部 WebDAV 离线目录含未知资源")
+        text = "\n".join(self.messages)
+        self.assertIn("基础安装与升级：通过", text)
+        self.assertIn("本机 HTTPS：通过", text)
+        self.assertIn("外部 WebDAV 维护工具：同步未完成（外部 WebDAV 离线目录含未知资源", text)
+
+        # 2. LAN upgrade also continues through LAN entry check and reports add-on sync warning separately.
+        self.messages.clear()
+        lan_plan = lan.Plan(self.instance, "upgrade", "192.168.1.10", saved={"install_dir": str(self.root)}, entry_healthy=True)
+        with (
+            patch.object(lan, "edition_lock", return_value=nullcontext()),
+            patch.object(install.upgrade, "recheck_plan", return_value=self.instance),
+            patch.object(lan, "native_entry", side_effect=[{"saved": {"install_dir": str(self.root)}, "running": True}, True, True]),
+            patch.object(lan.preflight, "resource_check"),
+            patch.object(lan.runtime, "install_release", return_value=cli_ok),
+            patch.object(install, "apply_base"),
+            patch.object(install.runtime, "sync_installed_addons", side_effect=ValueError("外部 WebDAV 离线目录含未知资源")),
+            patch.object(lan, "validate_environment"),
+            patch.object(lan.instances, "discover_for_install", return_value=self.instance),
+        ):
+            lan.execute(lan_plan, RELEASE, ROOT, ROOT, self.session, self.log, self.ui, install_manager=True)
+        self.assertTrue(lan_plan.feedback.completed)
+        self.assertEqual(lan_plan.feedback.checks["base"], "ok")
+        self.assertEqual(lan_plan.feedback.checks["entry"], "ok")
+        self.assertEqual(lan_plan.feedback.addon_sync_error, "外部 WebDAV 离线目录含未知资源")
+        lan_text = "\n".join(self.messages)
+        self.assertIn("基础安装与升级：通过", lan_text)
+        self.assertIn("本机内网入口：通过", lan_text)
+        self.assertIn("外部 WebDAV 维护工具：同步未完成（外部 WebDAV 离线目录含未知资源", lan_text)
+
+        # 3. Ctrl+C / EOFError during add-on sync preserves "附加工具同步" as the interrupted stage while keeping base="ok".
+        self.messages.clear()
+        interrupted_plan = self.plan()
+        with (
+            patch.object(install.runtime, "install_release", return_value=cli_ok),
+            patch.object(install.runtime, "sync_installed_addons", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            self.run_plan(interrupted_plan, install_manager=True)
+        self.assertTrue(interrupted_plan.feedback.interrupted)
+        self.assertEqual(interrupted_plan.feedback.checks["base"], "ok")
+        self.assertEqual(interrupted_plan.feedback.failure_stage, "附加工具同步")
+        interrupted_text = "\n".join(self.messages)
+        self.assertIn("停止阶段：附加工具同步", interrupted_text)
+        self.assertIn("基础安装与升级：通过", interrupted_text)
+
     def test_readiness_timeout_stale_or_unknown_protocol_does_not_fail_base_or_claim_readiness(self):
         for output in ("PRIVATE_TRACEBACK", json.dumps({"schema": 99}), json.dumps({
             "schema": 1, "version": "0.0.0", "ready": True, "checks": dict.fromkeys(readiness.LABELS, "ok")})):

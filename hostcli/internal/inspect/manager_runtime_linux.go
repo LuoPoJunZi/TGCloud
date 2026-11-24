@@ -47,6 +47,16 @@ type managerPublication struct {
 
 func ManagerRuntimeSupported() bool { return true }
 
+func VerifiedManagerCommand() (string, error) {
+	const root = "/opt/tgcloud-cli"
+	const command = "/usr/local/bin/tgcloud"
+	bundle, manifest, err := checkManagerDestination(root, command)
+	if err != nil || bundle == "" || manifest == nil {
+		return "", errors.New("未找到已核验的受管 tgcloud 主入口；请在完整源码目录运行 sudo bash install.sh")
+	}
+	return command, nil
+}
+
 func ManagerRuntime(args []string, input io.Reader) (any, error) {
 	switch {
 	case len(args) == 3 && args[0] == "check":

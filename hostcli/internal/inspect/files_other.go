@@ -80,6 +80,10 @@ func InstallerPreflight(args []string, input io.Reader) (any, error) {
 
 func ManagerRuntimeSupported() bool { return false }
 
+func VerifiedManagerCommand() (string, error) {
+	return "", errLinuxRequired
+}
+
 func ManagerRuntime(args []string, input io.Reader) (any, error) {
 	return nil, errLinuxRequired
 }

@@ -294,7 +294,17 @@ def native_install_release(source: Path, release) -> dict | None:
     return result
 
 
-def install_release(source: Path, release, log) -> dict:
+def sync_installed_addons(source: Path, release, log, *, instance_dir: Path | None = None) -> bool:
+    """Sync already-installed optional host add-ons after main/base verification."""
+    from tgcloud.addons.external_webdav import entry as webdav_entry
+
+    return webdav_entry.sync_installed_runtime(
+        source, release.version, log, instance_dir=instance_dir, allow_newer_installed=True,
+    )
+
+
+def install_release(source: Path, release, log, *, sync_addons: bool = True,
+                    instance_dir: Path | None = None) -> dict:
     """Install the offline manager from verified TGCloud source."""
     result = native_install_release(source, release)
     if result is None:
@@ -305,6 +315,8 @@ def install_release(source: Path, release, log) -> dict:
     if result["state"] != "ok":
         raise RuntimeError("管理工具版本或命令核验未通过；未开始升级 Bot，请重新运行可信安装入口")
     log("本地管理命令已安装：tgcloud · v" + result["version"] + "（与目标一致；版本查询、监听入口通过）")
+    if sync_addons:
+        sync_installed_addons(source, release, log, instance_dir=instance_dir)
     return result
 
 

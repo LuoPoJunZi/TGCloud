@@ -34,7 +34,7 @@ class PlanningTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
-        for name in ("src/tgcloud/version.py", "install.sh"):
+        for name in ("src/tgcloud/version.py", "hostcli/internal/hostutil/version.go", "install.sh"):
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, target)
@@ -53,9 +53,10 @@ class PlanningTests(unittest.TestCase):
         self.assertEqual(before, self.digest())
         self.assertFalse(report["source_modified"])
         self.assertIn('+VERSION = "' + self.next + '"', diff)
+        self.assertIn('+var Version = "' + self.next + '"', diff)
         self.assertNotIn('install.sh', report["mechanical_files"])
         self.assertNotIn('+installer_commit', diff)
-        self.assertEqual(report["mechanical_files"], ["src/tgcloud/version.py"])
+        self.assertEqual(report["mechanical_files"], ["src/tgcloud/version.py", "hostcli/internal/hostutil/version.go"])
         self.assertEqual(len(report["release_gates"]), 4)
 
     def test_rejects_same_old_and_invalid_versions(self):

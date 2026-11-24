@@ -112,6 +112,8 @@ class OperationReport:
     log_rotation: dict[str, str] | None = None
     actual_version: str | None = None
     summary_outcome: str = ""
+    addon_synced: str = ""
+    addon_sync_error: str = ""
     acceptance_tool: Path | None = field(default=None, repr=False)
 
     def observe_line(self, line: str) -> tuple[str, str, str]:
@@ -172,6 +174,10 @@ class OperationReport:
             lines.append("本地管理工具：" + cli_version + ("（与目标一致）" if self.cli.get("matches") else "（与目标不一致）"))
             command_state = {"ok": "版本查询、监听入口通过", "legacy": "旧版功能已核对；未提供的命令未记为通过"}
             lines.append("管理工具命令：" + command_state.get(self.cli.get("state"), "未通过，请更新管理工具"))
+        if self.addon_sync_error:
+            lines.append("外部 WebDAV 维护工具：同步未完成（" + self.addon_sync_error + "；基础服务不受影响，可在 tgcloud 菜单 2.3 更新）")
+        elif self.addon_synced:
+            lines.append("外部 WebDAV 维护工具：v" + self.addon_synced + "（已随主版本自动同步）")
         if self.mode == "lan":
             lines.append("公网 HTTPS：不适用（内网模式）")
         known = self.alerts - {"unknown"}

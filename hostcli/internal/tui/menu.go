@@ -227,7 +227,7 @@ func (a *App) Run() int {
 			if instance.Bot.State == "running" {
 				botState = "运行中"
 			}
-			if instance.Version != "" {
+			if version == "" {
 				version = instance.Version
 			}
 		}

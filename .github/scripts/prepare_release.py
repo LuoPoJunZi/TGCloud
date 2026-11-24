@@ -31,6 +31,8 @@ def prepare(root: Path, version: str) -> tuple[dict, str]:
         return path.read_text(encoding="utf-8")
     name = "src/tgcloud/version.py"
     changes[name] = replace_one(read(name), r'^VERSION = "[0-9.]+"$', 'VERSION = "' + version + '"')
+    name = "hostcli/internal/hostutil/version.go"
+    changes[name] = replace_one(read(name), r'^var Version = "[0-9.]+"$', 'var Version = "' + version + '"')
     name = "install.sh"
     entry = read(name)
     if 'script_root=' in entry and "installer_version" not in entry:

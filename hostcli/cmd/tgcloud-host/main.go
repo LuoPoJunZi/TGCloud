@@ -12,6 +12,7 @@ import (
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/backupops"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/deps"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/entry"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/report"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/tui"
@@ -62,7 +63,8 @@ const usage = "用法：tgcloud-host {status|check|logs}\n" +
 	"      tgcloud-host backups {list|snapshot-create|snapshot-preflight|proxy-list|proxy-create|proxy-verify|proxy-prune-preview|proxy-prune} ...\n" +
 	"      tgcloud-host webdav-entry {status|write-auth|verify-auth} ...\n" +
 	"      tgcloud-host diagnostics [--install-dir <dir>] [--save <dir>]\n" +
-	"      tgcloud-host menu [--install-dir <dir>]"
+	"      tgcloud-host menu [--install-dir <dir>]\n" +
+	"      tgcloud-host --version"
 
 func main() {
 	if len(os.Args) == 1 && filepath.Base(os.Args[0]) == "tgcloud" {
@@ -123,6 +125,10 @@ func freshInstallCommand(args []string, out, errOut io.Writer) int {
 func run(args []string, out, errOut io.Writer, directory string, docker inspect.DockerRunner) int {
 	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
 		fmt.Fprintln(out, usage)
+		return 0
+	}
+	if len(args) == 1 && (args[0] == "-v" || args[0] == "--version") {
+		fmt.Fprintf(out, "tgcloud-host v%s\n", hostutil.Version)
 		return 0
 	}
 	if len(args) > 0 && args[0] == "preflight" && (len(args) == 1 || (len(args) == 2 && args[1] == "--allow-missing")) {
