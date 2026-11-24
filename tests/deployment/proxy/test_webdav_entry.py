@@ -344,6 +344,100 @@ class EntryTests(unittest.TestCase):
         self.assertIn("外部 WebDAV", result.stdout)
         self.assertFalse((source / "src/tgcloud/telegram").exists())
 
+    def bundle_version(self, version: str, *, origin_digest: str):
+        source = self.source(self.directory / ("source-" + version.replace(".", "_")))
+        (source / "src/tgcloud/version.py").write_text(f'VERSION = "{version}"\n', encoding="utf-8")
+        checksum = hashlib.sha256()
+        for relative in runtime.files(source):
+            checksum.update(relative.encode() + b"\0" + (source / relative).read_bytes())
+        digest = checksum.hexdigest()
+        bundle = self.root / "runtime" / digest
+        bundle.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        self.root.chmod(0o700)
+        shutil.move(str(source), bundle)
+        identity = {
+            "schema": 1, "owner": releases.OWNER, "project": "tgcloud", "version": version,
+            "origin": {"kind": "local-source", "project": "tgcloud", "source_sha256": origin_digest},
+            "code_sha256": digest,
+        }
+        (bundle / "installation.json").write_text(json.dumps(identity), encoding="utf-8")
+        (bundle / "installation.json").chmod(0o600)
+        self.command.write_text(
+            entry.HEADER + "exec python3 -B " + shlex.quote(str(bundle / "scripts/run_source.py")) + ' webdav "$@"\n',
+            encoding="utf-8",
+        )
+        self.command.chmod(0o700)
+        return bundle
+
+    def test_sync_installed_runtime_does_not_auto_install_when_absent(self):
+        with patch.object(entry, "_publication_lock", return_value=nullcontext()) as lock:
+            synced = entry.sync_installed_runtime(ROOT, VERSION, self.messages.append, launcher=self.command, root=self.root)
+        self.assertFalse(synced)
+        self.assertFalse(self.command.exists())
+        self.assertFalse(self.root.exists())
+        lock.assert_not_called()
+
+    def test_sync_installed_runtime_updates_installed_bundle_and_preserves_config(self):
+        old_bundle = self.bundle_version("0.0.1", origin_digest="a" * 64)
+        config_file = self.root / "clouddrive2/config.json"
+        config_file.parent.mkdir(parents=True, mode=0o700)
+        original_config = b'{"schema":1,"phase":"enabled","domain":"dav.example.com"}\n'
+        config_file.write_bytes(original_config)
+        with (
+            patch.object(entry, "_publication_lock", return_value=nullcontext()),
+            patch.object(entry.config, "canonical"),
+        ):
+            synced = entry.sync_installed_runtime(ROOT, VERSION, self.messages.append, launcher=self.command, root=self.root)
+            self.assertTrue(synced)
+            updated = self.verify()
+            self.assertIsNotNone(updated)
+            self.assertNotEqual(updated, old_bundle)
+            self.assertEqual(releases.core.source_version(updated), VERSION)
+            self.assertEqual(releases.source_identity(updated), project_source().origin)
+            self.assertEqual(config_file.read_bytes(), original_config)
+            self.assertIn("tgcloud-webdav · v" + VERSION, "\n".join(self.messages))
+            # Already synchronized: second sync is a clean no-op.
+            self.assertFalse(entry.sync_installed_runtime(ROOT, VERSION, self.messages.append, launcher=self.command, root=self.root))
+
+    def test_sync_installed_runtime_rejects_downgrade(self):
+        self.bundle_version("99.0.0", origin_digest="c" * 64)
+        before = self.command.read_bytes()
+        with (
+            patch.object(entry, "_publication_lock", return_value=nullcontext()),
+            self.assertRaisesRegex(ValueError, "拒绝自动降级"),
+        ):
+            entry.sync_installed_runtime(ROOT, VERSION, self.messages.append, launcher=self.command, root=self.root)
+        self.assertEqual(self.command.read_bytes(), before)
+
+    def test_sync_installed_runtime_skips_foreign_launcher_without_overwriting(self):
+        self.command.write_text("#!/bin/sh\necho custom\n", encoding="utf-8")
+        before = self.command.read_bytes()
+        synced = entry.sync_installed_runtime(ROOT, VERSION, self.messages.append, launcher=self.command, root=self.root)
+        self.assertFalse(synced)
+        self.assertEqual(self.command.read_bytes(), before)
+        self.assertIn("已跳过自动同步", "\n".join(self.messages))
+
+    def test_cli_from_manager_delegates_to_open_menu(self):
+        from tgcloud.addons.external_webdav import cli as webdav_cli
+
+        fake_ui = Mock()
+        with (
+            patch("tgcloud.addons.external_webdav.discovery.host") as host_check,
+            patch.object(webdav_cli, "Terminal", return_value=fake_ui) as terminal,
+            patch("tgcloud.deployment.instances.docker_inventory", return_value=({}, set())),
+            patch("tgcloud.deployment.instances.discover", return_value=self.instance) as discover,
+            patch.object(entry, "open_menu") as open_menu,
+        ):
+            code = webdav_cli.main(["--from-manager", "--edition", "clouddrive2", "--install-dir", str(self.instance.directory)])
+        self.assertEqual(code, 0)
+        host_check.assert_called_once()
+        terminal.assert_called_once_with(friendly=True)
+        discover.assert_called_once()
+        open_menu.assert_called_once()
+        self.assertIs(open_menu.call_args.args[0], self.instance)
+        self.assertIs(open_menu.call_args.args[1], fake_ui)
+        fake_ui.close.assert_called_once_with()
+
 
 class OwnershipPolicyTests(unittest.TestCase):
     def test_root_and_private_permissions_remain_required(self):

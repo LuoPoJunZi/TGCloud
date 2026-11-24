@@ -2,12 +2,9 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import secrets
 import shlex
-import shutil
-import tempfile
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -16,7 +13,7 @@ from pathlib import Path
 from tgcloud.addons.external_webdav import (
     config,
     discovery,
-    releases,
+    entry,
     scope,
     verification,
 )
@@ -486,55 +483,9 @@ class Service:
 
     def install_runtime(self, source: Path, identity: dict, *, launcher: Path = Path("/usr/local/bin/tgcloud-webdav")) -> None:
         """Install only reviewed host Python, never Bot deps or user configs."""
-        from tgcloud.addons.external_webdav.releases import host_files
-        paths = host_files(source)
-        checksum = hashlib.sha256()
-        for relative in paths:
-            checksum.update(relative.encode() + b"\0" + (source / relative).read_bytes())
-        revision = checksum.hexdigest()
-        identity = releases.metadata(dict(identity, code_sha256=revision))
-        if identity["origin"] != releases.source_identity(source) or identity["version"] != releases.core.source_version(source):
-            raise ValueError("维护源码与来源记录不一致；停止切换")
-        destination = self.root / "runtime" / revision
-        config.canonical(destination)
-
-        def verify(directory: Path) -> None:
-            actual = hashlib.sha256()
-            for relative in paths:
-                path = directory / relative
-                config.canonical(path)
-                if not path.is_file():
-                    raise ValueError("已有离线维护代码不完整，拒绝切换。")
-                actual.update(relative.encode() + b"\0" + path.read_bytes())
-            if actual.hexdigest() != revision:
-                raise ValueError("已有离线维护代码摘要不匹配，拒绝覆盖或切换。")
-
-        if not destination.exists():
-            self.root.mkdir(parents=True, mode=0o700, exist_ok=True)
-            destination.parent.mkdir(mode=0o700, exist_ok=True)
-            # Only this invocation's private candidate is removed on ordinary
-            # failure/interruption. Old stage-* paths (including unknown files)
-            # are preserved and cannot block a fresh, uniquely named attempt.
-            with tempfile.TemporaryDirectory(prefix="stage-" + revision + "-", dir=destination.parent) as temporary:
-                staged = Path(temporary)
-                config.canonical(staged)
-                for relative in paths:
-                    target = staged / relative
-                    # parents=True only applies mode to the leaf directory.
-                    # Every copied source directory must stay private under 022.
-                    for parent in reversed(Path(relative).parents):
-                        (staged / parent).mkdir(mode=0o700, exist_ok=True)
-                    shutil.copyfile(source / relative, target)
-                    target.chmod(0o600)
-                config.atomic(staged / "installation.json", (json.dumps(dict(identity, code_sha256=revision)) + "\n").encode())
-                verify(staged)
-                os.replace(staged, destination)
-        verify(destination)
-        if json.loads((destination / "installation.json").read_text(encoding="utf-8")) != identity:
-            raise ValueError("维护目录来源记录不一致；不替换旧命令")
-        config.canonical(launcher)
-        if launcher.exists() and not launcher.read_text().startswith(HEADER):
-            raise ValueError("已有同名命令不属于 TGCloud，拒绝覆盖。")
-        script = HEADER + 'exec python3 -B ' + shlex.quote(str(destination / "scripts/run_source.py")) + ' webdav "$@"\n'
-        config.atomic(launcher, script.encode(), mode=0o700)
+        if os.name == "posix":
+            with entry._publication_lock(self.root):
+                entry.install_runtime_bundle(source, identity, root=self.root, launcher=launcher)
+        else:
+            entry.install_runtime_bundle(source, identity, root=self.root, launcher=launcher)
         self.management_hint()

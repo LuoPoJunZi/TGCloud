@@ -305,6 +305,9 @@ def install_release(source: Path, release, log) -> dict:
     if result["state"] != "ok":
         raise RuntimeError("管理工具版本或命令核验未通过；未开始升级 Bot，请重新运行可信安装入口")
     log("本地管理命令已安装：tgcloud · v" + result["version"] + "（与目标一致；版本查询、监听入口通过）")
+    from tgcloud.addons.external_webdav import entry as webdav_entry
+
+    webdav_entry.sync_installed_runtime(source, release.version, log)
     return result
 
 

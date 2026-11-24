@@ -83,6 +83,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--install-dir", help="已有受管实例的实际安装目录（须通过容器身份校验）")
     result.add_argument("--sample-file", default="", help="读取验收可选：现有文件的未编码相对名称；仅 HEAD/OPTIONS/单字节 Range")
     result.add_argument("--runtime-check", action="store_true", help=argparse.SUPPRESS)
+    result.add_argument("--from-manager", action="store_true", help=argparse.SUPPRESS)
     return result
 
 
@@ -210,6 +211,23 @@ def main(argv: list[str] | None = None) -> int:
     log, ui = SafeLog(), None
     try:
         session = LocalSession(log)
+        if getattr(args, "from_manager", False):
+            if args.action is not None:
+                raise ValueError("管理入口模式不支持直接指定子命令。")
+            from tgcloud.addons.external_webdav import entry
+            from tgcloud.deployment import instances
+
+            discovery.host(session, log=log)
+            ui = Terminal(friendly=True)
+            instance = instances.discover(
+                PRODUCTS[args.edition],
+                instances.docker_inventory(session),
+                session,
+                log,
+                install_dir=args.install_dir,
+            )
+            entry.open_menu(instance, ui, log)
+            return 0
         # Help has already exited above. Offline status still needs local Linux
         # root/private records, but never contacts GitHub, Docker or the gateway.
         if args.action not in {"status", "print-config"} or getattr(args, "runtime_check", False):

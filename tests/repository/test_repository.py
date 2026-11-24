@@ -548,6 +548,8 @@ class RepositoryGuardrailTests(unittest.TestCase):
     def build_fixture(self):
         for name in repository.BUILD_FILES:
             self.put(name)
+        self.put("src/tgcloud/version.py", 'VERSION = "0.0.10"\n')
+        self.put("hostcli/internal/hostutil/version.go", 'package hostutil\n\nvar Version = "0.0.10"\n')
         self.put("src/tgcloud/deployment/profiles.py", 'FILES = ("packaging/compose/docker-compose.clouddrive2.yml",)\n')
         self.put("packaging/compose/docker-compose.clouddrive2.yml")
         return list(repository.BUILD_FILES) + sorted(repository.payload_files(self.root))
@@ -641,6 +643,14 @@ class RepositoryGuardrailTests(unittest.TestCase):
         self.assertEqual(repository.validate_repository(ROOT, repository.public_files(ROOT)), [])
         self.assertIsNotNone(repository.forbidden_reason("hostcli/bin/linux-amd64/tgcloud-host"))
         self.assertIsNotNone(repository.forbidden_reason("hostcli/bin/linux-arm64/tgcloud-host"))
+
+    def test_host_cli_version_drift_is_rejected(self):
+        files = self.build_fixture()
+        self.put("hostcli/internal/hostutil/version.go", 'package hostutil\n\nvar Version = "0.0.9"\n')
+        errors = repository.check_version_sync(self.root)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("does not match src/tgcloud/version.py", errors[0])
+        self.assertIn(errors[0], repository.validate_repository(self.root, files))
 
 
 if __name__ == "__main__":

@@ -28,7 +28,7 @@ BUILD_FILES = (
     "src/tgcloud/addons/external_webdav/entry.py", "src/tgcloud/addons/external_webdav/cli.py",
     "src/tgcloud/addons/external_webdav/service.py",
     "packaging/bootstrap-manifest.json", "packaging/runtime-manifest.json",
-    "hostcli/go.mod", "hostcli/cmd/tgcloud-host/main.go",
+    "hostcli/go.mod", "hostcli/cmd/tgcloud-host/main.go", "hostcli/internal/hostutil/version.go",
     ".github/scripts/build_payload.py", ".github/scripts/prepare_bootstrap.py", "scripts/dev/lock_dependencies.py",
     "LICENSE", ".github/CONTRIBUTING.md", ".github/SECURITY.md",
 )
@@ -172,11 +172,29 @@ def check_document_index(root: Path, files: list[str]) -> list[str]:
     return errors
 
 
+def check_version_sync(root: Path) -> list[str]:
+    py_path = root / "src/tgcloud/version.py"
+    go_path = root / "hostcli/internal/hostutil/version.go"
+    if not py_path.is_file() or py_path.is_symlink() or not go_path.is_file() or go_path.is_symlink():
+        return []
+    try:
+        py_versions = re.findall(r'^VERSION = "([0-9]+(?:\.[0-9]+)*)"$', py_path.read_text(encoding="utf-8"), re.MULTILINE)
+        go_versions = re.findall(r'^var Version = "([0-9]+(?:\.[0-9]+)*)"$', go_path.read_text(encoding="utf-8"), re.MULTILINE)
+    except (OSError, UnicodeError):
+        return ["hostcli/internal/hostutil/version.go: cannot read UTF-8 version metadata"]
+    if len(py_versions) != 1 or len(go_versions) != 1:
+        return ["hostcli/internal/hostutil/version.go: expected one synchronized version declaration"]
+    if py_versions[0] != go_versions[0]:
+        return [f"hostcli/internal/hostutil/version.go: version {go_versions[0]} does not match src/tgcloud/version.py {py_versions[0]}"]
+    return []
+
+
 def validate_repository(root: Path, files: list[str]) -> list[str]:
     root = root.resolve()
     errors = [f"{name}: {reason}" for name in files if (reason := forbidden_reason(name))]
     errors.extend(check_build_inputs(root, files))
     errors.extend(check_document_index(root, files))
+    errors.extend(check_version_sync(root))
     return errors
 
 

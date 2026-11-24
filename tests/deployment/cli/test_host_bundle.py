@@ -77,6 +77,20 @@ class HostBundleTests(unittest.TestCase):
         install.assert_called_once_with(source=ROOT, target_version=release.version)
         self.assertNotIn("本地管理命令已安装", str(output.call_args_list))
 
+    def test_install_release_syncs_installed_external_webdav_runtime(self):
+        release = source()
+        output = Mock()
+        with (
+            patch.object(runtime, "native_install_release", return_value={
+                "version": release.version, "matches": True, "state": "ok",
+                "commands": {"version": "ok", "listen": "ok"},
+            }),
+            patch("tgcloud.addons.external_webdav.entry.sync_installed_runtime", return_value=True) as sync,
+        ):
+            result = runtime.install_release(ROOT, release, output)
+        self.assertEqual(result["state"], "ok")
+        sync.assert_called_once_with(ROOT, release.version, output)
+
     def test_foreign_manager_origin_is_rejected_without_executing_candidate(self):
         from tests.fixtures.local_project import host_source
         with tempfile.TemporaryDirectory() as temporary:

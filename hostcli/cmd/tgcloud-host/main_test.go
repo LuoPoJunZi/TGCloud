@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
 
@@ -152,6 +153,23 @@ func TestSupportedReflectsPlatform(t *testing.T) {
 		var out, errOut bytes.Buffer
 		if got := run([]string{cmd, "--supported"}, &out, &errOut, t.TempDir(), docker); got != want {
 			t.Fatalf("%s --supported exit=%d, want %d", cmd, got, want)
+		}
+	}
+}
+
+func TestVersionFlagReportsSynchronizedHostVersion(t *testing.T) {
+	docker := func(args ...string) ([]byte, error) {
+		t.Fatalf("unexpected Docker arguments: %q", args)
+		return nil, nil
+	}
+	for _, flag := range []string{"--version", "-v"} {
+		var out, errOut bytes.Buffer
+		if got := run([]string{flag}, &out, &errOut, t.TempDir(), docker); got != 0 {
+			t.Fatalf("%s exit=%d, stderr=%q", flag, got, errOut.String())
+		}
+		want := "tgcloud-host v" + hostutil.Version + "\n"
+		if out.String() != want {
+			t.Fatalf("%s output=%q, want %q", flag, out.String(), want)
 		}
 	}
 }

@@ -65,7 +65,7 @@ func RunMenu(directory string, _ io.Reader, errOut io.Writer) int {
 	defer ttyIn.Close()
 	defer ttyOut.Close()
 	backend := &HostBackend{Directory: directory, Docker: inspect.RunDocker, TTYIn: ttyIn, TTYOut: ttyOut}
-	app := NewApp(backend, ttyIn, ttyOut, "hostcli")
+	app := NewApp(backend, ttyIn, ttyOut, hostutil.Version)
 	app.PrivateOut = ttyOut
 	return app.Run()
 }
@@ -371,20 +371,11 @@ func (b *HostBackend) ShowExternalWebDAV(_ *inspect.Instance, out io.Writer) err
 }
 
 func (b *HostBackend) ManageExternalWebDAV(_ *inspect.Instance, out io.Writer) error {
-	const webdavCmd = "/usr/local/bin/tgcloud-webdav"
 	const mainCmd = "/usr/local/bin/tgcloud"
-	var cmd *exec.Cmd
-	if _, err := os.Lstat(webdavCmd); err == nil {
-		if !hostutil.SafePath(webdavCmd, true) {
-			return errors.New("现有 tgcloud-webdav 入口路径不安全，拒绝执行")
-		}
-		cmd = exec.Command(webdavCmd, "--edition", "clouddrive2", "--install-dir", b.Directory)
-	} else {
-		if !hostutil.SafePath(mainCmd, false) {
-			return errors.New("未找到受管外部 WebDAV 入口；请在完整源码目录运行 tgcloud webdav")
-		}
-		cmd = exec.Command(mainCmd, "webdav", "--edition", "clouddrive2", "--install-dir", b.Directory)
+	if !hostutil.SafePath(mainCmd, false) {
+		return errors.New("未找到受管 tgcloud 主入口；请在完整源码目录运行 tgcloud webdav")
 	}
+	cmd := exec.Command(mainCmd, "webdav", "--from-manager", "--edition", "clouddrive2", "--install-dir", b.Directory)
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, kv := range os.Environ() {
 		if !strings.HasPrefix(kv, "TGCLOUD_SOURCE_ROOT=") {
