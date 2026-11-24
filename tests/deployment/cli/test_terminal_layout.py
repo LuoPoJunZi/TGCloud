@@ -42,8 +42,7 @@ class TerminalLayoutTests(unittest.TestCase):
         with patch.object(manager, "discover", return_value=instance):
             self.assertEqual(manager.run(), 0)
         text = "\n".join(messages)
-        self.assertEqual(text.count("v" + VERSION), 1)
-        self.assertNotIn("0.0.1", text)
+        self.assertEqual(re.findall(r"(?<![\d.])v?\d+\.\d+\.\d+(?![\d.])", text), ["v" + VERSION])
         self.assertIn("Bot 状态：运行中", text)
         self.assertEqual(instance.version, "0.0.1")
 

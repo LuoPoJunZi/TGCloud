@@ -31,7 +31,7 @@ var (
 	snapshotOptional = []string{"tgcloud-release.json", "tgcloud-source.json", "tgcloud-compose.json", "compose-bundle.json", "compose-access.json"}
 	lockInstanceFunc = inspect.LockInstance
 	activeTasksFunc  = queryActiveTasks
-	snapshotPyBin    = "python3"
+	snapshotPyBin    = "/usr/bin/python3"
 )
 
 type containerState struct {
