@@ -93,7 +93,13 @@ def main(argv: list[str] | None = None, *, friendly: bool | None = None) -> int:
                                 for plan, _ in plans
                             )
                             target_dir = plans[0][0].instance.directory if len(plans) == 1 else None
-                            log.cli = runtime.install_release(source, release, log, sync_addons=can_sync, instance_dir=target_dir)
+                            log.cli = runtime.install_release(source, release, log, sync_addons=False, instance_dir=target_dir)
+                            if can_sync and isinstance(log.cli, dict) and log.cli.get("commands") == {"version": "ok", "listen": "ok"}:
+                                try:
+                                    runtime.sync_installed_addons(source, release, log, instance_dir=target_dir)
+                                except (ValueError, RuntimeError, OSError) as exc:
+                                    reason = str(exc) if isinstance(exc, (ValueError, RuntimeError)) else "文件系统或权限异常"
+                                    log("[待核对] 外部 WebDAV 附加工具同步未完成：" + reason + "；可在 tgcloud 菜单 2.3 核对。")
                 log("TGCLOUD_CLI_RESULT=NO_CHANGE")
                 return 0
             if manage_runtime:

@@ -460,6 +460,92 @@ class EntryTests(unittest.TestCase):
         self.assertIs(open_menu.call_args.args[1], fake_ui)
         fake_ui.close.assert_called_once_with()
 
+    def test_open_menu_reuses_verified_previous_bundle_matching_rolled_back_instance(self):
+        rolled_back_digest = "a" * 64
+        previous = self.bundle_version("0.0.9", origin_digest=rolled_back_digest)
+        self.instance.source_digest = rolled_back_digest
+        installed = entry.installed
+        process = Mock()
+        process.wait.return_value = 0
+        with (
+            patch.object(entry, "installed", side_effect=lambda: installed(launcher=self.command, root=self.root)),
+            patch.object(entry.subprocess, "Popen", return_value=process) as execute,
+        ):
+            entry.open_menu(self.instance, self.ui, self.messages.append)
+        self.ui.confirm.assert_not_called()
+        self.assertEqual(
+            execute.call_args.args[0],
+            [sys.executable, "-B", str(previous / "scripts/run_source.py"), "webdav",
+             "--edition", "clouddrive2", "--install-dir", str(self.instance.directory)],
+        )
+
+    def test_preexisting_polluted_candidate_never_replaces_launcher(self):
+        old_bundle = self.bundle_version("0.0.1", origin_digest="a" * 64)
+        before = self.command.read_bytes()
+        paths = releases.host_files(ROOT)
+        checksum = hashlib.sha256()
+        for relative in paths:
+            checksum.update(relative.encode() + b"\0" + (ROOT / relative).read_bytes())
+        polluted = self.root / "runtime" / checksum.hexdigest()
+        for relative in paths:
+            target = polluted / relative
+            for parent in reversed(Path(relative).parents):
+                (polluted / parent).mkdir(parents=True, mode=0o700, exist_ok=True)
+            shutil.copyfile(ROOT / relative, target)
+            target.chmod(0o600)
+        polluted.chmod(0o700)
+        identity = {
+            "schema": 1, "owner": releases.OWNER, "project": "tgcloud",
+            "version": VERSION, "origin": project_source().origin, "code_sha256": polluted.name,
+        }
+        (polluted / "installation.json").write_text(json.dumps(identity) + "\n", encoding="utf-8")
+        (polluted / "installation.json").chmod(0o600)
+        extra = polluted / "extra-private.txt"
+        extra.write_bytes(b"unexpected")
+        extra.chmod(0o600)
+        with (
+            patch.object(entry, "_publication_lock", return_value=nullcontext()),
+            patch.object(entry.config, "canonical"),
+            self.assertRaisesRegex(ValueError, "未知资源"),
+        ):
+            entry.sync_installed_runtime(ROOT, VERSION, self.messages.append, launcher=self.command, root=self.root)
+        self.assertEqual(self.command.read_bytes(), before)
+        self.assertEqual(self.verify(), old_bundle)
+
+    def test_same_code_different_verified_source_digest_updates_cleanly(self):
+        from tgcloud.deployment import local_source
+
+        src_b = self.directory / "repo-readme-update"
+        for name in local_source.source_names(ROOT):
+            target = src_b / name
+            target.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+            shutil.copyfile(ROOT / name, target)
+            target.chmod(0o600)
+        src_b.chmod(0o700)
+        (src_b / "README.md").write_bytes((ROOT / "README.md").read_bytes() + b"\n")
+        (src_b / "README.md").chmod(0o600)
+        with local_source.snapshot(src_b) as snap_b:
+            digest_b = snap_b.digest
+            self.assertNotEqual(digest_b, project_source().digest)
+            with (
+                patch.object(entry, "_publication_lock", return_value=nullcontext()),
+                patch.object(entry.config, "canonical"),
+            ):
+                first = entry.install_runtime_bundle(
+                    ROOT,
+                    {"schema": 1, "owner": releases.OWNER, "project": "tgcloud",
+                     "version": VERSION, "origin": project_source().origin},
+                    root=self.root, launcher=self.command, verified_origin=project_source().origin,
+                )
+                self.assertEqual(releases.source_identity(self.verify())["source_sha256"], project_source().digest)
+                synced = entry.sync_installed_runtime(
+                    snap_b.root, VERSION, self.messages.append, launcher=self.command, root=self.root,
+                )
+                self.assertTrue(synced)
+                updated = self.verify()
+                self.assertEqual(updated, first)
+                self.assertEqual(releases.source_identity(updated)["source_sha256"], digest_b)
+
 
 class OwnershipPolicyTests(unittest.TestCase):
     def test_root_and_private_permissions_remain_required(self):

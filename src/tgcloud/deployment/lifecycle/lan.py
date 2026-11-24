@@ -169,7 +169,7 @@ def execute(plan: Plan, release, source, baseline, session, log, ui, *, verify=F
         if plan.action in {"install", "upgrade"}:
             feedback.checks["base"] = "ok"
         if install_manager and isinstance(log.cli, dict) and log.cli.get("commands") == {"version": "ok", "listen": "ok"}:
-            runtime.sync_installed_addons(source, release, log, instance_dir=instance.directory)
+            install.sync_addons_for_plan(feedback, source, release, log, instance.directory)
         feedback.stage = "管理入口检查"
         validate_environment(session)  # also validate a newly installed daemon
         current = instances.discover_for_install(product, session, log, install_dir=product.install_dir)
@@ -275,11 +275,14 @@ def main(argv=None, *, friendly=None) -> int:
                             upgrade.verify_confirmed_source(release, args.source_dir)
                             upgrade.recheck_plan(instance, plan.action, release, source, baseline, session, log,
                                                  install_dir=product.install_dir)
-                            log.cli = runtime.install_release(
-                                source, release, log,
-                                sync_addons=plan.action == "current" and instance.present and instance.source_digest == release.digest,
-                                instance_dir=instance.directory,
-                            )
+                            can_sync = plan.action == "current" and instance.present and instance.source_digest == release.digest
+                            log.cli = runtime.install_release(source, release, log, sync_addons=False, instance_dir=instance.directory)
+                            if can_sync and isinstance(log.cli, dict) and log.cli.get("commands") == {"version": "ok", "listen": "ok"}:
+                                try:
+                                    runtime.sync_installed_addons(source, release, log, instance_dir=instance.directory)
+                                except (ValueError, RuntimeError, OSError) as exc:
+                                    reason = str(exc) if isinstance(exc, (ValueError, RuntimeError)) else "文件系统或权限异常"
+                                    log("[待核对] 外部 WebDAV 附加工具同步未完成：" + reason + "；可在 tgcloud 菜单 2.3 核对。")
                 log("TGCLOUD_LAN_RESULT=NO_CHANGE；不重建、不降级")
                 return 0
             if manage_runtime:

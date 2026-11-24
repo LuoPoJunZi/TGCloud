@@ -257,6 +257,23 @@ def verify_destination(plan: Plan | LanPlan, session: LocalSession, log: SafeLog
     return True
 
 
+def sync_addons_for_plan(
+    feedback: OperationReport, source: Path, release: releases.Release, log: SafeLog, instance_dir: Path,
+) -> None:
+    """Keep base upgrade and entry verification independent from optional add-on sync."""
+    previous_stage = feedback.stage
+    feedback.stage = "附加工具同步"
+    try:
+        if runtime.sync_installed_addons(source, release, log, instance_dir=instance_dir):
+            feedback.addon_synced = release.version
+    except (ValueError, RuntimeError, OSError) as exc:
+        reason = str(exc) if isinstance(exc, (ValueError, RuntimeError)) else "文件系统或权限异常"
+        feedback.addon_sync_error = reason
+        log("[待核对] 外部 WebDAV 附加工具同步未完成：" + reason + "；基础服务已完成，继续检查管理入口，稍后可在 tgcloud 菜单 2.3 核对。")
+    finally:
+        feedback.stage = previous_stage
+
+
 def execute_plan(
     plan: Plan, release: releases.Release, source: Path, old_source: Path | None,
     session: LocalSession, log: SafeLog, ui: terminal.Terminal, *, verify: bool = False, install_manager: bool = False,
@@ -277,7 +294,7 @@ def execute_plan(
         if plan.action in {"install", "upgrade"}:
             feedback.checks["base"] = "ok"
         if install_manager and isinstance(log.cli, dict) and log.cli.get("commands") == {"version": "ok", "listen": "ok"}:
-            runtime.sync_installed_addons(source, release, log, instance_dir=instance.directory)
+            sync_addons_for_plan(feedback, source, release, log, instance.directory)
         feedback.stage = "管理入口检查"
         if plan.configure_https:
             plan.manager.configure(plan.domain, plan.email)
