@@ -1,4 +1,4 @@
-package inspect
+package entry
 
 import (
 	"bytes"
@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
 
 func TestHTTPSManagedTransactionRecoversWithoutChangingBase(t *testing.T) {
@@ -107,7 +108,7 @@ func TestHTTPSManagedTransactionRecoversWithoutChangingBase(t *testing.T) {
 		}
 		return nil, nil
 	}
-	succeed := func(_ context.Context, _ string, proxy httpsProxy, _ DockerRunner) map[string]string {
+	succeed := func(_ context.Context, _ string, proxy httpsProxy, _ inspect.DockerRunner) map[string]string {
 		if proxy.nginx == nil || !proxy.nginx.Running || proxy.certbot == nil || !proxy.certbot.Running {
 			t.Fatal("proxy checked before both services started")
 		}

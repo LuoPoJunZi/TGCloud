@@ -110,6 +110,10 @@ func waitContainerHealth(container string, docker DockerRunner) string {
 	return waitContainerHealthContext(context.Background(), container, docker)
 }
 
+func WaitContainerHealthContext(ctx context.Context, container string, docker DockerRunner) string {
+	return waitContainerHealthContext(ctx, container, docker)
+}
+
 func waitContainerHealthContext(ctx context.Context, container string, docker DockerRunner) string {
 	format := "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}"
 	status := "unknown"

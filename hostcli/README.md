@@ -25,14 +25,14 @@ sudo "$HOME/.local/bin/tgcloud-host" restart bot --yes
 | `prepare-image <image@sha256:digest>` | `0` 候选镜像已通过原生平台检查，`1` 准备失败，`2` 命令用法错误 |
 | `build-candidate <stage-dir> <candidate-tag>` | `0` 候选 Bot 镜像及配置已通过预检，`1` 构建或预检失败，`2` 命令用法错误 |
 | `uninstall {check\|run} [--keep-data\|--purge-data\|--purge-all] [--json] [--yes]` | `0` 预检或卸载完成，`1` 归属/挂载/依赖核验未通过或执行失败，`2` 命令用法错误 |
-| `backups {list\|proxy-list\|proxy-create\|proxy-verify\|proxy-prune-preview\|proxy-prune}` | `0` 备份查询/创建/校验/清理完成，`1` 安全边界或校验失败，`2` 命令用法错误 |
+| `backups {list\|snapshot-create\|snapshot-preflight\|proxy-list\|proxy-create\|proxy-verify\|proxy-prune-preview\|proxy-prune}` | `0` 备份/快照查询、创建、校验或清理完成，`1` 安全边界或校验失败，`2` 命令用法错误 |
 | `webdav-entry {status\|write-auth\|verify-auth}` | `0` 外部 WebDAV 状态核对或认证文件原子写入/校验完成，`1` 校验失败 |
 | `diagnostics [--install-dir <dir>] [--save <dir>]` | `0` 输出只读脱敏故障诊断报告（可选私密保存），`1` 实例未就绪或保存失败 |
-| `menu [--install-dir <dir>]` | `0` 退出原生 Go 两级 5 分组管理菜单（以 `tgcloud` 名称无参启动时自动进入），`1` 启动失败 |
+| `menu [--install-dir <dir>]` | `0` 退出原生 Go 两级 5 分组管理菜单（含 HTTPS 配置/续期演练、Bot 成员配额、实例快照与代理备份；`tgcloud` 默认优先走 Go，可用 `--py-menu` 或 `TGCLOUD_PY_MENU=1` 回退 Python），`1` 启动失败 |
 
 ## Go / Python 职责分工与目录结构
 
-- **Go (`hostcli/`)**：静态编译单二进制（仅依赖标准库、`GOPROXY=off`、`<= 8 MiB`），承担 Linux 宿主机侧的全部部署、容器生命周期、入口/证书、备份、卸载、故障诊断与原生 `tgcloud` 交互菜单；业务功能设置通过 `docker exec -i` 调用 Bot 容器内协议，宿主机不依赖 Python 业务环境。
+- **Go (`hostcli/`)**：静态编译单二进制（仅依赖标准库、`GOPROXY=off`、`<= 8 MiB`），承担 Linux 宿主机侧的全部部署、容器生命周期、入口/证书、备份/快照、卸载、故障诊断与原生 `tgcloud` 交互菜单；业务功能设置通过 `docker exec -i` 调用 Bot 容器内协议，宿主机不依赖 Python 业务环境。
 - **Python (`src/tgcloud/`)**：承担容器内 Bot 核心业务（Telethon、队列/rclone/流式上传、SQLite 状态机、命名分类、配额、通知、容器内管理协议端点）以及兼容回退路径。
 
 `hostcli/internal/` 按职责拆分：
@@ -43,11 +43,12 @@ sudo "$HOME/.local/bin/tgcloud-host" restart bot --yes
 - `deps/`：Debian/Ubuntu 基础软件与 Docker 官方 APT 源依赖准备
 - `report/`：安装收尾状态与备份统计报告
 - `acceptance/`：安装后状态汇总、容器日志轮转核验与 WebDAV 写入验收
-- `inspect/`：实例发现、Docker 预检、镜像准备、安装/升级事务、公网 HTTPS / 内网 LAN 入口管理
-- `uninstall/`：受管实例与共享代理的 fail-closed 卸载预检与执行
-- `backupops/`：实例历史备份清单与共享代理 tar/manifest/SHA256 备份、校验、演练与清理
+- `entry/`：公网 HTTPS 代理（含 `renew-dry-run` 续期演练）与可信内网 HTTP 入口管理
+- `inspect/`：实例发现、Docker 预检、镜像准备与安装/升级事务引擎
+- `uninstall/`：受管实例与共享代理的 fail-closed 卸载预检（`plan_linux.go`）与执行（`execute_linux.go`）
+- `backupops/`：实例历史备份、实例离线快照创建/隔离校验（`snapshot_linux.go`）与共享代理 tar/manifest/SHA256 备份（`proxy_linux.go`）
 - `webdav/`：外部 WebDAV 记录状态核对与认证文件原子写入/容器挂载摘要校验
-- `tui/`：原生 Go 两级 5 分组交互菜单与脱敏诊断报告生成
+- `tui/`：原生 Go 两级 5 分组交互菜单（`menu.go` / `actions.go` / `diagnostics.go` / `host_linux.go`）
 
 `check` 沿用容器内的观测结果，WebDAV 写入验收仍通过现有管理菜单执行。独立 Docker Compose 部署继续在部署目录运行 `bash manage.sh`。
 

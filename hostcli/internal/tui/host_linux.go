@@ -18,6 +18,7 @@ import (
 
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/acceptance"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/backupops"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/entry"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/uninstall"
@@ -105,7 +106,7 @@ func (b *HostBackend) ShowLogs(instance *inspect.Instance, out io.Writer) error 
 	return nil
 }
 
-func (b *HostBackend) ControlService(instance *inspect.Instance, verb, target string, out io.Writer) error {
+func (b *HostBackend) ControlService(instance *inspect.Instance, verb, target string, _ io.Writer) error {
 	lock, err := inspect.LockInstance()
 	if err != nil {
 		return err
@@ -156,14 +157,16 @@ func (b *HostBackend) CollectDiagnostics(instance *inspect.Instance) (string, er
 	logRot := map[string]string{
 		"Bot":      acceptance.InspectContainerLogRotation(instance.Bot.ID, b.Directory, inspect.BotName, instance.Bot.Project, "", b.Docker),
 		"网关":       acceptance.InspectContainerLogRotation(instance.Gateway.ID, b.Directory, "clouddrive2", instance.Gateway.Project, "", b.Docker),
-		"共享 Nginx": acceptance.InspectContainerLogRotation(inspect.HTTPSNginx, inspect.HTTPSRoot, "nginx", inspect.HTTPSProject, "reverse-proxy", b.Docker),
-		"Certbot":  acceptance.InspectContainerLogRotation(inspect.HTTPSCertbot, inspect.HTTPSRoot, "certbot", inspect.HTTPSProject, "certificate-manager", b.Docker),
+		"共享 Nginx": acceptance.InspectContainerLogRotation(entry.HTTPSNginx, entry.HTTPSRoot, "nginx", entry.HTTPSProject, "reverse-proxy", b.Docker),
+		"Certbot":  acceptance.InspectContainerLogRotation(entry.HTTPSCertbot, entry.HTTPSRoot, "certbot", entry.HTTPSProject, "certificate-manager", b.Docker),
 	}
 	entrySummary := "未核实"
-	if lanState, err := os.ReadFile("/opt/tgcloud-lan/clouddrive2/state.json"); err == nil && len(lanState) > 0 {
-		entrySummary = "内网 HTTP 管理入口已登记"
-	} else if domains, err := os.ReadFile(filepath.Join(inspect.HTTPSRoot, "state/domains.json")); err == nil && strings.Contains(string(domains), "clouddrive2") {
-		entrySummary = "共享 HTTPS 代理路由已登记"
+	if info, err := b.EntryInfo(instance); err == nil {
+		if info.IsLAN {
+			entrySummary = "内网 HTTP 管理入口已登记"
+		} else if info.Domain != "" {
+			entrySummary = "共享 HTTPS 代理路由已登记"
+		}
 	}
 	return RenderDiagnostics(instance, string(dockerVer), string(composeVer), snapJSON, logRot, entrySummary), nil
 }
@@ -196,7 +199,7 @@ func (b *HostBackend) SaveDiagnostics(report, dir string) (string, error) {
 	return target, nil
 }
 
-func (b *HostBackend) ReadEnv(instance *inspect.Instance) (map[string]string, error) {
+func (b *HostBackend) ReadEnv(_ *inspect.Instance) (map[string]string, error) {
 	envPath := filepath.Join(b.Directory, ".env")
 	file, err := hostutil.OpenPrivate(envPath, syscall.O_RDONLY, hostutil.ManagedOwnerUID)
 	if err != nil {
@@ -210,35 +213,95 @@ func (b *HostBackend) ReadEnv(instance *inspect.Instance) (map[string]string, er
 	return hostutil.ParseEnvLines(raw, errors.New("实例 .env 配置格式无效"))
 }
 
-func (b *HostBackend) ShowEntryStatus(instance *inspect.Instance, out io.Writer) error {
+func (b *HostBackend) EntryInfo(_ *inspect.Instance) (EntryInfo, error) {
 	if raw, err := os.ReadFile("/opt/tgcloud-lan/clouddrive2/state.json"); err == nil {
 		var rec struct {
 			BindIP string `json:"bind_ip"`
 		}
 		if json.Unmarshal(raw, &rec) == nil && rec.BindIP != "" {
-			fmt.Fprintf(out, "访问模式：内网 HTTP\n管理地址：http://%s:19798\n", rec.BindIP)
-			return nil
+			return EntryInfo{IsLAN: true, BindIP: rec.BindIP}, nil
 		}
 	}
-	raw, err := os.ReadFile(filepath.Join(inspect.HTTPSRoot, "state/domains.json"))
+	raw, err := os.ReadFile(filepath.Join(entry.HTTPSRoot, "state/domains.json"))
 	if err != nil {
-		fmt.Fprintln(out, "访问模式：HTTPS（尚未配置或未读取到 domains.json）")
-		return nil
+		return EntryInfo{}, nil
 	}
 	var doc struct {
 		Domains map[string]struct {
 			Domain string `json:"domain"`
+			Email  string `json:"email"`
 		} `json:"domains"`
 	}
-	if json.Unmarshal(raw, &doc) == nil && doc.Domains["clouddrive2"].Domain != "" {
-		fmt.Fprintln(out, "访问模式：HTTPS\n管理地址：https://"+doc.Domains["clouddrive2"].Domain)
-	} else {
+	if json.Unmarshal(raw, &doc) == nil {
+		route := doc.Domains["clouddrive2"]
+		return EntryInfo{Domain: route.Domain, Email: route.Email}, nil
+	}
+	return EntryInfo{}, nil
+}
+
+func (b *HostBackend) ShowEntryStatus(instance *inspect.Instance, out io.Writer) error {
+	info, err := b.EntryInfo(instance)
+	if err != nil {
+		return err
+	}
+	if info.IsLAN {
+		fmt.Fprintf(out, "访问模式：内网 HTTP\n管理地址：http://%s:19798\n", info.BindIP)
+		return nil
+	}
+	if info.Domain == "" {
 		fmt.Fprintln(out, "访问模式：HTTPS（未配置域名路由）")
+		return nil
+	}
+	fmt.Fprintln(out, "访问模式：HTTPS\n管理地址：https://"+info.Domain)
+	res, err := entry.HTTPSEntry([]string{"status", b.Directory, entry.DefaultNginxImage, entry.DefaultCertbotImage, info.Domain}, out)
+	if err != nil {
+		return err
+	}
+	if markers, ok := res.(map[string]string); ok {
+		failed := []string{}
+		for _, k := range []string{"CORE", "PORTS", "NGINX", "CERTBOT", "RENEWAL", "NGINX_TEST", "HTTPS", "REDIRECT", "DAV_BLOCK", "BACKEND_LOCAL", "CERT"} {
+			if markers["PROXY_"+k] != "OK" {
+				failed = append(failed, k)
+			}
+		}
+		if len(failed) == 0 {
+			fmt.Fprintln(out, "入口检查：本机通过")
+		} else {
+			fmt.Fprintln(out, "入口检查：未通过（项目："+strings.Join(failed, ", ")+"）")
+		}
+		if exp := markers["PROXY_CERT_END"]; exp != "" {
+			fmt.Fprintln(out, "证书到期："+exp)
+		}
+		if resText := markers["PROXY_RENEW_RESULT"]; resText != "" {
+			fmt.Fprintln(out, "续期检查："+resText)
+		}
 	}
 	return nil
 }
 
-func (b *HostBackend) ShowExternalWebDAV(instance *inspect.Instance, out io.Writer) error {
+func (b *HostBackend) ConfigureHTTPS(_ *inspect.Instance, domain, email, confirmedNAT, expectedDomain string, out io.Writer) error {
+	lock, err := inspect.LockInstance()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	_, err = entry.HTTPSEntry([]string{
+		"configure", b.Directory, entry.DefaultNginxImage, entry.DefaultCertbotImage,
+		domain, email, confirmedNAT, expectedDomain,
+	}, out)
+	return err
+}
+
+func (b *HostBackend) RenewHTTPSDryRun(_ *inspect.Instance, domain string, out io.Writer) error {
+	lock, err := inspect.LockInstance()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	return entry.RenewDryRun(domain, out)
+}
+
+func (b *HostBackend) ShowExternalWebDAV(_ *inspect.Instance, out io.Writer) error {
 	status, err := webdav.Status("/opt/tgcloud-webdav", "/opt/tgcloud-proxy/external-auth", "clouddrive2")
 	if err != nil {
 		return err
@@ -330,6 +393,19 @@ func (b *HostBackend) ListBackups(out io.Writer) error {
 		fmt.Fprintf(out, "%s（%d 字节，%s）\n", item.Name, item.SizeBytes, item.ModTime)
 	}
 	return nil
+}
+
+func (b *HostBackend) CreateInstanceSnapshot(instance *inspect.Instance, destDir string) (string, error) {
+	lock, err := inspect.LockInstance()
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+	return backupops.CreateInstanceSnapshot(b.Directory, destDir, instance.Version, b.Docker)
+}
+
+func (b *HostBackend) PreflightInstanceSnapshot(instance *inspect.Instance, archivePath, scratchDir string) (int, error) {
+	return backupops.PreflightInstanceSnapshot(archivePath, scratchDir, instance.Version)
 }
 
 func (b *HostBackend) ProxyBackupAction(action string, keep int, planID string, out io.Writer) (string, error) {

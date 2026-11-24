@@ -6,6 +6,7 @@ import json
 import os
 import shlex
 import subprocess  # nosec B404
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -622,9 +623,18 @@ def main(argv=None, *, mode_hint=None) -> int:
     parser.add_argument("--edition", choices=tuple(PRODUCTS), default="clouddrive2")
     parser.add_argument("--install-dir", help="指定已核验的单实例自定义目录")
     parser.add_argument("--source-dir", type=Path, help="显式指定完整安装源码；默认识别当前安装脚本所在源码目录")
-    parser.add_argument("--go-menu", action="store_true", help="使用原生 Go 宿主管理菜单（零宿主 Python 业务依赖）")
+    menu_group = parser.add_mutually_exclusive_group()
+    menu_group.add_argument("--go-menu", action="store_true", help="强制使用原生 Go 宿主管理菜单")
+    menu_group.add_argument("--py-menu", action="store_true", help="强制使用 Python 兼容管理菜单")
     args = parser.parse_args(argv)
-    if args.go_menu:
+    prefer_go = args.go_menu or (
+        not args.py_menu
+        and os.environ.get("TGCLOUD_PY_MENU") != "1"
+        and sys.platform == "linux"
+        and mode_hint is None
+        and args.source_dir is None
+    )
+    if prefer_go:
         tool = runtime.installed_host_cli()
         if tool is not None and host_cli.supports("menu", executable=tool):
             menu_args = ["menu"]

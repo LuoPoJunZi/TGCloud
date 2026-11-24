@@ -1,4 +1,4 @@
-package inspect
+package entry
 
 import (
 	"encoding/json"
@@ -12,13 +12,10 @@ import (
 	"syscall"
 
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
 
 const (
-	HTTPSRoot        = "/opt/tgcloud-proxy"
-	HTTPSProject     = "tgcloud-proxy"
-	HTTPSNginx       = "tgcloud-proxy-nginx"
-	HTTPSCertbot     = "tgcloud-proxy-certbot"
 	httpsRoot        = HTTPSRoot
 	httpsProject     = HTTPSProject
 	httpsNginx       = HTTPSNginx
@@ -84,13 +81,13 @@ func (entry httpsEntry) statePath() string {
 func (entry httpsEntry) readState() (httpsState, bool, error) {
 	state := newHTTPSState()
 	path := entry.statePath()
-	if !managerSafePath(path, false) {
+	if !hostutil.SafePath(path, false) {
 		return state, false, errHTTPSState
 	}
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
 		return state, false, nil
 	}
-	raw, err := readHTTPSPrivate(path, installConfigLimit)
+	raw, err := readHTTPSPrivate(path, inspect.InstallConfigLimit)
 	if err != nil {
 		return state, false, errHTTPSState
 	}
@@ -115,10 +112,10 @@ func (entry httpsEntry) readState() (httpsState, bool, error) {
 
 func readHTTPSPrivate(path string, limit int64) ([]byte, error) {
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || !privateOwner(info, hostutil.ManagedOwnerUID) {
+	if err != nil || !info.Mode().IsRegular() || !hostutil.PrivateOwner(info, hostutil.ManagedOwnerUID) {
 		return nil, errHTTPSState
 	}
-	return readSourceFile(path, limit)
+	return inspect.ReadSourceFile(path, limit)
 }
 
 func (entry httpsEntry) sharedStateAvailable() error {
@@ -149,7 +146,7 @@ func (entry httpsEntry) sharedStateAvailable() error {
 }
 
 func requireHTTPSDir(path string, mode os.FileMode) error {
-	if !managerSafePath(path, false) {
+	if !hostutil.SafePath(path, false) {
 		return errHTTPSState
 	}
 	if err := os.Mkdir(path, mode); err != nil && !errors.Is(err, os.ErrExist) {
@@ -174,7 +171,7 @@ func (entry httpsEntry) lock() (*os.File, error) {
 		return nil, err
 	}
 	path := filepath.Join(entry.root, "transaction.lock")
-	file, err := openPrivate(path, syscall.O_CREAT|syscall.O_RDWR, hostutil.ManagedOwnerUID)
+	file, err := hostutil.OpenPrivate(path, syscall.O_CREAT|syscall.O_RDWR, hostutil.ManagedOwnerUID)
 	if err != nil {
 		return nil, errHTTPSState
 	}
@@ -204,7 +201,7 @@ func (entry httpsEntry) commit(state httpsState) error {
 // Nginx binds the active conf.d directory. Keep its inode and replace only
 // the individual files, after testing the complete configuration in staging.
 func writeHTTPSFile(path string, body []byte, mode os.FileMode) error {
-	if !managerSafePath(path, false) {
+	if !hostutil.SafePath(path, false) {
 		return errHTTPSState
 	}
 	if info, err := os.Lstat(path); err == nil &&
@@ -216,7 +213,7 @@ func writeHTTPSFile(path string, body []byte, mode os.FileMode) error {
 		return errHTTPSState
 	}
 	defer os.Remove(file.Name())
-	if err := finishManagerFile(file, body, mode); err != nil {
+	if err := hostutil.FinishFile(file, body, mode); err != nil {
 		return errHTTPSState
 	}
 	if err := os.Rename(file.Name(), path); err != nil {
@@ -243,7 +240,7 @@ func (entry httpsEntry) runtimeFilesExist() (bool, error) {
 
 func (entry httpsEntry) checkConfigFiles() error {
 	for _, name := range []string{"docker-compose.yml", "nginx/nginx.conf", "nginx/conf.d"} {
-		if !managerSafePath(filepath.Join(entry.root, name), false) {
+		if !hostutil.SafePath(filepath.Join(entry.root, name), false) {
 			return errHTTPSState
 		}
 	}
@@ -255,8 +252,8 @@ func (entry httpsEntry) checkConfigFiles() error {
 	for _, item := range entries {
 		switch item.Name() {
 		case "00-default.conf", "10-acme-bootstrap.conf", "20-clouddrive2.conf":
-			if _, err := readSourceFile(filepath.Join(directory, item.Name()), installConfigLimit); err != nil ||
-				!managerSafePath(filepath.Join(directory, item.Name()), false) {
+			if _, err := inspect.ReadSourceFile(filepath.Join(directory, item.Name()), inspect.InstallConfigLimit); err != nil ||
+				!hostutil.SafePath(filepath.Join(directory, item.Name()), false) {
 				return errHTTPSState
 			}
 		default:

@@ -1,4 +1,4 @@
-package inspect
+package entry
 
 import (
 	"context"
@@ -18,6 +18,7 @@ import (
 	"unicode"
 
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
 
 const httpsContainerFields = `{"id":{{json .Id}},"name":{{json .Name}},"image":{{json .Image}},` +
@@ -54,7 +55,7 @@ func netLiteral(value string) bool {
 	return err == nil
 }
 
-func (entry httpsEntry) ownedContainers(docker DockerRunner, stateExists bool) (httpsProxy, error) {
+func (entry httpsEntry) ownedContainers(docker inspect.DockerRunner, stateExists bool) (httpsProxy, error) {
 	var proxy httpsProxy
 	if docker == nil {
 		if !stateExists {
@@ -108,12 +109,12 @@ func (entry httpsEntry) ownedContainers(docker DockerRunner, stateExists bool) (
 	return proxy, nil
 }
 
-func (entry httpsEntry) inspectContainer(docker DockerRunner, service string) (*httpsContainer, error) {
+func (entry httpsEntry) inspectContainer(docker inspect.DockerRunner, service string) (*httpsContainer, error) {
 	name := httpsProject + "-" + service
 	raw, err := docker("container", "inspect", "--format", httpsContainerFields, name)
 	var item httpsContainer
 	if err != nil || json.Unmarshal(raw, &item) != nil || item.Name != "/"+name ||
-		!containerID.MatchString(item.ID) || !imageID.MatchString(item.Image) {
+		!inspect.ContainerIDPattern.MatchString(item.ID) || !inspect.ImageIDPattern.MatchString(item.Image) {
 		return nil, errHTTPSForeign
 	}
 	role, network := "reverse-proxy", "host"
@@ -164,15 +165,15 @@ func httpsHostCommand(ctx context.Context, command string, args ...string) ([]by
 	defer cancel()
 	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
-	var output dockerOutput
+	var output hostutil.BoundedBuffer
 	cmd.Stdout = &output
 	if err := cmd.Run(); err != nil {
 		return nil, err
 	}
-	return output.buffer.Bytes(), nil
+	return output.Bytes(), nil
 }
 
-func publishedHTTPSPorts(docker DockerRunner) (map[int]bool, error) {
+func publishedHTTPSPorts(docker inspect.DockerRunner) (map[int]bool, error) {
 	published := map[int]bool{}
 	if docker == nil {
 		return published, nil
@@ -197,7 +198,7 @@ func publishedHTTPSPorts(docker DockerRunner) (map[int]bool, error) {
 	return published, nil
 }
 
-func (entry httpsEntry) portOwners(ctx context.Context, proxy httpsProxy, docker DockerRunner) (string, string, error) {
+func (entry httpsEntry) portOwners(ctx context.Context, proxy httpsProxy, docker inspect.DockerRunner) (string, string, error) {
 	published, err := publishedHTTPSPorts(docker)
 	if err != nil {
 		return "", "", err
@@ -348,7 +349,7 @@ func (environment httpsEnvironment) safe(confirmed string) error {
 	return nil
 }
 
-func (entry httpsEntry) probe(ctx context.Context, domain string, proxy httpsProxy, docker DockerRunner) (httpsEnvironment, error) {
+func (entry httpsEntry) probe(ctx context.Context, domain string, proxy httpsProxy, docker inspect.DockerRunner) (httpsEnvironment, error) {
 	result := httpsEnvironment{Core: "MISSING", Docker: "MISSING"}
 	var err error
 	result.Port80, result.Port443, err = entry.portOwners(ctx, proxy, docker)
@@ -372,8 +373,8 @@ func (entry httpsEntry) probe(ctx context.Context, domain string, proxy httpsPro
 	return result, nil
 }
 
-func (entry httpsEntry) backend(ctx context.Context, docker DockerRunner) (core, local bool) {
-	base, err := Discover(entry.directory, docker)
+func (entry httpsEntry) backend(ctx context.Context, docker inspect.DockerRunner) (core, local bool) {
+	base, err := inspect.Discover(entry.directory, docker)
 	if err != nil || base == nil || base.Gateway.State != "running" || checkLanBindings(base.Gateway.ID, docker) != nil {
 		return false, false
 	}

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/entry"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
@@ -273,7 +274,7 @@ func VerifyMountedAuth(authRoot, edition string, docker inspect.DockerRunner) (s
 	}
 	sum := sha256.Sum256(raw)
 	expected := hex.EncodeToString(sum[:])
-	out, err := docker("exec", inspect.HTTPSNginx, "sha256sum", "/etc/nginx/external-auth/"+edition+".htpasswd")
+	out, err := docker("exec", entry.HTTPSNginx, "sha256sum", "/etc/nginx/external-auth/"+edition+".htpasswd")
 	if err != nil {
 		return "", errors.New("容器没有读取到当前认证文件，拒绝宣称密码轮换成功")
 	}

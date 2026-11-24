@@ -1,4 +1,4 @@
-package inspect
+package entry
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
 
 func HTTPSEntrySupported() bool { return true }
@@ -20,7 +21,7 @@ func HTTPSEntry(args []string, progress io.Writer) (any, error) {
 	}
 	entry := httpsEntry{root: httpsRoot, directory: args[1], nginxImage: args[2], certbotImage: args[3]}
 	action, domain := args[0], args[4]
-	if err := checkPlanningDirectory(entry.directory); err != nil {
+	if err := inspect.CheckPlanningDirectory(entry.directory); err != nil {
 		return nil, err
 	}
 	if !validHTTPSDomain(domain) || !httpsNginxImage.MatchString(entry.nginxImage) || !httpsCertbotImage.MatchString(entry.certbotImage) {
@@ -36,11 +37,11 @@ func HTTPSEntry(args []string, progress io.Writer) (any, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
 	defer cancel()
-	native, err := DockerPreflight(true)
+	native, err := inspect.DockerPreflight(true)
 	if err != nil {
 		return nil, err
 	}
-	var docker DockerRunner
+	var docker inspect.DockerRunner
 	if native != nil {
 		docker = entry.dockerRunner(ctx, *native)
 	}
@@ -64,7 +65,7 @@ func HTTPSEntry(args []string, progress io.Writer) (any, error) {
 	return entry.status(ctx, domain, containers, docker), nil
 }
 
-func (entry httpsEntry) dockerRunner(ctx context.Context, native PreflightResult) DockerRunner {
+func (entry httpsEntry) dockerRunner(ctx context.Context, native inspect.PreflightResult) inspect.DockerRunner {
 	return func(args ...string) ([]byte, error) {
 		timeout := 20 * time.Second
 		var environment []string
@@ -82,7 +83,7 @@ func (entry httpsEntry) dockerRunner(ctx context.Context, native PreflightResult
 		case args[0] == "run":
 			timeout = 90 * time.Second
 		}
-		return runDockerCommandContext(ctx, true, nil, timeout, environment, args...)
+		return inspect.RunDockerContext(ctx, true, nil, timeout, environment, args...)
 	}
 }
 
@@ -90,7 +91,7 @@ func (entry httpsEntry) configureHost(ctx context.Context, domain, email, confir
 	if email != strings.TrimSpace(email) || len(email) > 254 || (email != "" && !httpsEmail.MatchString(email)) {
 		return errors.New("Let's Encrypt 邮箱格式不正确")
 	}
-	native, err := DockerPreflight(false)
+	native, err := inspect.DockerPreflight(false)
 	if err != nil {
 		return err
 	}
@@ -135,7 +136,7 @@ func (entry httpsEntry) configureHost(ctx context.Context, domain, email, confir
 		return err
 	}
 	for _, image := range []string{entry.nginxImage, entry.certbotImage} {
-		if err := ensureNativeImage(image, *native, docker); err != nil {
+		if err := inspect.EnsureNativeImage(image, *native, docker); err != nil {
 			return err
 		}
 	}

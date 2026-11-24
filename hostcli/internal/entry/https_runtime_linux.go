@@ -1,4 +1,4 @@
-package inspect
+package entry
 
 import (
 	"context"
@@ -16,12 +16,13 @@ import (
 	"time"
 
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
 
 func (entry httpsEntry) certFile(domain, path string) string {
 	root := filepath.Join(entry.root, "certbot/letsencrypt")
 	resolved, err := filepath.EvalSymlinks(filepath.Join(root, path))
-	if err != nil || !managerSafePath(resolved, false) {
+	if err != nil || !hostutil.SafePath(resolved, false) {
 		return ""
 	}
 	// Certbot's live links are normally relative links into its archive.
@@ -46,7 +47,7 @@ func (entry httpsEntry) certificate(domain string) (time.Time, bool, bool) {
 	if !present || !renewal {
 		return time.Time{}, present, renewal
 	}
-	body, err := readSourceFile(chain, 256*1024)
+	body, err := inspect.ReadSourceFile(chain, 256*1024)
 	block, _ := pem.Decode(body)
 	if err != nil || block == nil || block.Type != "CERTIFICATE" {
 		return time.Time{}, present, renewal
@@ -83,7 +84,7 @@ func renewalStatuses(root, domain string, markers map[string]string) {
 	}
 }
 
-func (entry httpsEntry) status(ctx context.Context, domain string, containers httpsProxy, docker DockerRunner) map[string]string {
+func (entry httpsEntry) status(ctx context.Context, domain string, containers httpsProxy, docker inspect.DockerRunner) map[string]string {
 	markers := map[string]string{"PROXY_STATUS": "OK"}
 	set := func(key string, checked bool) {
 		markers["PROXY_"+key] = "FAILED"
@@ -169,7 +170,7 @@ func (entry httpsEntry) configDirectories() error {
 
 // Validate a complete candidate before touching the active bind mounts.
 // A private task-specific directory avoids reusing old .next files.
-func (entry httpsEntry) publish(state httpsState, candidate string, docker DockerRunner, dirty *bool) (bool, error) {
+func (entry httpsEntry) publish(state httpsState, candidate string, docker inspect.DockerRunner, dirty *bool) (bool, error) {
 	if err := entry.configDirectories(); err != nil {
 		return false, err
 	}
@@ -205,7 +206,7 @@ func (entry httpsEntry) publish(state httpsState, candidate string, docker Docke
 		"nginx/conf.d/20-clouddrive2.conf", "nginx/nginx.conf", "docker-compose.yml"} {
 		target := filepath.Join(entry.root, name)
 		body, keep := files[name]
-		existing, err := readSourceFile(target, installConfigLimit)
+		existing, err := inspect.ReadSourceFile(target, inspect.InstallConfigLimit)
 		if err != nil {
 			if _, statErr := os.Lstat(target); !errors.Is(statErr, os.ErrNotExist) {
 				return mainChanged, errHTTPSState
@@ -235,7 +236,7 @@ func (entry httpsEntry) publish(state httpsState, candidate string, docker Docke
 	return mainChanged, nil
 }
 
-func (entry httpsEntry) activate(state httpsState, candidate, architecture string, docker DockerRunner, dirty *bool) error {
+func (entry httpsEntry) activate(state httpsState, candidate, architecture string, docker inspect.DockerRunner, dirty *bool) error {
 	mainChanged, err := entry.publish(state, candidate, docker, dirty)
 	if err != nil {
 		return err
@@ -252,7 +253,7 @@ func (entry httpsEntry) activate(state httpsState, candidate, architecture strin
 		return errors.New("共享 Nginx 容器启动失败")
 	}
 	item, err := entry.inspectContainer(docker, "nginx")
-	if err != nil || !item.Running || !imageIsNative(item.Image, architecture, docker) {
+	if err != nil || !item.Running || !inspect.ImageIsNative(item.Image, architecture, docker) {
 		return errors.New("无法核对启动后的共享 Nginx 容器")
 	}
 	if _, err := docker("exec", item.ID, "nginx", "-t"); err != nil {
@@ -264,7 +265,7 @@ func (entry httpsEntry) activate(state httpsState, candidate, architecture strin
 	return nil
 }
 
-func reloadHTTPSNginx(docker DockerRunner, containerID string) error {
+func reloadHTTPSNginx(docker inspect.DockerRunner, containerID string) error {
 	var err error
 	for attempt := range 10 {
 		if _, err = docker("exec", containerID, "nginx", "-s", "reload"); err == nil {
@@ -277,14 +278,14 @@ func reloadHTTPSNginx(docker DockerRunner, containerID string) error {
 	return err
 }
 
-func (entry httpsEntry) startRenewal(architecture string, docker DockerRunner) error {
+func (entry httpsEntry) startRenewal(architecture string, docker inspect.DockerRunner) error {
 	up := []string{"up", "-d", "--no-deps", "--pull", "never"}
 	try := func(options []string) (*httpsContainer, error) {
 		if _, err := docker(entry.compose(append(options, "certbot")...)...); err != nil {
 			return nil, errors.New("证书续期容器启动失败")
 		}
 		item, err := entry.inspectContainer(docker, "certbot")
-		if err != nil || !item.Running || !imageIsNative(item.Image, architecture, docker) {
+		if err != nil || !item.Running || !inspect.ImageIsNative(item.Image, architecture, docker) {
 			return nil, errors.New("无法核对启动后的证书续期容器")
 		}
 		return item, nil
@@ -302,7 +303,7 @@ func (entry httpsEntry) startRenewal(architecture string, docker DockerRunner) e
 	return nil
 }
 
-func (entry httpsEntry) obtain(domain, email string, present bool, docker DockerRunner) error {
+func (entry httpsEntry) obtain(domain, email string, present bool, docker inspect.DockerRunner) error {
 	args := []string{"run", "--rm", "--no-deps", "--entrypoint", "certbot", "certbot", "certonly",
 		"--webroot", "-w", "/var/www/certbot", "--non-interactive", "--agree-tos", "--no-eff-email"}
 	if email == "" {
@@ -323,7 +324,7 @@ func (entry httpsEntry) obtain(domain, email string, present bool, docker Docker
 	return nil
 }
 
-func (entry httpsEntry) restore(previous httpsState, architecture string, docker DockerRunner) error {
+func (entry httpsEntry) restore(previous httpsState, architecture string, docker inspect.DockerRunner) error {
 	dirty := false
 	if domain := previous.domain(); domain != "" {
 		restore, candidate := previous, ""
@@ -342,10 +343,10 @@ func (entry httpsEntry) restore(previous httpsState, architecture string, docker
 	return err
 }
 
-type httpsStatusCheck func(context.Context, string, httpsProxy, DockerRunner) map[string]string
+type httpsStatusCheck func(context.Context, string, httpsProxy, inspect.DockerRunner) map[string]string
 
 func (entry httpsEntry) configure(ctx context.Context, previous httpsState, domain, email, arch string,
-	docker, rollback DockerRunner, status httpsStatusCheck, progress io.Writer,
+	docker, rollback inspect.DockerRunner, status httpsStatusCheck, progress io.Writer,
 ) (err error) {
 	dirty, committed := false, false
 	defer func() {

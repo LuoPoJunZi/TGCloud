@@ -47,6 +47,14 @@ func AcceptBot(directory string, checkGateway bool, progress io.Writer) error {
 	return acceptBot(directory, checkGateway, native.Architecture, progress, docker)
 }
 
+func RunBotAcceptanceDocker(ctx context.Context, timeout time.Duration, environment []string, args ...string) ([]byte, error) {
+	return runBotAcceptanceDocker(ctx, timeout, environment, args...)
+}
+
+func VerifyBotRuntime(directory, id string, marker SourceMarker, progress io.Writer, docker DockerRunner) error {
+	return verifyBotRuntime(directory, id, marker, progress, docker)
+}
+
 func runBotAcceptanceDocker(ctx context.Context, timeout time.Duration, environment []string, args ...string) ([]byte, error) {
 	// This probe imports Python settings and hashes the installed code in the container.
 	if len(args) > 1 && args[0] == "exec" && args[len(args)-1] == botAcceptanceProbe {

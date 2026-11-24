@@ -1,4 +1,4 @@
-package inspect
+package entry
 
 import "strings"
 

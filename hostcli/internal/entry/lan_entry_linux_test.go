@@ -1,4 +1,4 @@
-package inspect
+package entry
 
 import (
 	"bytes"
@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/hostutil"
+	"github.com/LuoPoJunZi/TGCloud/hostcli/internal/inspect"
 )
 
 func TestLANEntryReusesAndRepairsOnlyProxy(t *testing.T) {
@@ -40,21 +41,21 @@ func TestLANEntryReusesAndRepairsOnlyProxy(t *testing.T) {
 		}
 		return nil
 	}
-	marker := sourceMarker{Schema: 1, Owner: "tgcloud.local-source", Project: "tgcloud", Mode: "shell",
+	marker := inspect.SourceMarker{Schema: 1, Owner: "tgcloud.local-source", Project: "tgcloud", Mode: "shell",
 		Edition: lanEdition, State: "ready", Version: "0.0.6", SourceSHA256: strings.Repeat("f", 64), Files: map[string]string{}}
 	const value = "synthetic configuration"
-	makeContainer := func(name, service, id string, paths map[string]string) Container {
-		item := Container{ID: id, Name: "/" + name, Project: "tgcloud", Directory: entry.directory,
+	makeContainer := func(name, service, id string, paths map[string]string) inspect.Container {
+		item := inspect.Container{ID: id, Name: "/" + name, Project: "tgcloud", Directory: entry.directory,
 			Service: service, State: "running", Health: "healthy"}
 		for destination, relative := range paths {
-			item.Mounts = append(item.Mounts, mount{"bind", filepath.Join(entry.directory, relative), destination})
+			item.Mounts = append(item.Mounts, inspect.Mount{"bind", filepath.Join(entry.directory, relative), destination})
 		}
 		return item
 	}
-	bot := makeContainer(botName, botName, id, map[string]string{
+	bot := makeContainer(inspect.BotName, inspect.BotName, id, map[string]string{
 		"/data": "data", "/config": "config", "/downloads": "downloads", "/logs": "logs",
 	})
-	gateway := makeContainer(gatewayName, gatewayService, gatewayID, map[string]string{
+	gateway := makeContainer(inspect.GatewayName, inspect.GatewayService, gatewayID, map[string]string{
 		"/CloudNAS": "clouddrive/mounts", "/Config": "clouddrive/config",
 	})
 	docker := func(args ...string) ([]byte, error) {
@@ -68,7 +69,7 @@ func TestLANEntryReusesAndRepairsOnlyProxy(t *testing.T) {
 				}
 				return []byte(proxyID), nil
 			}
-			return []byte(botName + "\n" + gatewayName), nil
+			return []byte(inspect.BotName + "\n" + inspect.GatewayName), nil
 		case args[0] == "container" && args[len(args)-1] == proxyID:
 			readonly := false
 			return json.Marshal(lanContainer{ID: proxyID, Name: "/" + lanName, Image: "sha256:" + id, Reference: entry.image,
@@ -87,12 +88,12 @@ func TestLANEntryReusesAndRepairsOnlyProxy(t *testing.T) {
 		case args[0] == "inspect" && args[len(args)-1] == gatewayID:
 			return []byte(`{"19798/tcp":[{"HostIp":"127.0.0.1","HostPort":"19798"}]}`), nil
 		case args[0] == "exec" && args[1] == id:
-			return json.Marshal(map[string]any{"version": marker.Version, "code": marker.codeFingerprint(),
-				"environment": map[string]string{"BOT_TOKEN_B64": sha256Text([]byte(value))}})
+			return json.Marshal(map[string]any{"version": marker.Version, "code": marker.CodeFingerprint(),
+				"environment": map[string]string{"BOT_TOKEN_B64": inspect.SHA256Text([]byte(value))}})
 		case args[0] == "image":
 			return []byte(`{"os":"linux","arch":"amd64"}`), nil
 		case args[0] == "compose" && args[2] == entry.directory:
-			return json.Marshal(map[string]any{"services": map[string]any{botName: map[string]any{
+			return json.Marshal(map[string]any{"services": map[string]any{inspect.BotName: map[string]any{
 				"environment": map[string]string{"BOT_TOKEN_B64": value},
 			}}})
 		case args[0] == "compose" && args[2] == entry.configDir():
@@ -136,12 +137,12 @@ func TestLANEntryReusesAndRepairsOnlyProxy(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range requiredSourceFiles {
+	for _, name := range inspect.RequiredSourceFiles {
 		write(name, []byte(name))
-		marker.Files[name] = sha256Text([]byte(name))
+		marker.Files[name] = inspect.SHA256Text([]byte(name))
 	}
 	raw, _ := json.Marshal(marker)
-	write(sourceMarkerName, raw)
+	write(inspect.SourceMarkerName, raw)
 	write(".env", []byte(value))
 	write("data/tasks.db", []byte("existing task data"))
 	failStart = true
@@ -165,7 +166,7 @@ func TestLANEntryReusesAndRepairsOnlyProxy(t *testing.T) {
 	if _, err := check(true, true); err != nil || !reflect.DeepEqual(writes, append(expected[:3], "up -d --no-deps --pull never --force-recreate lan")) {
 		t.Fatalf("unresponsive proxy was not repaired independently: %v, writes=%v", err, writes)
 	}
-	for name, expected := range map[string][]byte{".env": []byte(value), "data/tasks.db": []byte("existing task data"), sourceMarkerName: raw} {
+	for name, expected := range map[string][]byte{".env": []byte(value), "data/tasks.db": []byte("existing task data"), inspect.SourceMarkerName: raw} {
 		body, err := os.ReadFile(filepath.Join(entry.directory, name))
 		if err != nil || !bytes.Equal(body, expected) {
 			t.Fatalf("base file %s changed: %v", name, err)

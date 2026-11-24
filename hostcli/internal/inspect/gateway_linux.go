@@ -15,7 +15,8 @@ import (
 )
 
 const (
-	gatewayService = "clouddrive2"
+	GatewayService = "clouddrive2"
+	gatewayService = GatewayService
 	gatewayNetwork = "tgcloud-clouddrive2-net"
 	gatewayFields  = `{"container":` + containerFields + `,"image":{{json .Image}},` +
 		`"network_mode":{{json .HostConfig.NetworkMode}},"networks":{{json .NetworkSettings.Networks}}}`
@@ -25,11 +26,17 @@ type gatewayEndpoint struct {
 	NetworkID, IPAddress, GlobalIPv6Address string
 }
 
-type gatewayContainer struct {
+type GatewayContainer struct {
 	Container   Container
 	Image       string
 	NetworkMode string `json:"network_mode"`
 	Networks    map[string]gatewayEndpoint
+}
+
+type gatewayContainer = GatewayContainer
+
+func CheckGatewayPort(gateway *GatewayContainer, docker DockerRunner) (bool, error) {
+	return checkGatewayPort(gateway, docker)
 }
 
 func checkGatewayDeployment(directory string) error {
