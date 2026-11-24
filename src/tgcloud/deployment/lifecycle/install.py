@@ -270,8 +270,7 @@ def sync_addons_for_plan(
         reason = str(exc) if isinstance(exc, (ValueError, RuntimeError)) else "文件系统或权限异常"
         feedback.addon_sync_error = reason
         log("[待核对] 外部 WebDAV 附加工具同步未完成：" + reason + "；基础服务已完成，继续检查管理入口，稍后可在 tgcloud 菜单 2.3 核对。")
-    finally:
-        feedback.stage = previous_stage
+    feedback.stage = previous_stage
 
 
 def execute_plan(

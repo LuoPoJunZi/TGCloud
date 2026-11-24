@@ -294,6 +294,22 @@ class ExecutionSummaryTests(unittest.TestCase):
         self.assertIn("本机内网入口：通过", lan_text)
         self.assertIn("外部 WebDAV 维护工具：同步未完成（外部 WebDAV 离线目录含未知资源", lan_text)
 
+        # 3. Ctrl+C / EOFError during add-on sync preserves "附加工具同步" as the interrupted stage while keeping base="ok".
+        self.messages.clear()
+        interrupted_plan = self.plan()
+        with (
+            patch.object(install.runtime, "install_release", return_value=cli_ok),
+            patch.object(install.runtime, "sync_installed_addons", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            self.run_plan(interrupted_plan, install_manager=True)
+        self.assertTrue(interrupted_plan.feedback.interrupted)
+        self.assertEqual(interrupted_plan.feedback.checks["base"], "ok")
+        self.assertEqual(interrupted_plan.feedback.failure_stage, "附加工具同步")
+        interrupted_text = "\n".join(self.messages)
+        self.assertIn("停止阶段：附加工具同步", interrupted_text)
+        self.assertIn("基础安装与升级：通过", interrupted_text)
+
     def test_readiness_timeout_stale_or_unknown_protocol_does_not_fail_base_or_claim_readiness(self):
         for output in ("PRIVATE_TRACEBACK", json.dumps({"schema": 99}), json.dumps({
             "schema": 1, "version": "0.0.0", "ready": True, "checks": dict.fromkeys(readiness.LABELS, "ok")})):
