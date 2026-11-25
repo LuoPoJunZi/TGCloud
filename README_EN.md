@@ -38,7 +38,8 @@ cd /root/TGCloud-Compose && \
 curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.1.0/TGCloud-v0.1.0-compose.tar.gz && \
 curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.1.0/COMPOSE-SHA256SUMS.txt && \
 sha256sum -c COMPOSE-SHA256SUMS.txt && \
-tar --no-same-owner -xzf TGCloud-v0.1.0-compose.tar.gz --strip-components=1
+tar --no-same-owner -xzf TGCloud-v0.1.0-compose.tar.gz --strip-components=1 && \
+rm -f TGCloud-v0.1.0-compose.tar.gz COMPOSE-SHA256SUMS.txt
 ```
 
 The `/root/TGCloud-Compose` directory must not already exist. These commands download the `v0.1.0` deployment archive and its SHA256 checksum file. Deployment files are extracted directly into `/root/TGCloud-Compose`.

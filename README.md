@@ -73,7 +73,8 @@ cd /root/TGCloud-Compose && \
 curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.1.0/TGCloud-v0.1.0-compose.tar.gz && \
 curl -fLO https://github.com/LuoPoJunZi/TGCloud/releases/download/v0.1.0/COMPOSE-SHA256SUMS.txt && \
 sha256sum -c COMPOSE-SHA256SUMS.txt && \
-tar --no-same-owner -xzf TGCloud-v0.1.0-compose.tar.gz --strip-components=1
+tar --no-same-owner -xzf TGCloud-v0.1.0-compose.tar.gz --strip-components=1 && \
+rm -f TGCloud-v0.1.0-compose.tar.gz COMPOSE-SHA256SUMS.txt
 ```
 
 命令下载 `v0.1.0` 正式部署包和对应的 SHA256 校验文件。部署目录固定为 `/root/TGCloud-Compose`，首次运行前须尚不存在；安装文件直接位于该目录，不再增加 `deployment/` 子目录。

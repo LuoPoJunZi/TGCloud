@@ -187,6 +187,10 @@ class ComposeDownloadDocumentationTests(unittest.TestCase):
         command = next((block for block in blocks
                         if "/releases/download/" in block and "COMPOSE-SHA256SUMS.txt" in block), None)
         self.assertIsNotNone(command, "Compose download example missing from the deployment guide")
+        for name in ("README.md", "README_EN.md"):
+            text = (ROOT / name).read_text(encoding="utf-8")
+            doc_blocks = re.findall(r"```bash[ \t]*\n(.*?)\n```", text, re.DOTALL)
+            self.assertIn(command, doc_blocks, f"Compose download example in {name} is out of sync with docs/compose-guide.md")
         return command
 
     def run_command(self, *, failed_download="", checksum_failure=False, existing_instance=False):
@@ -202,6 +206,7 @@ class ComposeDownloadDocumentationTests(unittest.TestCase):
             ),
             'sha256sum() { printf "SHA256 %s\\n" "$*"; return ' + ("1" if checksum_failure else "0") + '; }',
             'tar() { printf "TAR %s\\n" "$*"; }',
+            'rm() { printf "RM %s\\n" "$*"; }',
             'bash() { printf "INITIALIZATION_CALLED\\n"; }',
         ))
         return subprocess.run([BASH, "-c", prefix + "\n" + command], capture_output=True, text=True,
@@ -217,7 +222,8 @@ class ComposeDownloadDocumentationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f"{base}/{archive}", result.stdout)
         self.assertIn(f"{base}/COMPOSE-SHA256SUMS.txt", result.stdout)
-        self.assertRegex(result.stdout, r"(?s)SHA256 .*TAR ")
+        self.assertRegex(result.stdout, r"(?s)SHA256 .*TAR .*RM ")
+        self.assertIn(f"RM -f {archive} COMPOSE-SHA256SUMS.txt", result.stdout)
 
     def test_network_and_checksum_failures_stop_before_extraction(self):
         cases = ({"failed_download": "archive"},
@@ -228,6 +234,7 @@ class ComposeDownloadDocumentationTests(unittest.TestCase):
                 result = self.run_command(**options)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("TAR ", result.stdout)
+                self.assertNotIn("RM ", result.stdout)
                 self.assertNotIn("INITIALIZATION_CALLED", result.stdout)
 
     def test_existing_deployment_directory_is_never_extracted_over(self):
@@ -235,7 +242,28 @@ class ComposeDownloadDocumentationTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("DOWNLOAD ", result.stdout)
         self.assertNotIn("TAR ", result.stdout)
+        self.assertNotIn("RM ", result.stdout)
         self.assertNotIn("INITIALIZATION_CALLED", result.stdout)
+
+    def test_removing_downloaded_assets_allows_compose_bundle_verification(self):
+        from tests.fixtures.compose import ComposeFixture
+        from tgcloud.compose import runtime
+
+        fixture = ComposeFixture()
+        fixture.setUp()
+        try:
+            candidate = fixture.candidate()
+            archive = f"TGCloud-v{VERSION}-compose.tar.gz"
+            checksum = "COMPOSE-SHA256SUMS.txt"
+            (candidate / archive).write_bytes(b"fixture")
+            (candidate / checksum).write_text("0" * 64 + "  " + archive + "\n", encoding="ascii")
+            with self.assertRaisesRegex(ValueError, "unknown file in Compose deployment root"):
+                runtime.metadata(candidate)
+            (candidate / archive).unlink()
+            (candidate / checksum).unlink()
+            self.assertEqual(runtime.metadata(candidate)["version"], VERSION)
+        finally:
+            fixture.doCleanups()
 
     def test_loopback_examples_match_actual_default_instead_of_version_number(self):
         for name in ("docs/install.md", "docs/compose-guide.md"):
