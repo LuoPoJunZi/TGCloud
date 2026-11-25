@@ -45,7 +45,21 @@ func (f *fakeBackend) ShowReadiness(_ *inspect.Instance, out io.Writer) error {
 	return nil
 }
 func (f *fakeBackend) VerifyWebDAV(_ *inspect.Instance, out io.Writer) error {
-	fmt.Fprintln(out, "TGCLOUD_DESTINATION=OK")
+	for _, line := range []string{
+		"TGCLOUD_WEBDAV_AUTH=OK",
+		"TGCLOUD_WEBDAV_LIST=OK",
+		"TGCLOUD_WEBDAV=OK",
+		"TGCLOUD_WEBDAV_WRITE=OK",
+		"TGCLOUD_WEBDAV_SIZE=OK",
+		"TGCLOUD_UPLOAD=OK",
+		"TGCLOUD_WEBDAV_MOVE=OK",
+		"TGCLOUD_RENAME=OK",
+		"TGCLOUD_WEBDAV_DELETE=OK",
+		"TGCLOUD_DELETE=OK",
+		"TGCLOUD_DESTINATION=OK",
+	} {
+		fmt.Fprintln(out, line)
+	}
 	return nil
 }
 func (f *fakeBackend) CollectDiagnostics(inst *inspect.Instance) (string, error) {
@@ -183,7 +197,7 @@ func TestMenuFiveGroupsAndAllClosures(t *testing.T) {
 		"1", "3", "3", "n", "0",
 		"2", "1", "3", "y", "0", "2", "n", "y", "0", "3", "1", "0", "0",
 		"3", "1", "6", "1", "20", "10", "3", "y", "0", "0",
-		"4", "3", "n", "0", "0",
+		"4", "2", "y", "0", "3", "n", "0", "0",
 		"5", "2", "2", "", "y", "0", "3", "y", "WRONG", "0",
 		"0",
 	}, "\n") + "\n"
@@ -225,9 +239,24 @@ func TestMenuFiveGroupsAndAllClosures(t *testing.T) {
 	if !strings.Contains(privOut.String(), "supersecret") || strings.Contains(privOut.String(), "botuser") {
 		t.Fatalf("unexpected PrivateOut contents: %q", privOut.String())
 	}
-	for _, want := range []string{"服务运行管理", "访问入口管理", "业务功能设置", "健康检查诊断", "实例维护备份", "0. 返回上级", "配额已更新", "实例快照已核验", "WebDAV 用户名：已隐藏", "已转交外部 WebDAV 管理"} {
+	for _, want := range []string{
+		"服务运行管理", "访问入口管理", "业务功能设置", "健康检查诊断", "实例维护备份", "0. 返回上级",
+		"── 执行证书续期演练 ──", "证书续期演练通过",
+		"WebDAV 账号认证：通过", "WebDAV 目标目录访问：通过", "WebDAV 账号与目录检查：通过",
+		"WebDAV 测试文件写入：通过", "WebDAV 临时文件大小复验：通过", "文件上传与大小复验：通过",
+		"WebDAV 改名与最终文件复验：通过", "文件改名检查：通过", "WebDAV 测试文件删除检查：通过",
+		"临时文件清理：通过", "WebDAV 写入验收：通过",
+		"Bot 容器：运行中（健康：通过（容器检查））", "Bot 心跳：通过",
+		"配额已更新", "实例快照已核验", "WebDAV 用户名：已隐藏", "已转交外部 WebDAV 管理",
+		"删除确认口令不匹配，已取消，未执行卸载。",
+	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in output:\n%s", want, text)
+		}
+	}
+	for _, unwanted := range []string{"TGCLOUD_", "running / healthy"} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("unexpected raw protocol string %q in output:\n%s", unwanted, text)
 		}
 	}
 }
@@ -312,5 +341,36 @@ func TestMainMenuShowsProcessVersionWhileSubmenuKeepsInstanceVersion(t *testing.
 		if !strings.Contains(uninstalledOut.String(), want) {
 			t.Fatalf("expected %q when uninstalled, got:\n%s", want, uninstalledOut.String())
 		}
+	}
+}
+
+func TestFriendlyMarkerAndStatusFormatters(t *testing.T) {
+	cases := [][2]string{
+		{"TGCLOUD_STAGE=PROXY_BACKUP", "\n── 处理共享代理备份 ──"},
+		{"TGCLOUD_PROXY_TASK_CLEANUP=OK", "一次性演练容器清理：通过"},
+		{"TGCLOUD_PROXY_TASK_CLEANUP=REFUSED", "[错误] 一次性演练容器清理：拒绝清理（容器归属不符）"},
+		{"TGCLOUD_PROXY_CHECK=HTTPS 管理页:失败", "[错误] HTTPS 入口检查（HTTPS 管理页）：未核实"},
+		{"TGCLOUD_UNINSTALL_CHECK=OK；只是预检，不是已经卸载", "卸载预检：通过（仅预检，尚未执行卸载）"},
+		{"TGCLOUD_UNINSTALL_RESULT=OK；已清理", "卸载结果：已完成（已清理）"},
+		{"TGCLOUD_CLEANUP_WARNING=UNCONFIRMED", "[待核对] 临时测试文件清理未确认，请在授权目标目录检查残留。"},
+		{"TGCLOUD_DESTINATION=FAILED: auth", "[错误] WebDAV 写入验收：未通过；auth"},
+		{"普通中文提示", "普通中文提示"},
+	}
+	for _, tc := range cases {
+		if got := FormatFriendlyMarker(tc[0]); got != tc[1] {
+			t.Fatalf("FormatFriendlyMarker(%q) = %q, want %q", tc[0], got, tc[1])
+		}
+	}
+	if got := FormatProxyCheckName("DAV_BLOCK"); got != "内部 WebDAV 路径隔离" {
+		t.Fatalf("unexpected proxy check label: %q", got)
+	}
+	if got := FormatWebDAVPhase("enabled"); got != "已启用" {
+		t.Fatalf("unexpected WebDAV phase: %q", got)
+	}
+	if got := FormatFailureKind("rate_limited"); got != "限流" {
+		t.Fatalf("unexpected failure label: %q", got)
+	}
+	if got := FormatTerminalReport("# Title\n\n## Section\nBody\n"); got != "── Section ──\nBody" {
+		t.Fatalf("unexpected terminal report: %q", got)
 	}
 }

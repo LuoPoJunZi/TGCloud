@@ -63,8 +63,8 @@ func RenderDiagnostics(instance *inspect.Instance, dockerVer, composeVer, botSna
 	fmt.Fprintln(&b, "实例：CloudDrive2")
 	fmt.Fprintln(&b, "Docker："+fallbackText(dockerVer, "未检查"))
 	fmt.Fprintln(&b, "Compose："+fallbackText(composeVer, "未检查"))
-	fmt.Fprintf(&b, "Bot 容器：%s / %s\n", fallbackText(instance.Bot.State, "未检查"), fallbackText(instance.Bot.Health, "none"))
-	fmt.Fprintf(&b, "网关容器：%s / %s\n", fallbackText(instance.Gateway.State, "未检查"), fallbackText(instance.Gateway.Health, "none"))
+	fmt.Fprintf(&b, "Bot 容器：%s（健康：%s）\n", FormatContainerState(instance.Bot.State), FormatContainerHealth(instance.Bot.State, instance.Bot.Health))
+	fmt.Fprintf(&b, "网关容器：%s（健康：%s）\n", FormatContainerState(instance.Gateway.State), FormatContainerHealth(instance.Gateway.State, instance.Gateway.Health))
 
 	var snap struct {
 		Schema        int               `json:"schema"`
@@ -88,7 +88,7 @@ func RenderDiagnostics(instance *inspect.Instance, dockerVer, composeVer, botSna
 			{"heartbeat", "Bot 心跳"}, {"telegram", "Telegram 连接"},
 			{"destination", "WebDAV 目标"}, {"queue", "队列调度"}, {"capacity", "下载容量"},
 		} {
-			fmt.Fprintf(&b, "%s：%s\n", item.label, fallbackText(snap.Checks[item.key], "未核实"))
+			fmt.Fprintf(&b, "%s：%s\n", item.label, FormatReadinessState(snap.Checks[item.key]))
 		}
 		fmt.Fprintln(&b, "\n## 最近7天当前失败任务分类（非原始日志）")
 		if len(snap.Failures) == 0 {
@@ -100,7 +100,7 @@ func RenderDiagnostics(instance *inspect.Instance, dockerVer, composeVer, botSna
 			}
 			slices.Sort(keys)
 			for _, k := range keys {
-				fmt.Fprintf(&b, "%s：%d\n", k, snap.Failures[k])
+				fmt.Fprintf(&b, "%s：%d\n", FormatFailureKind(k), snap.Failures[k])
 			}
 		}
 	} else {

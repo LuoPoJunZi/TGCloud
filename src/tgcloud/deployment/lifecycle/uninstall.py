@@ -627,7 +627,7 @@ def preview(plan: Plan, log: SafeLog) -> None:
     log("请先结束进行中的传输并自行备份；停止容器会中断任务。不要同时运行 EXE/其他安装器。")
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, friendly: bool = False) -> int:
     parser = argparse.ArgumentParser(description="仅卸载受管 TGCloud；不卸载系统 Docker/Nginx")
     parser.add_argument("--edition", choices=tuple(PRODUCTS), default="clouddrive2", help="仅 CloudDrive2（默认）；不接管其他项目")
     parser.add_argument("--check", action="store_true", help="只读预览，无需确认，不执行卸载")
@@ -640,10 +640,15 @@ def main(argv: list[str] | None = None) -> int:
                          help="只移除运行资源，保留实例数据、证书和历史备份")
     parser.set_defaults(cleanup="all")
     args = parser.parse_args(argv)
-    log = SafeLog()
+    raw_log = SafeLog()
+    if friendly:
+        from tgcloud.cli.presentation import InstallerLog
+        log = InstallerLog(raw_log)
+    else:
+        log = raw_log
     ui = None
     try:
-        session = LocalSession(log)
+        session = LocalSession(raw_log)
         validate_environment(session)
         key = args.edition
         editions = (key,)

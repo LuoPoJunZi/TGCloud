@@ -240,7 +240,8 @@ def friendly_marker(line: str) -> str:
         stage = {"GATEWAY": "启动 CloudDrive2 网关", "BOT": "构建并启动 TGCloud Bot",
                  "HEALTH": "检查 Bot 基础健康",
                  "HTTPS_ENV": "检查 HTTPS 部署环境", "ACME": "启动证书签发验证",
-                 "CERTIFICATE": "申请或复用 HTTPS 证书", "HTTPS_VERIFY": "检查 HTTPS 管理入口"}.get(value)
+                 "CERTIFICATE": "申请或复用 HTTPS 证书", "HTTPS_VERIFY": "检查 HTTPS 管理入口",
+                 "RENEW_DRY_RUN": "执行证书续期演练", "PROXY_BACKUP": "处理共享代理备份"}.get(value)
         return "\n── " + stage + " ──" if stage else "[待核对] 安装阶段未识别，请查看诊断报告。"
     if key == "VERSION":
         return "程序版本：v" + value if re.fullmatch(r"\d+\.\d+\.\d+", value) else "程序版本：未核实"
@@ -254,6 +255,26 @@ def friendly_marker(line: str) -> str:
         return "随机测试文件验收流程结束。"
     if key == "CLEANUP_WARNING":
         return "[待核对] 临时测试文件清理未确认，请在授权目标目录检查残留。"
+    if key == "PROXY_TASK_CLEANUP":
+        return {"OK": "一次性演练容器清理：通过",
+                "UNKNOWN": "[错误] 一次性演练容器清理：未确认",
+                "REFUSED": "[错误] 一次性演练容器清理：拒绝清理（容器归属不符）",
+                "FAILED": "[错误] 一次性演练容器清理：未通过"}.get(value, "[待核对] 收到未识别的检查结果，请查看诊断报告。")
+    if key == "PROXY_CHECK":
+        check_title, _, check_val = value.partition(":")
+        if check_title:
+            rendered = check_val or "未核实"
+            prefix = "" if rendered == "通过" else "[错误] "
+            return f"{prefix}HTTPS 入口检查（{check_title}）：{rendered}"
+    if key == "UNINSTALL_CHECK":
+        return "卸载预检：通过（仅预检，尚未执行卸载）"
+    if key == "UNINSTALL_RESULT":
+        status_code, _, detail = value.partition("；")
+        headers = {"OK": "卸载结果：已完成", "CANCELLED": "卸载结果：已取消",
+                   "PARTIAL": "[待核对] 卸载结果：部分完成", "INTERRUPTED": "[待核对] 卸载结果：操作中断",
+                   "FAILED": "[错误] 卸载结果：未通过"}
+        if status_code in headers:
+            return headers[status_code] + (f"（{detail.strip()}）" if detail.strip() else "")
     if key == "RESULT" and value == "SUCCESS":
         return "基础部署已完成；继续检查管理入口与业务状态。"
     if key == "LAN_BASE" and value == "OK；TGCLOUD_LAN_ENTRY=OK；HTTPS=NOT_APPLICABLE":
@@ -263,6 +284,7 @@ def friendly_marker(line: str) -> str:
         "DATABASE_BACKUP": "数据库备份", "BOT_HEALTH": "Bot 基础健康", "RESULT": "基础部署",
         "REPAIR": "CloudDrive2 网络检查", "STATUS": "服务状态", "UPDATE": "程序更新",
         "APPLY_CONFIG": "配置应用", "BACKUPS": "备份检查", "BACKUP_PRUNE": "备份清理",
+        "BACKUP_PREFLIGHT": "备份隔离预检",
         "CONFIGURATION": "配置检查", "DESTINATION": "WebDAV 写入验收",
         "CLI_CHECK": "安装只读预检", "LAN_CHECK": "内网只读预检",
         "HTTPS": "HTTPS 入口配置",

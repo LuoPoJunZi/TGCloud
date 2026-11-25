@@ -881,8 +881,8 @@ if path.exists() or path.is_symlink():
                     raise RuntimeError("维护任务清理未确认，请检查本次一次性续期容器；不要重复演练。")
                 if code != 0:
                     self.log("续期演练详情（已脱敏）：\n" + command_failure_summary(output))
-                    raise RuntimeError("续期 dry-run 未通过；请检查 ACME 公网连通与 Certbot 日志。")
-                return "续期 dry-run 通过；没有替换正式证书，也不代表长期自动续期已经验收。"
+                    raise RuntimeError("证书续期演练未通过；请检查 ACME 公网连通与 Certbot 日志。")
+                return "证书续期演练通过；没有替换正式证书，也不代表长期自动续期已经验收。"
             markers = self._backup_helper(action, archive=archive)
             path = markers.get("PROXY_BACKUP_PATH", "")
             if not re.fullmatch(r"/opt/tgcloud-proxy-backups/proxy-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{32}\.tar\.gz", path):

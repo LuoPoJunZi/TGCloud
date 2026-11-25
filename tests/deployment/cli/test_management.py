@@ -635,7 +635,7 @@ class ManagementTests(unittest.TestCase):
             remove.assert_not_called()
             self.ui.confirm.return_value = True
             self.manager.remove(self.instance)
-        remove.assert_called_once_with(["--edition", self.product.key])
+        remove.assert_called_once_with(["--edition", self.product.key], friendly=True)
 
     def test_missing_selected_edition_enters_its_installer_only_after_confirmation(self):
         product = PRODUCTS["clouddrive2"]

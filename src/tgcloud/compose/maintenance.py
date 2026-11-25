@@ -65,6 +65,27 @@ def replace_private(path: Path, content: bytes, *, expected: bytes):
         staged.unlink(missing_ok=True)
 
 
+def _log_resource_diagnostics(log, raw_output: str) -> None:
+    from tgcloud.deployment.ops.readiness import (
+        admission_lines,
+        transfer_lines,
+        waiting_lines,
+    )
+
+    try:
+        value = json.loads(raw_output)
+    except (ValueError, TypeError):
+        value = None
+    if not isinstance(value, dict) or value.get("schema") != 1:
+        log("资源放行详情：未核实（旧版或响应无法识别）")
+        return
+    for line in (*admission_lines(value.get("admission")), *transfer_lines(value.get("transfers")), *waiting_lines(value.get("waiting"))):
+        log(line)
+    for key, label in (("disk_free_bytes", "已检查目录最小可用空间"), ("budget_bytes", "任务暂存额度")):
+        amount = value.get(key)
+        log(label + "：" + (f"{amount / 1024**3:.2f} GB" if type(amount) is int and 0 <= amount <= 2**60 else "未核实"))
+
+
 def resources(manager, instance):
     manager.heading("资源安全配置", instance)
     from tgcloud.deployment.ops.diagnostics import (
@@ -79,12 +100,24 @@ def resources(manager, instance):
         return False
     if action == "1":
         manager.readiness(instance)
-        manager.checked_run("docker exec " + manager.product.bot_container + " python -B -m tgcloud.monitoring.diagnostics", timeout=30)
+        code, output = manager.session.run(
+            "docker exec " + manager.product.bot_container + " python -B -m tgcloud.monitoring.diagnostics", timeout=30,
+        )
+        if code:
+            raise RuntimeError("资源放行快照读取失败，请确认 Bot 运行状态")
+        _log_resource_diagnostics(manager.log, output)
     elif action == "3":
-        manager.checked_run("docker version --format '{{.Server.Version}}'", timeout=20)
+        code, version = manager.session.run("docker version --format '{{.Server.Version}}'", timeout=20)
+        if code:
+            raise RuntimeError("无法读取 Docker 服务端版本")
+        manager.log("Docker 服务端版本：" + (version.strip() or "未核实"))
         manager.log("请使用厂商当前受支持的 Docker；28.0.0 前回环端口存在同网段可达的历史风险，需独立核对。")
         for name in (manager.product.bot_container, manager.product.storage_container):
-            manager.checked_run("docker port " + name, timeout=15)
+            code, ports = manager.session.run("docker port " + name, timeout=15)
+            if code:
+                raise RuntimeError("无法检查容器端口映射：" + name)
+            rendered = "；".join(line.strip() for line in ports.splitlines() if line.strip())
+            manager.log(f"{name} 宿主机端口映射：{rendered or '无直接宿主机端口暴露（仅内部网络）'}")
     else:
         if manager.core.info["format"] < 3:
             raise ValueError("旧 Compose 包未声明资源与凭据隔离协议；请先通过安装与升级更新部署包")

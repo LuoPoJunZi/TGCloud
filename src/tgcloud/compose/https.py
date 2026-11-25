@@ -501,7 +501,7 @@ def run_action(action, instance, manager, ui):
         if report.state not in {"healthy", "not_configured"}:
             raise runtime.ComposeError("HTTPS 运行检查未通过；请核对上述结果")
     elif action == "renewal-dry-run":
-        if ui.confirm("确认执行此实例的续期 dry-run（不会替换正式证书）"):
+        if ui.confirm("确认执行此实例的证书续期演练（不会替换正式证书）"):
             instance.log(manager.renewal_dry_run())
     elif action == "proxy-backup":
         if ui.confirm("确认创建共享代理私密备份（包含证书私钥，仅保存在宿主机）"):

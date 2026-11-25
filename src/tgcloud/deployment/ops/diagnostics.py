@@ -21,6 +21,17 @@ from tgcloud.deployment.ops.readiness import (
 FAILURES = {"authentication": "认证失败", "permission": "权限不足", "rate_limited": "限流", "server": "服务端异常",
             "remote_conflict": "远端待复核", "local_missing": "本地文件不可读", "network": "网络或校验异常", "source_access": "监听来源或附件不可读", "other": "其他", "unchecked": "未检查"}
 
+_CONTAINER_STATES = {"running": "运行中", "exited": "已停止", "restarting": "重启中", "created": "尚未启动",
+                     "paused": "已暂停", "dead": "异常退出", "removing": "正在移除"}
+_CONTAINER_HEALTH = {"healthy": "通过（容器检查）", "unhealthy": "未通过", "starting": "检查中",
+                     "none": "未配置容器检查"}
+
+
+def _format_container_status(fields: list[str]) -> str:
+    state = _CONTAINER_STATES.get(fields[0], "未核实")
+    health = _CONTAINER_HEALTH.get(fields[1], "未核实") if fields[0] == "running" else "未检查（容器未运行）"
+    return f"{state}（健康：{health}）"
+
 
 LOG_CONTAINERS = ("Bot", "网关", "共享 Nginx", "Certbot")
 LOG_STATES = {
@@ -201,7 +212,7 @@ def collect(instance, session) -> str:
         fields = output.strip().split()
         valid = not code and len(fields) == 2 and fields[0] in {"running", "exited", "restarting", "created", "paused", "dead"} and fields[1] in {"healthy", "unhealthy", "starting", "none"}
         containers[label] = " / ".join(fields) if valid else "未检查"
-        lines.append(label + " 容器：" + containers[label])
+        lines.append(label + " 容器：" + (_format_container_status(fields) if valid else "未检查"))
     code, output = session.run("docker exec " + shlex.quote(instance.product.bot_container)
                                + " python -B -m tgcloud.monitoring.diagnostics", timeout=20)
     try:

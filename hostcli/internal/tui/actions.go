@@ -108,7 +108,10 @@ func (a *App) handleEntry(instance *inspect.Instance) (bool, error) {
 	switch sel {
 	case "1":
 		fmt.Fprintln(a.Out, "正在检查 HTTPS，请稍候……")
-		return true, a.Backend.ShowEntryStatus(instance, a.Out)
+		fw := FriendlyProgressWriter(a.Out)
+		err := a.Backend.ShowEntryStatus(instance, fw)
+		_ = fw.Flush()
+		return true, err
 	case "2":
 		domain := info.Domain
 		if domain == "" {
@@ -135,7 +138,10 @@ func (a *App) handleEntry(instance *inspect.Instance) (bool, error) {
 		if err != nil || !ok {
 			return false, err
 		}
-		if err := a.Backend.ConfigureHTTPS(instance, domain, email, confirmedNAT, info.Domain, a.Out); err != nil {
+		fw := FriendlyProgressWriter(a.Out)
+		err = a.Backend.ConfigureHTTPS(instance, domain, email, confirmedNAT, info.Domain, fw)
+		_ = fw.Flush()
+		if err != nil {
 			return false, err
 		}
 		fmt.Fprintln(a.Out, "HTTPS 配置／修复已完成。")
@@ -145,14 +151,17 @@ func (a *App) handleEntry(instance *inspect.Instance) (bool, error) {
 			return false, errors.New("尚未配置 HTTPS 域名，无法执行续期演练")
 		}
 		fmt.Fprintln(a.Out, "续期演练使用 ACME 测试流程，不代表正式证书已经续签。")
-		ok, err := a.confirm("确认执行续期 dry-run？需要外网和 ACME，不替换正式证书")
+		ok, err := a.confirm("确认执行证书续期演练？需要外网和 ACME，不会替换正式证书")
 		if err != nil || !ok {
 			return false, err
 		}
-		if err := a.Backend.RenewHTTPSDryRun(instance, info.Domain, a.Out); err != nil {
+		fw := FriendlyProgressWriter(a.Out)
+		err = a.Backend.RenewHTTPSDryRun(instance, info.Domain, fw)
+		_ = fw.Flush()
+		if err != nil {
 			return false, err
 		}
-		fmt.Fprintln(a.Out, "续期 dry-run 通过；没有替换正式证书，也不代表长期自动续期已经验收。")
+		fmt.Fprintln(a.Out, "证书续期演练通过；没有替换正式证书，也不代表长期自动续期已经验收。")
 		return true, nil
 	}
 	return false, nil
@@ -593,7 +602,10 @@ func (a *App) handleVerify(instance *inspect.Instance) (bool, error) {
 	if err != nil || !ok {
 		return false, err
 	}
-	if err := a.Backend.VerifyWebDAV(instance, a.Out); err != nil {
+	fw := FriendlyProgressWriter(a.Out)
+	err = a.Backend.VerifyWebDAV(instance, fw)
+	_ = fw.Flush()
+	if err != nil {
 		return false, err
 	}
 	fmt.Fprintln(a.Out, "WebDAV 写入与远端大小复验通过；云盘官方端最终完成仍需自行确认。")
@@ -607,7 +619,7 @@ func (a *App) handleDiagnostics(instance *inspect.Instance) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(a.Out, report)
+	fmt.Fprintln(a.Out, FormatTerminalReport(report))
 	ok, err := a.confirm("保存已脱敏报告到本机私密目录？不会自动上传")
 	if err != nil || !ok {
 		return err
@@ -712,13 +724,15 @@ func (a *App) handleRemove(instance *inspect.Instance) (bool, error) {
 	if a.Backend.InstallDir() != inspect.InstallDirectory {
 		return false, errors.New("现有卸载器只支持标准目录；自定义目录不自动卸载，避免清理错误实例")
 	}
-	planDigest, err := a.Backend.UninstallPreview(true, true, a.Out)
+	fwPreview := FriendlyProgressWriter(a.Out)
+	planDigest, err := a.Backend.UninstallPreview(true, true, fwPreview)
+	_ = fwPreview.Flush()
 	if err != nil {
 		return false, err
 	}
 	ok, err := a.confirm("是否执行以上 TGCloud 资源卸载？")
 	if err != nil || !ok {
-		fmt.Fprintln(a.Out, "TGCLOUD_UNINSTALL_RESULT=CANCELLED；未执行卸载")
+		fmt.Fprintln(a.Out, "已取消，未执行卸载。")
 		return false, err
 	}
 	fmt.Fprintln(a.Out, "危险：删除 .env、Session、SQLite、下载、日志、云网关授权配置及历史备份后不能自动恢复。")
@@ -727,10 +741,13 @@ func (a *App) handleRemove(instance *inspect.Instance) (bool, error) {
 		return false, err
 	}
 	if token != "DELETE ALL clouddrive2" {
-		fmt.Fprintln(a.Out, "TGCLOUD_UNINSTALL_RESULT=CANCELLED；删除确认不匹配，未执行卸载")
+		fmt.Fprintln(a.Out, "删除确认口令不匹配，已取消，未执行卸载。")
 		return false, nil
 	}
-	if err := a.Backend.UninstallExecute(true, true, planDigest, a.Out); err != nil {
+	fwExec := FriendlyProgressWriter(a.Out)
+	err = a.Backend.UninstallExecute(true, true, planDigest, fwExec)
+	_ = fwExec.Flush()
+	if err != nil {
 		return false, err
 	}
 	return true, nil

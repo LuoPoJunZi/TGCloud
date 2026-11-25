@@ -151,6 +151,58 @@ class TerminalLayoutTests(unittest.TestCase):
         self.assertEqual(status_rows(values), ["运行心跳：通过", "Telegram 连接：未通过", "WebDAV 最近目录探测：冷却中"])
         self.assertTrue(all(not row.startswith(" ") for row in status_rows(values)))
 
+    def test_all_webdav_and_maintenance_markers_render_in_plain_chinese(self):
+        messages = []
+        log = InstallerLog(SafeLog(messages.append))
+        for marker in (
+            "TGCLOUD_WEBDAV_AUTH=OK",
+            "TGCLOUD_WEBDAV_LIST=OK",
+            "TGCLOUD_WEBDAV=OK",
+            "TGCLOUD_WEBDAV_WRITE=OK",
+            "TGCLOUD_WEBDAV_SIZE=OK",
+            "TGCLOUD_UPLOAD=OK",
+            "TGCLOUD_WEBDAV_MOVE=OK",
+            "TGCLOUD_RENAME=OK",
+            "TGCLOUD_WEBDAV_DELETE=OK",
+            "TGCLOUD_DELETE=OK",
+            "TGCLOUD_DESTINATION=OK",
+            "TGCLOUD_STAGE=RENEW_DRY_RUN",
+            "TGCLOUD_STAGE=PROXY_BACKUP",
+            "TGCLOUD_PROXY_TASK_CLEANUP=OK",
+            "TGCLOUD_PROXY_CHECK=HTTPS 管理页:失败",
+            "TGCLOUD_UNINSTALL_CHECK=OK；只是预检，不是已经卸载",
+            "TGCLOUD_UNINSTALL_RESULT=CANCELLED；未执行卸载",
+            "TGCLOUD_UNINSTALL_RESULT=OK；所选受管运行资源及路由已移除",
+            "TGCLOUD_BACKUP_PREFLIGHT=OK；仅结构和数据库通过，不代表服务恢复验收",
+        ):
+            log(marker)
+        text = "\n".join(messages)
+        for expected in (
+            "WebDAV 账号认证：通过",
+            "WebDAV 目标目录访问：通过",
+            "WebDAV 账号与目录检查：通过",
+            "WebDAV 测试文件写入：通过",
+            "WebDAV 临时文件大小复验：通过",
+            "文件上传与大小复验：通过",
+            "WebDAV 改名与最终文件复验：通过",
+            "文件改名检查：通过",
+            "WebDAV 测试文件删除检查：通过",
+            "临时文件清理：通过",
+            "WebDAV 写入验收：通过",
+            "── 执行证书续期演练 ──",
+            "── 处理共享代理备份 ──",
+            "一次性演练容器清理：通过",
+            "[错误] HTTPS 入口检查（HTTPS 管理页）：失败",
+            "卸载预检：通过（仅预检，尚未执行卸载）",
+            "卸载结果：已取消（未执行卸载）",
+            "卸载结果：已完成（所选受管运行资源及路由已移除）",
+            "备份隔离预检：通过",
+        ):
+            self.assertIn(expected, text)
+        self.assertNotIn("TGCLOUD_", text)
+        self.assertNotIn("阶段未识别", text)
+        self.assertNotIn("未识别的检查结果", text)
+
     def test_compose_export_label_is_six_characters_and_keeps_the_same_action(self):
         ui = Mock()
         ui.ask.return_value = "5"

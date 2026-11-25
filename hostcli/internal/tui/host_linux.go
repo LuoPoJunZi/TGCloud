@@ -107,8 +107,11 @@ func (b *HostBackend) Discover() (*inspect.Instance, error) {
 }
 
 func (b *HostBackend) ShowStatus(instance *inspect.Instance, out io.Writer) error {
-	fmt.Fprintf(out, "安装目录：%s\n已安装版本：%s\nBot：%s（健康：%s）\nCloudDrive2 网关：%s\n",
-		b.Directory, instance.Version, instance.Bot.State, fallbackText(instance.Bot.Health, "未配置"), instance.Gateway.State)
+	fmt.Fprintf(out, "安装目录：%s\n已安装版本：v%s\nBot 状态：%s\nBot 健康：%s\n网关状态：%s\n",
+		b.Directory, instance.Version,
+		FormatContainerState(instance.Bot.State),
+		FormatContainerHealth(instance.Bot.State, instance.Bot.Health),
+		FormatContainerState(instance.Gateway.State))
 	return nil
 }
 
@@ -302,19 +305,19 @@ func (b *HostBackend) ShowEntryStatus(instance *inspect.Instance, out io.Writer)
 		failed := []string{}
 		for _, k := range []string{"CORE", "PORTS", "NGINX", "CERTBOT", "RENEWAL", "NGINX_TEST", "HTTPS", "REDIRECT", "DAV_BLOCK", "BACKEND_LOCAL", "CERT"} {
 			if markers["PROXY_"+k] != "OK" {
-				failed = append(failed, k)
+				failed = append(failed, FormatProxyCheckName(k))
 			}
 		}
 		if len(failed) == 0 {
 			fmt.Fprintln(out, "入口检查：本机通过")
 		} else {
-			fmt.Fprintln(out, "入口检查：未通过（项目："+strings.Join(failed, ", ")+"）")
+			fmt.Fprintln(out, "入口检查：未通过（未通过项："+strings.Join(failed, "、")+"）")
 		}
 		if exp := markers["PROXY_CERT_END"]; exp != "" {
 			fmt.Fprintln(out, "证书到期："+exp)
 		}
 		if resText := markers["PROXY_RENEW_RESULT"]; resText != "" {
-			fmt.Fprintln(out, "续期检查："+resText)
+			fmt.Fprintln(out, "续期检查："+FormatCheckResult(resText))
 		}
 	}
 	return nil
@@ -366,7 +369,7 @@ func (b *HostBackend) ShowExternalWebDAV(_ *inspect.Instance, out io.Writer) err
 		return nil
 	}
 	fmt.Fprintf(out, "外部域名：%s\n主用户名：%s\n共享目录：%s\n状态：%s\n认证账号数：%d\n",
-		status.Domain, status.Username, status.TargetDir, status.Phase, status.AuthUserCount)
+		status.Domain, status.Username, status.TargetDir, FormatWebDAVPhase(status.Phase), status.AuthUserCount)
 	return nil
 }
 
@@ -510,7 +513,7 @@ func (b *HostBackend) ProxyBackupAction(action string, keep int, planID string, 
 			return "", nil
 		}
 		for _, item := range items {
-			fmt.Fprintf(out, "%s（%d 字节，完整性 %s）\n", item.Name, item.SizeBytes, item.Integrity)
+			fmt.Fprintf(out, "%s（%d 字节，完整性：%s）\n", item.Name, item.SizeBytes, FormatCheckResult(item.Integrity))
 		}
 		return "", nil
 	case "create":

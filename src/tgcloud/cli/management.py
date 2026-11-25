@@ -414,7 +414,7 @@ class Management:
                     raise RuntimeError("HTTPS 修复尚未通过，请核对状态")
         elif action == "3":
             self.log("续期演练使用 ACME 测试流程，不代表正式证书已经续签。")
-            if not self.ui.confirm("确认执行续期 dry-run？需要外网和 ACME，不替换正式证书"):
+            if not self.ui.confirm("确认执行证书续期演练？需要外网和 ACME，不会替换正式证书"):
                 return False
             with edition_lock(Path("/opt/tgcloud-cli-locks") / (self.product.key + ".lock")):
                 self.recheck(instance)
@@ -492,7 +492,8 @@ class Management:
                             go_items = None
                 items = go_items if go_items is not None else manager.manage_backups("list")["items"]
                 for item in items:
-                    self.log(f"{item['name']}（{item['size_bytes']} 字节，完整性 {item['integrity']}）")
+                    integrity = {"OK": "通过", "FAILED": "未通过"}.get(item["integrity"], "未核实")
+                    self.log(f"{item['name']}（{item['size_bytes']} 字节，完整性：{integrity}）")
             elif action in {"2", "4"}:
                 if self.ui.confirm("确认在 VPS 私密目录备份/校验？含证书私钥，不要公开上传；不会覆盖运行数据"):
                     self.log(manager.maintenance("backup" if action == "2" else "drill"))
@@ -517,7 +518,7 @@ class Management:
         self.log("其他部署或入口仍在使用时保留 tgcloud；最后一套完整清理后，核验归属并移除快捷命令及其代码。")
         if not self.ui.confirm("继续查看 TGCloud 的完整卸载计划？"):
             return False
-        if uninstall.main(["--edition", self.product.key]):
+        if uninstall.main(["--edition", self.product.key], friendly=True):
             raise RuntimeError("卸载未完成，请核对结果")
         inventory = instances.docker_inventory(self.session)
         return not ({self.product.bot_container, self.product.storage_container} & inventory) and not instance.directory.exists()
