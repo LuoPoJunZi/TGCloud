@@ -113,6 +113,10 @@ func FormatFriendlyMarker(line string) string {
 			return "\n── " + title + " ──"
 		}
 		return "[待核对] 维护阶段未识别，请查看诊断报告。"
+	case "VERSION":
+		return "程序版本：v" + value
+	case "INSTALL_DIR":
+		return "安装目录：" + value
 	case "CLEANUP_WARNING":
 		return "[待核对] 临时测试文件清理未确认，请在授权目标目录检查残留。"
 	case "STORAGE_GATEWAY":
