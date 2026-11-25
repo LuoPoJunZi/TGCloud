@@ -365,8 +365,8 @@ func (a *App) handleMemberQuota(instance *inspect.Instance, adminID int64, rec U
 		}
 		return strconv.FormatInt(v, 10)
 	}
-	fmt.Fprintf(a.Out, "\n── 成员配额（%s · %d）──\n每日额度：%s\n最大排队：%s\n最大同时传输：%s\n今日已完成：%.2f GB\n未完成预留：%.2f GB\n",
-		name, memberID,
+	fmt.Fprintf(a.Out, "\n── 成员配额 ──\n成员：%s\n每日额度：%s\n最大排队：%s\n最大同时传输：%s\n今日已完成：%.2f GB\n未完成预留：%.2f GB\n",
+		name,
 		formatLimit(dailyBytes, true),
 		formatLimit(maxQueued, false),
 		formatLimit(maxActive, false),

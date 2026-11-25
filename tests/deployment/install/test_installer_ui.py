@@ -241,8 +241,8 @@ class ProjectPresentationTests(unittest.TestCase):
         with patch.object(manager, "discover", return_value=instance), patch.object(manager, "upgrade") as execute:
             self.assertEqual(manager.run(), 0)
         text = "\n".join(messages)
-        self.assertIn("安装状态：未安装", text)
-        self.assertIn("Bot 状态：未运行", text)
+        self.assertIn(f"TGCloud版本：v{VERSION}", text)
+        self.assertIn("Bot  系统状态：未安装", text)
         self.assertNotIn("· 版本", text)
         self.assertNotIn("CloudDrive2 · 版本", text)
         ui.confirm.assert_called_once_with("TGCloud 尚未安装，是否进入安装向导？")

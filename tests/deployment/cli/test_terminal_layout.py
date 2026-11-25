@@ -37,23 +37,27 @@ class TerminalLayoutTests(unittest.TestCase):
         messages = []
         instance = Instance(PRODUCTS["clouddrive2"], Path("/opt/tgcloud"), True, "0.0.1", True)
         ui = Mock()
-        ui.ask.return_value = "0"
+        ui.ask.side_effect = ["3", "0", "0"]
         manager = management.Management(instance.product, Mock(), InstallerLog(SafeLog(messages.append)), ui)
         with patch.object(manager, "discover", return_value=instance):
             self.assertEqual(manager.run(), 0)
         text = "\n".join(messages)
-        self.assertEqual(re.findall(r"(?<![\d.])v?\d+\.\d+\.\d+(?![\d.])", text), ["v" + VERSION])
-        self.assertIn("Bot 状态：运行中", text)
+        self.assertEqual(re.findall(r"(?<![\d.])v?\d+\.\d+\.\d+(?![\d.])", text), ["v" + VERSION, "v" + VERSION])
+        self.assertIn("TGCloud版本：v" + VERSION, text)
+        self.assertIn("Bot  系统状态：运行中", text)
+        self.assertIn("\n── 业务功能设置 ──\n\n1. Bot 用户管理", text)
+        for unwanted in ("Go 原生宿主模式", "CloudDrive2 ·", "安装状态：", "管理工具（当前进程）", "Bot 版本："):
+            self.assertNotIn(unwanted, text)
         self.assertEqual(instance.version, "0.0.1")
 
     def test_installation_and_bot_states_are_distinct_in_all_startup_phases(self):
         from tgcloud.deployment.instances import Instance
-        cases = ((False, False, False, "未安装", "未运行"),
-                 (True, False, True, "已初始化，待启动服务", "未运行"),
-                 (True, False, False, "已安装", "未运行"),
-                 (True, True, False, "已安装", "运行中"))
-        for present, running, initialized, installation, bot in cases:
-            with self.subTest(installation=installation, bot=bot):
+        cases = ((False, False, False, "未安装"),
+                 (True, False, True, "已初始化，待启动服务"),
+                 (True, False, False, "未运行"),
+                 (True, True, False, "运行中"))
+        for present, running, initialized, bot in cases:
+            with self.subTest(bot=bot):
                 messages = []
                 instance = Instance(PRODUCTS["clouddrive2"], Path("/opt/tgcloud"), present, VERSION, running)
                 if initialized:
@@ -64,9 +68,10 @@ class TerminalLayoutTests(unittest.TestCase):
                 with patch.object(manager, "discover", return_value=instance):
                     self.assertEqual(manager.run(), 0)
                 text = "\n".join(messages)
-                self.assertIn("安装状态：" + installation, text)
-                self.assertIn("Bot 状态：" + bot, text)
-                self.assertNotIn("Bot 状态：未安装", text)
+                self.assertIn("TGCloud版本：v" + VERSION, text)
+                self.assertIn("Bot  系统状态：" + bot, text)
+                self.assertNotIn("安装状态：", text)
+                self.assertNotIn("管理工具（当前进程）", text)
 
     def test_compose_defaults_follow_the_actual_deployment_disk(self):
         from types import SimpleNamespace

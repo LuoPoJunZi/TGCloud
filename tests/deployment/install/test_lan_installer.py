@@ -35,6 +35,7 @@ from tgcloud.deployment.lifecycle import lan as lan_installer
 from tgcloud.deployment.profiles import PRODUCTS
 from tgcloud.deployment.proxy import lan
 from tgcloud.deployment.resources import GIB, VpsResources
+from tgcloud.version import VERSION
 
 IP = "192.168.26.5"
 RELEASE = local_source.LocalSource(ROOT, PRODUCTS["clouddrive2"].app_version, "a" * 64)
@@ -789,13 +790,13 @@ class FreshLanInstallFlowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             text = self.run_installation(Path(temporary).resolve() / "tgcloud")
         for expected in (
-            "安装状态：未安装",
+            "Bot  系统状态：未安装",
             "构建并启动 TGCloud Bot",
             "Bot 基础健康：通过",
             "TGCloud 内网管理页：http://" + IP + ":19798",
             "本机内网入口：通过",
             "WebDAV 写入与大小复验：通过",
-            "安装状态：已安装\nBot 状态：运行中",
+            f"TGCloud版本：v{VERSION}\nBot  系统状态：运行中",
             "3. 业务功能设置",
             "Bot 健康：通过（容器检查）",
             "入口检查：本机通过",

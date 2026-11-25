@@ -280,10 +280,37 @@ func TestMainMenuShowsProcessVersionWhileSubmenuKeepsInstanceVersion(t *testing.
 		t.Fatalf("App.Run() = %d, output=%s", code, out.String())
 	}
 	text := out.String()
-	if !strings.Contains(text, "管理工具（当前进程）：v0.0.10") {
-		t.Fatalf("expected process version v0.0.10 in main menu, got:\n%s", text)
+	for _, want := range []string{
+		"── TGCloud 本地管理 ──",
+		"TGCloud版本：v0.0.10",
+		"Bot  系统状态：运行中",
+		"安装目录：/opt/tgcloud",
+		"── 服务运行管理 ──",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in menu output, got:\n%s", want, text)
+		}
 	}
-	if !strings.Contains(text, "── 服务运行管理（CloudDrive2 · v0.0.9）──") {
-		t.Fatalf("expected instance version v0.0.9 in submenu heading, got:\n%s", text)
+	for _, unwanted := range []string{
+		"Go 原生宿主模式",
+		"安装状态：",
+		"管理工具（当前进程）",
+		"CloudDrive2 ·",
+		"（CloudDrive2）",
+	} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("unexpected clutter %q in menu output:\n%s", unwanted, text)
+		}
+	}
+
+	var uninstalledOut bytes.Buffer
+	uninstalled := NewApp(&fakeBackend{}, strings.NewReader(""), &uninstalledOut, "0.0.10")
+	if code := uninstalled.Run(); code != 0 {
+		t.Fatalf("uninstalled App.Run() = %d, output=%s", code, uninstalledOut.String())
+	}
+	for _, want := range []string{"TGCloud版本：v0.0.10", "Bot  系统状态：未安装"} {
+		if !strings.Contains(uninstalledOut.String(), want) {
+			t.Fatalf("expected %q when uninstalled, got:\n%s", want, uninstalledOut.String())
+		}
 	}
 }

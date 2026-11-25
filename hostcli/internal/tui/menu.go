@@ -158,11 +158,8 @@ func FormatNumberedMenu(items []MenuItem) string {
 	return b.String()
 }
 
-func FormatPageHeading(title, version string) string {
-	if version != "" {
-		return fmt.Sprintf("\n── %s（CloudDrive2 · v%s）──\n", title, version)
-	}
-	return fmt.Sprintf("\n── %s（CloudDrive2）──\n", title)
+func FormatPageHeading(title, _ string) string {
+	return fmt.Sprintf("\n── %s ──\n", title)
 }
 
 func (a *App) ask(prompt, defaultVal string) (string, error) {
@@ -219,20 +216,20 @@ func (a *App) Run() int {
 			fmt.Fprintln(a.Out, "本地管理未启动："+err.Error())
 			return 1
 		}
-		installState := "未安装"
-		botState := "未运行"
+		botState := "未安装"
 		version := a.Version
 		if instance != nil {
-			installState = "已安装"
 			if instance.Bot.State == "running" {
 				botState = "运行中"
+			} else {
+				botState = "未运行"
 			}
 			if version == "" {
 				version = instance.Version
 			}
 		}
-		fmt.Fprintf(a.Out, "\n── TGCloud 本地管理（Go 原生宿主模式）──\n\n安装状态：%s\nBot 状态：%s\n安装目录：%s\n管理工具（当前进程）：v%s\n\n",
-			installState, botState, a.Backend.InstallDir(), version)
+		fmt.Fprintf(a.Out, "\n── TGCloud 本地管理 ──\n\nTGCloud版本：v%s\nBot  系统状态：%s\n安装目录：%s\n\n",
+			version, botState, a.Backend.InstallDir())
 		if instance == nil {
 			fmt.Fprintln(a.Out, "TGCloud 尚未安装。请在完整源码目录运行 sudo bash install.sh（内网使用 sudo bash install.sh --lan）。")
 			return 0

@@ -587,7 +587,7 @@ class Management:
         items = tuple((number, label) for number, label, _ in entries)
         actions = {str(number): key for number, _, key in entries}
         while True:
-            self.heading(title, instance)
+            self.log(page_heading(title, self.product) + "\n")
             self.log(numbered_menu((*items, (0, "返回上级"))) + "\n")
             selected = choose(self.ui, "选择操作", ("0", *actions), "0")
             if selected == "0":
@@ -602,9 +602,10 @@ class Management:
             from tgcloud.version import VERSION
             initialized_only = (getattr(instance, "deployment_mode", None) == "compose"
                                 and getattr(instance, "container_ids", (None, None))[0] is None)
-            install_state = "未安装" if not instance.present else "已初始化，待启动服务" if initialized_only else "已安装"
-            bot_state = "运行中" if instance.running else "未运行"
-            self.log(f"\n── TGCloud 本地管理 ──\n\n安装状态：{install_state}\nBot 状态：{bot_state}\n安装目录：{instance.directory}\n管理工具（当前进程）：v{VERSION}\n\n")
+            bot_state = ("未安装" if not instance.present else
+                         "已初始化，待启动服务" if initialized_only else
+                         "运行中" if instance.running else "未运行")
+            self.log(f"\n── TGCloud 本地管理 ──\n\nTGCloud版本：v{VERSION}\nBot  系统状态：{bot_state}\n安装目录：{instance.directory}\n\n")
             if not instance.present:
                 if self.ui.confirm("TGCloud 尚未安装，是否进入安装向导？"):
                     self.upgrade(instance)

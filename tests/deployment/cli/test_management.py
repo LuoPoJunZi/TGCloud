@@ -434,10 +434,10 @@ class ManagementTests(unittest.TestCase):
             self.assertEqual(self.manager.run(), 0)
         text = "\n".join(self.messages)
         self.assertEqual(text.count("── TGCloud 本地管理 ──"), 1)
-        self.assertLess(text.index("── TGCloud 本地管理 ──"), text.index("Bot 状态：运行中"))
+        self.assertLess(text.index("── TGCloud 本地管理 ──"), text.index("Bot  系统状态：运行中"))
         self.assertLess(text.index("安装目录："), text.index("1. 服务运行管理"))
-        expected = ("\n── TGCloud 本地管理 ──\n\n安装状态：已安装\nBot 状态：运行中\n"
-                    + f"安装目录：{self.instance.directory}\n管理工具（当前进程）：v{VERSION}\n\n" + management.MENU)
+        expected = (f"\n── TGCloud 本地管理 ──\n\nTGCloud版本：v{VERSION}\nBot  系统状态：运行中\n"
+                    + f"安装目录：{self.instance.directory}\n\n" + management.MENU)
         self.assertEqual(text, expected)
 
     def test_remote_docker_and_compose_overrides_rejected_before_command(self):
