@@ -309,6 +309,22 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertIn(".github/scripts/check_repository.py", prepare)
         self.assertIn("    needs: prepare", downstream)
 
+    def test_actions_retention_workflow_uses_least_privilege_without_self_trigger(self):
+        workflow = (ROOT / ".github/workflows/actions-retention.yml").read_text(encoding="utf-8")
+        self.assertIn("permissions: {}", workflow)
+        self.assertIn("actions: write", workflow)
+        for name in (
+            "Compose deployment bundles",
+            "docs-quality",
+            "release",
+            "repository-quality",
+            "tests",
+            "VPS installer checks",
+        ):
+            self.assertIn(f"      - {name}", workflow)
+        for forbidden in ("contents: write", "packages: write", "pull_request", "- actions-retention"):
+            self.assertNotIn(forbidden, workflow)
+
 
 class UserDocumentationTests(unittest.TestCase):
     """Repository guides stand alone and document real public operations."""
