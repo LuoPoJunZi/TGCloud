@@ -365,8 +365,3 @@ class InstallerLog:
         rendered = "\n".join(lines)
         # Classify the original evidence, then redact before any display wrapping.
         self.log(terminal_text(self.log.clean(rendered)) if self.friendly else rendered)
-
-
-def edition_menu(ui, log, *, default: str = "1", both: bool = False, title: str = "安装向导") -> str:
-    # Kept for old callers; the single product never presents a chooser.
-    return "1"

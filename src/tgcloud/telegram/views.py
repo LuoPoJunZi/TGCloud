@@ -36,35 +36,6 @@ def state_label(state: str, destination_label: str = "CloudDrive2") -> str:
         state = "completed"
     return STATE_LABELS.get(state, state).format(destination=destination_label)
 
-def format_status_counts(
-    counts: dict[str, int], destination_label: str = "CloudDrive2"
-) -> str:
-    groups = (
-        ("排队", ("queued", "reserved")),
-        ("下载中", ("downloading",)),
-        ("待上传", ("downloaded", "waiting_upload")),
-        (
-            "上传中",
-            ("uploading", "streaming", "verifying", "finalizing", "cleanup_pending"),
-        ),
-        ("Bot 完成", ("completed", "confirmed")),
-        ("失败", tuple(FAILED_STATES)),
-        ("已取消", ("cancelled",)),
-    )
-    parts: list[str] = []
-    known: set[str] = set()
-    for label, states in groups:
-        known.update(states)
-        total = sum(counts.get(state, 0) for state in states)
-        if total:
-            parts.append(f"{label} {total}")
-    parts.extend(
-        f"{state_label(state, destination_label)} {count}"
-        for state, count in sorted(counts.items())
-        if state not in known and count
-    )
-    return "，".join(parts) or "无任务"
-
 def format_bytes(value: float) -> str:
     size = float(value)
     for unit in ("B", "KB", "MB", "GB", "TB"):

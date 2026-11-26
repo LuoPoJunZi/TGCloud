@@ -174,6 +174,18 @@ LABELS = {"heartbeat": "运行心跳", "telegram": "Telegram 连接", "destinati
           "queue": "队列调度", "capacity": "下载资源保护"}
 STATES = {"ok": "通过", "failed": "未通过", "unknown": "未核实／记录过期",
           "partial": "仅账号根目录可读，目标目录未确认", "paused": "手动暂停", "cooldown": "冷却中，不追加请求"}
+CONTAINER_STATES = {"running": "运行中", "exited": "已停止", "restarting": "重启中", "created": "尚未启动",
+                    "paused": "已暂停", "dead": "异常退出", "removing": "正在移除"}
+CONTAINER_HEALTH = {"healthy": "通过（容器检查）", "unhealthy": "未通过", "starting": "检查中",
+                    "none": "未配置容器检查"}
+
+
+def container_state(state: str, health: str) -> tuple[str, str]:
+    """Return human-readable Chinese labels for a Docker container state and health."""
+    if state not in CONTAINER_STATES or health not in CONTAINER_HEALTH:
+        return "未核实", "未核实"
+    return CONTAINER_STATES[state], CONTAINER_HEALTH[health] if state == "running" else "未检查（容器未运行）"
+
 
 WAIT_LABELS = {"retry": "等待重试时间", "member": "等待个人并发额度", "budget": "等待暂存额度",
                "disk": "等待真实磁盘空间", "download_slots": "等待下载名额",

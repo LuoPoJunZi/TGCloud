@@ -27,6 +27,7 @@ from tgcloud.deployment import (
 from tgcloud.deployment.host import LocalSession, SafeLog, edition_lock
 from tgcloud.deployment.lifecycle import lan as lan_installer
 from tgcloud.deployment.lifecycle import uninstall
+from tgcloud.deployment.ops.readiness import container_state
 from tgcloud.deployment.profiles import PRODUCTS
 from tgcloud.deployment.proxy import lan
 from tgcloud.deployment.proxy.certificates import parse_certificate_enddate
@@ -75,16 +76,6 @@ SUBMENU_GROUPS = {
 MENU = numbered_menu(MENU_ITEMS) + "\n"
 MENU_ACTIONS = tuple(str(number) for number, _ in MENU_ITEMS)
 SOURCE_ROOT = Path(__file__).resolve().parents[3]
-CONTAINER_STATES = {"running": "运行中", "exited": "已停止", "restarting": "重启中", "created": "尚未启动",
-                    "paused": "已暂停", "dead": "异常退出", "removing": "正在移除"}
-CONTAINER_HEALTH = {"healthy": "通过（容器检查）", "unhealthy": "未通过", "starting": "检查中",
-                    "none": "未配置容器检查"}
-
-
-def container_state(state, health):
-    if state not in CONTAINER_STATES or health not in CONTAINER_HEALTH:
-        return "未核实", "未核实"
-    return CONTAINER_STATES[state], CONTAINER_HEALTH[health] if state == "running" else "未检查（容器未运行）"
 
 
 def choose(ui, prompt: str, values: tuple[str, ...], default: str = "") -> str:

@@ -77,7 +77,6 @@ from .rendering import (
     render_route_conf,
 )
 from .scripts import (
-    HOST_TOOL_PACKAGES,  # noqa: F401 - re-exported for compatibility
     _certbot_mount_check_command,  # noqa: F401 - re-exported for compatibility
     command_failure_summary,
     defer_interruptions,

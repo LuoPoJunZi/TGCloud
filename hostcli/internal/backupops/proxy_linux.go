@@ -37,11 +37,6 @@ type ManifestEntry struct {
 	Target string `json:"target,omitempty"`
 }
 
-type ProxyManifest struct {
-	Version int                      `json:"version"`
-	Files   map[string]ManifestEntry `json:"files"`
-}
-
 const proxyArchiveScript = `import hashlib, io, json, os, re, shutil, stat, sys, tarfile, tempfile, time, uuid
 from pathlib import Path, PurePosixPath
 
